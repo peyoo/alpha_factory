@@ -47,4 +47,3 @@ class Settings(BaseSettings):
 settings = Settings()
 # 初始化时确保目录存在
 settings.make_dirs()
-

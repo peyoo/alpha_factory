@@ -30,6 +30,7 @@ pip-delete-this-directory.txt
 .venv/
 venv/
 ENV/
+config/*.toml
 
 # IDE settings
 .idea/
@@ -45,4 +46,3 @@ output/
 
 # Mac
 .DS_Store
-

@@ -38,7 +38,7 @@ alpha_factory/
 ├── data/                  # 离线数据中心
 │   ├── raw/               # Tushare 原始落地数据
 │   └── warehouse/         # Polars 优化后的 Parquet 数据库
-├── src/                   # 源代码
+├── alpha/                 # 源代码
 │   ├── data_provider/     # Tushare 接口逻辑
 │   ├── engine/            # polars_ta 封装与代码生成模板
 │   ├── mining/            # DEAP 进化逻辑
@@ -57,7 +57,7 @@ alpha_factory/
 - **数据就绪**：运行 `manage.py --sync`，从 Tushare 同步数据并转化为 Parquet。
 - **挖掘启动**：配置 `spec.md` 中的搜索空间，运行 `manage.py --mine` 开始进化。
 - **代码落盘**：`expr_codegen` 自动在 `output/codegen/` 生成新的因子模块。
-- **模型合成**：调用 `src/models/` 对选定因子进行 LightGBM 训练。
+- **模型合成**：调用 `alpha/models/` 对选定因子进行 LightGBM 训练。
 - **可视化审计**：运行 AlphaInspect，在浏览器查看因子的实战表现。
 
 ## 5. 验收标准
@@ -68,7 +68,7 @@ alpha_factory/
 ## 💡 下一步行动计划
 这份需求文档现在可以作为你 AI 开发的 “总纲”。
 
-建议从“数据层”开始构建： 你想让我为你生成 `src/data_provider/tushare_to_parquet.py` 的核心代码吗？它将实现：
+建议从“数据层”开始构建： 你想让我为你生成 `alpha/data_provider/tushare_to_parquet.py` 的核心代码吗？它将实现：
 1. Tushare API 的高效请求。
 2. 自动转换为 Polars DataFrame。
 3. 按照 `_DATE_` 和 `_ASSET_` 排序并保存为极速 Parquet。

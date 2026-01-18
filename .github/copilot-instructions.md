@@ -5,6 +5,38 @@
 
 你的目标是编写 **高性能** (Polars 优先)、**安全** (强类型) 且 **模块化** 的代码。你必须严格遵循下文中定义的架构模式和技术栈。
 
+## 强制性开发工作流 (Strict Workflow)
+在处理任何请求前，你必须严格遵守以下五步闭环流程，严禁跳步：
+
+1. **上下文对齐 (Context Loading)**:
+   - 每一轮新对话开始，必须主动声明已读取 `docs/PRD.md`、`docs/code-style.md` 和 `docs/progress.txt`。
+   - 若任务涉及具体模块，必须引用对应的 `docs/specs/*.md`。
+
+2. **任务拆解 (Decomposition)**:
+   - 在生成代码前，必须将复杂的技术规格拆解为 3-5 个逻辑小步（Step-by-step）。
+   - 每一小步需得到用户确认后再执行。
+
+3. **合规编码与验证 (Implementation & Validation)**:
+   - 代码必须严格执行本文件及 `docs/code-style.md` 的要求（如：强制 Polars、严禁硬编码）。
+   - **验证要求**: 核心算法必须附带 `assert` 验证逻辑或最小可运行案例 (MRE)，检查输出数据的 `shape` 和 `null` 分布。
+   - 每一小步编码完成后，需简要说明实现逻辑及如何处理异常。
+
+4. **代码审计 (Audit)**:
+   - 提交代码前进行自我检查：是否漏掉类型提示？列名是否符合命名契约？是否使用了 `loguru`？
+
+5. **进度归档 (Progress Persistence)**:
+   - 任务结束或会话中断前，必须主动提醒并帮助用户更新 `docs/progress.txt`。
+   - 更新需包含：已完成、待办事项、及关键技术决策。
+
+## Git 协作契约 (Git Agreement)
+- **提交检查 (Pre-commit)**: 提交前必须通过 `pre-commit` 检查，严禁绕过钩子。
+- **提交信息 (Commit Message)**: 强制执行约定式提交（Conventional Commits）。格式：`<type>(<scope>): <subject>`。
+  - 示例: `feat(data): 增加 Tushare 日历数据抓取`
+  - 示例: `docs(progress): 同步底座模块完成进度`
+  - 示例: `fix(infra): 修正 settings 路径问题`
+- **提交要求**: 每次代码变更必须伴随对 `docs/progress.txt` 的更新，并在提交信息中注明当前任务状态。
+- **安全防线**: 严禁将数据文件或 `.env` 提交至仓库，AI 需检查 `.gitignore` 的覆盖范围。
+
 ## 核心技术栈 (不可协商)
 - **Dataframe 库**: `Polars` (严禁使用 Pandas，除非第三方库强制依赖且无法避免)。
 - **语言**: Python 3.11+ (必须使用类型提示 Type Hinting)。
@@ -22,6 +54,10 @@
   - **绝不** 使用 `for` 循环遍历行。
   - **绝不** 使用 `.apply()` 或 `map_elements()`，如果存在原生表达式的话。
   - 使用 `pl.col().over()` 进行分组窗口计算。
+- **禁令清单 (Negative Constraints)**:
+  - **禁止隐式类型转换**: 严禁在不指定 Schema 的情况下 collect，Polars 对类型敏感。
+  - **禁止原地修改**: 严禁类似 `df[col] = ...` 的赋值操作，坚持 Polars 的不可变性。
+  - **禁止过度封装**: 避免将简单表达式封装为深层函数，防止破坏 LazyFrame 优化链。
 - **类型**:
   - 价格/指标使用 `Float32` 以节省内存。
   - 字符串标识符 (如股票代码) 使用 `Categorical` 或 `Enum`。
@@ -32,10 +68,13 @@ DataFrames 必须严格遵守此 Schema 以确保互操作性：
 - **OHLCV**: `OPEN`, `HIGH`, `LOW`, `CLOSE`, `VOLUME`, `AMOUNT` (全部大写)。
 - **特征因子**:以此为前缀 `f_` (例如 `f_rsi_14`, `f_log_return`)。
 - **目标标签**:以此为前缀 `target_` (例如 `target_1d_return`)。
+- **单位与空值**:
+  - **单位**: 金额统一为 **RMB**，成交量统一为 **股** (非手)，收益率统一为 **小数** (非百分比)。
+  - **空值**: 强制使用 `pl.Null` 处理缺失值，严禁随意填充 NaN 或 0。
 - **Python**: 变量/函数使用 `snake_case` (蛇形命名)，类使用 `PascalCase` (大驼峰)，常量使用 `UPPER_SNAKE` (大写蛇形)。
 
 ### 3. 文件与路径管理
-- **禁止硬编码**: 严禁在代码中直接写死如 `"./data/raw"` 这样的字符串。必须使用 `pathlib` 和统一的配置 (`src.utils.config`)。
+- **禁止硬编码**: 严禁在代码中直接写死如 `"./data/raw"` 这样的字符串。必须使用 `pathlib` 和统一的配置 (`alpha.utils.config`)。
 - **机密信息**: 严禁在代码中暴露 API 密钥 (如 TUSHARE_TOKEN)。必须使用环境变量。
 
 ### 4. 文档与日志
@@ -50,7 +89,7 @@ alpha_factory/
 ├── data/                  # 离线数据中心 (需在 git 中忽略)
 │   ├── raw/               # 原始落地数据
 │   └── warehouse/         # Polars 优化后的 Parquet 数据库
-├── src/
+├── alpha/
 │   ├── data_provider/     # Tushare 数据获取逻辑
 │   ├── engine/            # Polars 算子与计算引擎
 │   ├── mining/            # DEAP 遗传进化逻辑
@@ -65,9 +104,9 @@ alpha_factory/
 ```
 
 ## 工作流上下文
-- 当被要求 "fetch data" (获取数据) 时，参考 `src/data_provider`。
-- 当被要求 "calculate factors" (计算因子) 时，参考 `src/engine`。
-- 当被要求 "run mining" (运行挖掘) 时，参考 `src/mining` 和 `DEAP`。
-- 当被要求 "machine learning" (机器学习) 时，参考 `src/models` 和 `LightGBM`。
+- 当被要求 "fetch data" (获取数据) 时，参考 `alpha/data_provider`。
+- 当被要求 "calculate factors" (计算因子) 时，参考 `alpha/engine`。
+- 当被要求 "run mining" (运行挖掘) 时，参考 `alpha/mining` 和 `DEAP`。
+- 当被要求 "machine learning" (机器学习) 时，参考 `alpha/models` 和 `LightGBM`。
 
 如果对具体的架构决策有疑问，请务必查阅 `docs/code-style.md` 和 `docs/PRD.md`。

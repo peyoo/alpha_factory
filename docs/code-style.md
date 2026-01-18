@@ -1,7 +1,7 @@
 # Alpha-Factory 代码风格规范 (Code Style)
 
-**版本**: 1.0  
-**适用对象**: AI 助手 (Cursor/Copilot) 及 核心开发人员  
+**版本**: 1.0
+**适用对象**: AI 助手 (Cursor/Copilot) 及 核心开发人员
 **核心原则**: **性能至上 (Polars)**、**类型安全**、**显式优于隐式**。
 
 ## 1. 核心技术准则 (Core Tech Stack)
@@ -41,7 +41,7 @@
 
 ### 4.1 路径管理
 - **禁止硬编码字符串**: 严禁直接书写如 `"./data/..."`。
-- **必须调用设置**: 统一使用 `from src.utils.config import settings`。
+- **必须调用设置**: 统一使用 `from alpha.utils.config import settings`。
 - **Pathlib**: 强制使用 `pathlib.Path` 进行路径拼接。
 
 ### 4.2 配置管理
@@ -53,8 +53,8 @@
 ### 5.1 函数定义模板
 ```python
 def fetch_tushare_data(
-    ts_code: str, 
-    start_date: str, 
+    ts_code: str,
+    start_date: str,
     end_date: str
 ) -> pl.LazyFrame:
     """从 Tushare 获取原始数据并转换为 LazyFrame。

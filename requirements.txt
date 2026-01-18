@@ -20,3 +20,6 @@ pytest>=7.0.0
 
 alphainspect
 
+# Git Workflow
+pre-commit>=3.5.0
+ruff>=0.1.0

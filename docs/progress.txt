@@ -1,0 +1,41 @@
+# 项目进度 (Project Progress)
+
+## 状态总览
+*   **最后更新**: 2026-01-18
+*   **当前阶段**: 基础设施搭建完毕，正在进行数据接入层开发。
+
+## 已完成 (Completed)
+### 1. 项目初始化
+- [√] 初始化 Git 仓库与 `.gitignore` 配置。
+- [√] 建立符合规范的项目目录结构 (`alpha/`, `data/`, `output/`, `config/`)。
+- [√] 创建 `requirements.txt` 并完成环境依赖安装。
+- [√] 配置 `.env` 环境变量文件。
+
+### 2. 文档体系 (Documentation)
+- [√] **PRD**: 产品需求文档格式化与定稿 (`docs/PRD.md`)。
+- [√] **Code Style**: 代码风格规范 (`docs/code-style.md`)。
+- [√] **Copilot Instructions**: 完成 Copilot 角色与上下文设定 (`.github/copilot-instructions.md`)。
+- [√] **Specs**:
+    - 基础设施层规格 (`docs/specs/tech-spec-infrastructure.md`)。
+    - 数据接入层规格 (`docs/specs/tech-spec-data_provider.md`)。
+
+### 3. 基础设施层 (Infrastructure)
+- [√] 实现配置管理模块 `alpha.utils.config` (基于 `pydantic-settings`)。
+- [√] 实现日志管理模块 `alpha.utils.logger` (基于 `loguru`)。
+- [√] 完成源代码目录重构 (`src` -> `alpha`) 及全项目引用修正。
+- [√] 配置 Git 开发流 (Pre-commit hooks, Commit style, Strict ignore).
+
+## 进行中 (In Progress)
+### 4. 数据接入层 (Data Provider)
+- [√] 完成技术规格设计（包含 Schema 定义、增量更新逻辑）。
+- [ ] 实现 schema 定义 (`alpha/data_provider/schema.py`)。
+- [ ] 实现 Tushare 下载核心逻辑 (`alpha/data_provider/tushare_source.py`)。
+- [ ] 实现数据清洗流水线 (`alpha/data_provider/cleaner.py`)。
+- [ ] 实现公有接口 `DataProvider`。
+
+## 待办事项 (Backlog)
+- [ ] **数据清洗层**: 处理复权、ST标记、停牌填充。
+- [ ] **Polars 引擎**: 封装 `polars_ta` 常用技术指标算子。
+- [ ] **挖掘引擎**: 集成 DEAP 进行遗传规划挖掘。
+- [ ] **机器学习**: LightGBM 模型训练流程。
+- [ ] **回测评估**: AlphaInspect 报告生成。
