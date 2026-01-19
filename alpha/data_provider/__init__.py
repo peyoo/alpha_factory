@@ -26,6 +26,15 @@ from alpha.data_provider.schema import (
     convert_amount_unit,
 )
 
+from alpha.data_provider.cleaner import (
+    clean_daily_bars,
+    clean_calendar,
+    clean_adj_factors,
+    clean_daily_basic,
+    clean_market_status,
+    clean_stock_basic,
+)
+
 __all__ = [
     # Schema 映射
     "DAILY_BARS_MAPPING",
@@ -39,10 +48,17 @@ __all__ = [
     "MARKET_STATUS_SCHEMA",
     "STOCK_BASIC_MAPPING",
     "STOCK_BASIC_SCHEMA",
-    # 工具函数
+    # Schema 工具函数
     "get_schema_by_type",
     "get_mapping_by_type",
     "validate_schema",
     "convert_volume_unit",
     "convert_amount_unit",
+    # 清洗函数
+    "clean_daily_bars",
+    "clean_calendar",
+    "clean_adj_factors",
+    "clean_daily_basic",
+    "clean_market_status",
+    "clean_stock_basic",
 ]
