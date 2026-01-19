@@ -35,6 +35,11 @@ from alpha.data_provider.cleaner import (
     clean_stock_basic,
 )
 
+from alpha.data_provider.tushare_source import (
+    TushareDataService,
+    RateLimiter,
+)
+
 __all__ = [
     # Schema 映射
     "DAILY_BARS_MAPPING",
@@ -61,4 +66,7 @@ __all__ = [
     "clean_daily_basic",
     "clean_market_status",
     "clean_stock_basic",
+    # Tushare 服务
+    "TushareDataService",
+    "RateLimiter",
 ]

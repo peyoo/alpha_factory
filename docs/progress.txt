@@ -29,18 +29,15 @@
 ### 4. 数据接入层 (Data Provider)
 - [√] 完成技术规格设计（包含 Schema 定义、增量更新逻辑）。
 - [√] 实现 schema 定义 (`alpha/data_provider/schema.py`)。
-  - 字段映射规则（Tushare -> 系统标准）
-  - 完整 Schema 定义（日线行情、日历、复权因子等）
-  - 单位转换函数（手->股, 千元->元）
-  - Schema 验证工具函数
 - [√] 实现数据清洗流水线 (`alpha/data_provider/cleaner.py`)。
-  - Pandas -> Polars 转换
-  - 字段重命名与类型转换
-  - 单位标准化
-  - 后复权价格计算
-  - 市场状态综合表生成
-- [ ] 实现 Tushare 下载核心逻辑 (`alpha/data_provider/tushare_source.py`)。
-- [ ] 实现公有接口 `DataProvider`。
+- [√] 实现 Tushare 下载核心逻辑 (`alpha/data_provider/tushare_source.py`)。
+  - RateLimiter 限流管理 (VIP/普通模式)
+  - TushareDataService 主类
+  - 基础数据同步 (stock_basic, calendar)
+  - 行情数据同步 (daily_bars, 并发下载)
+  - 辅助数据同步 (adj_factors, daily_basic, market_status)
+  - 增量更新支持 (daily_update)
+- [ ] 实现公有接口 `DataProvider` (数据读取层)。
 
 ## 待办事项 (Backlog)
 - [ ] **数据清洗层**: 处理复权、ST标记、停牌填充。
