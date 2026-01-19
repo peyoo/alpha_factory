@@ -9,24 +9,71 @@
 在处理任何请求前，你必须严格遵守以下五步闭环流程，严禁跳步：
 
 1. **上下文对齐 (Context Loading)**:
-   - 每一轮新对话开始，必须主动声明已读取 `docs/PRD.md`、`docs/code-style.md` 和 `docs/progress.txt`。
+   - 每一轮新对话开始，必须主动声明已读取 `docs/PRD.md`、`docs/code-style.md`、`docs/progress.txt` 和 `tests/README.md`（测试规范）。
    - 若任务涉及具体模块，必须引用对应的 `docs/specs/*.md`。
+   - **测试对齐**: 若为重构/修改任务，必须先运行现有单元测试（Regression Testing），声明当前通过率。格式：`"✓ 当前测试通过率 100%，包括 X 个测试用例，准备开始修改。"`
+   - **数据验证**: 声明已检查现有测试数据的覆盖范围（边界值、空值、极限情况）。
 
-2. **任务拆解 (Decomposition)**:
+2. **任务拆解与测试驱动声明 (TDD Decomposition)**:
    - 在生成代码前，必须将复杂的技术规格拆解为 3-5 个逻辑小步（Step-by-step）。
-   - 每一小步需得到用户确认后再执行。
+   - **测试先行（TDD 原则）**: 每一小步必须包含一个"验证点"，定义该功能在正常情况、边界情况、异常情况下的行为。
+   - **边界定义**: 明确该功能在极端情况下的表现（如：停牌、全涨停/跌停、数据缺失 `null`、浮点精度边界）。
+   - **示例声明**:
+     ```
+     Step 1: 实现 RSI 算子
+     验证点：
+     - 输入常数序列 [50, 50, 50]，预期输出为 50（中性）
+     - 输入单调递增，预期输出趋近 100（强势）
+     - 输入包含 null 值，预期处理方式为 forward-fill（不泄露未来数据）
+     ```
+   - 每一小步拆解完成后，需得到用户确认方可进入编码。
 
-3. **合规编码与验证 (Implementation & Validation)**:
+3. **合规编码与自动化验证 (Implementation & Validation)**:
    - 代码必须严格执行本文件及 `docs/code-style.md` 的要求（如：强制 Polars、严禁硬编码）。
-   - **验证要求**: 核心算法必须附带 `assert` 验证逻辑或最小可运行案例 (MRE)，检查输出数据的 `shape` 和 `null` 分布。
-   - 每一小步编码完成后，需简要说明实现逻辑及如何处理异常。
+   - **验证要求**: 核心算法必须附带 **最小可运行测试 (MRE)**，检查输出数据的 `shape`、`null` 分布及边界条件。
+   - **Mock 数据驱动**: 对于因子计算等业务逻辑，必须构造微型 `pl.DataFrame` 进行验证。
+   - **断言约束**: 每个函数完成后，必须包含自检逻辑。示例：
+     ```python
+     # 示例：AI 生成代码后必须包含此类自检逻辑
+     def calc_alpha_v1(df: pl.LazyFrame) -> pl.LazyFrame:
+         """计算 Alpha 因子"""
+         result = df.with_columns(
+             ((pl.col("CLOSE") - pl.col("CLOSE").rolling_mean(20).over("_ASSET_"))
+              / pl.col("CLOSE").rolling_std(20).over("_ASSET_")
+             ).alias("f_alpha_001")
+         )
 
-4. **代码审计 (Audit)**:
+         # 自检逻辑
+         result_collected = result.collect()
+         assert result_collected.height == df.collect().height, "❌ 长度不一致"
+         assert result_collected["f_alpha_001"].null_count() <= result_collected.height * 0.05, "❌ 空值过多"
+         assert result_collected["f_alpha_001"].max() <= 10.0, "❌ 极值异常"
+         logger.info(f"✓ Alpha 因子验证通过: shape={result_collected.shape}")
+         return result
+     ```
+   - 每一小步编码完成后，需简要说明实现逻辑、处理异常方式，以及测试覆盖的场景。
+
+4. **交叉审计与边缘测试 (Audit & Edge Cases)**:
    - 提交代码前进行自我检查：是否漏掉类型提示？列名是否符合命名契约？是否使用了 `loguru`？
+   - **量化特殊场景审计**（重点检查 AI 容易忽略的问题）：
+     - **对齐审计**: 检查 `shift` 操作是否造成了未来数据泄露（如回溯时使用了当日行情计算前日标签）。
+     - **生存偏误审计**: 测试代码是否正确处理了资产退市后的 `NaN` 值（不应该前向填充到退市后）。
+     - **精度审计**: 确保 `Float32` 精度在大规模回测中是否足够（特别是对数级变换、除法运算）。
+     - **停牌/涨跌停审计**: 验证代码是否正确处理了停牌日期和涨跌停情况（应该排除或特殊标记）。
+   - 核心规则：**在提交前，必须运行完整的单元测试套件，并声明覆盖率**。
 
-5. **进度归档 (Progress Persistence)**:
+5. **进度归档与测试报告 (Progress & Test Summary)**:
    - 任务结束或会话中断前，必须主动提醒并帮助用户更新 `docs/progress.txt`。
    - 更新需包含：已完成、待办事项、及关键技术决策。
+   - **测试报告集成**: 在更新进度时，必须包含测试结论。格式：
+     ```
+     [Test] 模块名 - 通过情况 (Pass/Fail) - 覆盖的核心逻辑点
+
+     示例：
+     [Test] data_provider - ✓ Pass (6/6 cases) - Schema 验证、清洗、读取接口
+     [Test] alpha_factor - ✓ Pass (12/12 cases) - RSI、MACD、涨跌停处理、null 处理
+     ```
+   - 所有代码变更的提交信息必须包含 `[test]` 标签（如 `feat(data_provider): [test] 实现读取接口 (6/6 测试通过)`）。
 
 ## Git 协作契约 (Git Agreement)
 - **提交检查 (Pre-commit)**: 提交前必须通过 `pre-commit` 检查，严禁绕过钩子。
