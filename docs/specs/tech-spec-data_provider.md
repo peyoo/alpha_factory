@@ -118,16 +118,16 @@ class DataProvider:
 
 ### 4.1 日线行情 Schema (Daily Bars)
 
-| Tushare 原字段 | 系统标准字段 | Polars 类型 | 备注 |
-| :--- | :--- | :--- | :--- |
-| `trade_date` | **`_DATE_`** | `pl.Date` | 核心索引，YYYY-MM-DD |
+| Tushare 原字段 | 系统标准字段 | Polars 类型 | 备注                 |
+| :--- | :--- | :--- |:-------------------|
+| `trade_date` | **`_DATE_`** | `pl.Date` | 核心索引，YYYY-MM-DD    |
 | `ts_code` | **`_ASSET_`** | `pl.Categorical` | 核心索引，如 "000001.SZ" |
-| `open` | `OPEN` | `pl.Float32` | 后复权 (可选，视配置而定) |
-| `high` | `HIGH` | `pl.Float32` | |
-| `low` | `LOW` | `pl.Float32` | |
-| `close` | `CLOSE` | `pl.Float32` | |
-| `vol` | `VOLUME` | `pl.Float32` | 单位：手 |
-| `amount` | `AMOUNT` | `pl.Float32` | 单位：千元 |
+| `open` | `OPEN` | `pl.Float32` | 后复权 (可选，视配置而定)     |
+| `high` | `HIGH` | `pl.Float32` |                    |
+| `low` | `LOW` | `pl.Float32` |                    |
+| `close` | `CLOSE` | `pl.Float32` |                    |
+| `vol` | `VOLUME` | `pl.Float32` | 单位：股               |
+| `amount` | `AMOUNT` | `pl.Float32` | 单位：元               |
 
 *注：所有价格字段建议默认使用**不复权**数据，但在清洗阶段需分别存储复权因子，或根据配置直接存储前/后复权数据。初期版本简化为：存储不复权价格 + 复权因子。*
 

@@ -41,8 +41,10 @@ alpha_factory/
 ├── alpha/                 # 源代码
 │   ├── data_provider/     # Tushare 接口逻辑
 │   ├── engine/            # polars_ta 封装与代码生成模板
-│   ├── mining/            # DEAP 进化逻辑
-│   ├── models/            # LightGBM 训练与预测
+│   ├── gp/                # DEAP 遗传进化逻辑
+│   ├── ml/                # 机器学习，LightGBM 模型集成
+│   ├── evaluation/        # 因子评价模块
+│   ├── backtest/          # 回测框架
 │   └── utils/             # 统一配置加载、日志管理
 ├── output/                # 统一产出
 │   ├── codegen/           # GP 生成的因子代码

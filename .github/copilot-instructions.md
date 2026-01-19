@@ -91,9 +91,10 @@ alpha_factory/
 │   └── warehouse/         # Polars 优化后的 Parquet 数据库
 ├── alpha/
 │   ├── data_provider/     # Tushare 数据获取逻辑
-│   ├── engine/            # Polars 算子与计算引擎
-│   ├── mining/            # DEAP 遗传进化逻辑
-│   ├── models/            # LightGBM 模型集成
+│   ├── gp/                # DEAP 遗传进化逻辑
+│   ├── ml/                # 机器学习，LightGBM 模型集成
+│   ├── evaluation/        # 因子评价模块
+│   ├── backtest/          # 回测框架
 │   └── utils/             # 配置与通用工具
 ├── output/                # 统一产出
 │   ├── codegen/           # GP 生成的因子代码
@@ -106,7 +107,12 @@ alpha_factory/
 ## 工作流上下文
 - 当被要求 "fetch data" (获取数据) 时，参考 `alpha/data_provider`。
 - 当被要求 "calculate factors" (计算因子) 时，参考 `alpha/engine`。
-- 当被要求 "run mining" (运行挖掘) 时，参考 `alpha/mining` 和 `DEAP`。
-- 当被要求 "machine learning" (机器学习) 时，参考 `alpha/models` 和 `LightGBM`。
+- 当被要求 "run mining" (运行挖掘) 时，参考 `alpha/gp` 和 `DEAP`。
+- 当被要求 "machine learning" (机器学习) 时，参考 `alpha/ml` 和 `LightGBM`。
+
+**技术规格文档索引**:
+- `docs/specs/tech-spec-infrastructure.md` - 基础设施层
+- `docs/specs/tech-spec-data_provider.md` - 数据接入层
+- `docs/specs/tech-spec-gp.md` - 遗传规划因子挖掘
 
 如果对具体的架构决策有疑问，请务必查阅 `docs/code-style.md` 和 `docs/PRD.md`。

@@ -28,7 +28,11 @@
 ## 进行中 (In Progress)
 ### 4. 数据接入层 (Data Provider)
 - [√] 完成技术规格设计（包含 Schema 定义、增量更新逻辑）。
-- [ ] 实现 schema 定义 (`alpha/data_provider/schema.py`)。
+- [√] 实现 schema 定义 (`alpha/data_provider/schema.py`)。
+  - 字段映射规则（Tushare -> 系统标准）
+  - 完整 Schema 定义（日线行情、日历、复权因子等）
+  - 单位转换函数（手->股, 千元->元）
+  - Schema 验证工具函数
 - [ ] 实现 Tushare 下载核心逻辑 (`alpha/data_provider/tushare_source.py`)。
 - [ ] 实现数据清洗流水线 (`alpha/data_provider/cleaner.py`)。
 - [ ] 实现公有接口 `DataProvider`。
