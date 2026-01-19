@@ -18,63 +18,53 @@ from loguru import logger
 
 @pytest.fixture
 def mock_daily_bars():
-    """生成模拟日线行情数据"""
+    """生成模拟日线行情数据（Tushare 格式）"""
     dates = [
-        (datetime(2023, 1, 1) + timedelta(days=i)).strftime("%Y-%m-%d")
+        (datetime(2023, 1, 1) + timedelta(days=i)).strftime("%Y%m%d")
         for i in range(10)
     ]
     assets = ["000001.SZ", "000002.SZ", "000003.SZ"]
 
     data = {
-        "_DATE_": [],
-        "_ASSET_": [],
-        "RAW_OPEN": [],
-        "RAW_HIGH": [],
-        "RAW_LOW": [],
-        "RAW_CLOSE": [],
-        "OPEN": [],
-        "HIGH": [],
-        "LOW": [],
-        "CLOSE": [],
-        "VOLUME": [],
-        "AMOUNT": [],
+        "trade_date": [],
+        "ts_code": [],
+        "open": [],
+        "high": [],
+        "low": [],
+        "close": [],
+        "vol": [],
+        "amount": [],
     }
 
     for date in dates:
         for asset in assets:
-            data["_DATE_"].append(date)
-            data["_ASSET_"].append(asset)
+            data["trade_date"].append(date)
+            data["ts_code"].append(asset)
             # 模拟价格数据
             base_price = 10.0 + hash(asset) % 5
-            data["RAW_OPEN"].append(base_price)
-            data["RAW_HIGH"].append(base_price + 0.5)
-            data["RAW_LOW"].append(base_price - 0.3)
-            data["RAW_CLOSE"].append(base_price + 0.2)
-            data["OPEN"].append(base_price)  # 后复权价格
-            data["HIGH"].append(base_price + 0.5)
-            data["LOW"].append(base_price - 0.3)
-            data["CLOSE"].append(base_price + 0.2)
-            data["VOLUME"].append(1000000.0)  # 成交量（单位：股）
-            data["AMOUNT"].append(10000000.0)  # 成交额（单位：元）
+            data["open"].append(base_price)
+            data["high"].append(base_price + 0.5)
+            data["low"].append(base_price - 0.3)
+            data["close"].append(base_price + 0.2)
+            data["vol"].append(1000.0)  # 单位：手
+            data["amount"].append(10000.0)  # 单位：千元
 
-    df = pl.DataFrame(data).with_columns(
-        pl.col("_DATE_").str.strptime(pl.Date, "%Y-%m-%d")
-    )
+    df = pl.DataFrame(data)
     return df
 
 
 @pytest.fixture
 def mock_daily_basic():
-    """生成模拟每日基础指标数据"""
+    """生成模拟每日基础指标数据（Tushare 格式）"""
     dates = [
-        (datetime(2023, 1, 1) + timedelta(days=i)).strftime("%Y-%m-%d")
+        (datetime(2023, 1, 1) + timedelta(days=i)).strftime("%Y%m%d")
         for i in range(10)
     ]
     assets = ["000001.SZ", "000002.SZ", "000003.SZ"]
 
     data = {
-        "_DATE_": [],
-        "_ASSET_": [],
+        "trade_date": [],
+        "ts_code": [],
         "turnover_rate": [],
         "pe": [],
         "pb": [],
@@ -83,16 +73,14 @@ def mock_daily_basic():
 
     for date in dates:
         for asset in assets:
-            data["_DATE_"].append(date)
-            data["_ASSET_"].append(asset)
+            data["trade_date"].append(date)
+            data["ts_code"].append(asset)
             data["turnover_rate"].append(0.02 + hash(asset) % 5 * 0.01)
             data["pe"].append(10.0 + hash(asset) % 10)
             data["pb"].append(1.0 + hash(asset) % 3)
             data["total_mv"].append(100000000.0)
 
-    df = pl.DataFrame(data).with_columns(
-        pl.col("_DATE_").str.strptime(pl.Date, "%Y-%m-%d")
-    )
+    df = pl.DataFrame(data)
     return df
 
 

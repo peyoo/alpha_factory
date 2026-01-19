@@ -39,68 +39,47 @@ def clean_daily_bars(
     with_adjustment: bool = True,
     adj_factor_df=None,  # Optional[pd.DataFrame]
 ) -> pl.LazyFrame:
-    """
-    清洗日线行情数据。
-
-    数据流程：
-    1. Pandas DataFrame -> Polars DataFrame
-    2. 字段重命名（Tushare 格式 -> 系统标准）
-    3. 类型转换（所有数值转为 Float32）
-    4. 单位转换（手 -> 股，千元 -> 元）
-    5. 日期格式标准化
-    6. 计算后复权价格 (可选，需要 adj_factor)
-    7. 转换为 LazyFrame
-
-    Args:
-        df_pandas: 来自 Tushare 的 Pandas DataFrame
-        with_adjustment: 是否计算后复权价格
-        adj_factor_df: 复权因子 Pandas DataFrame (可选)
-
-    Returns:
-        符合系统标准的 Polars LazyFrame
-
-    Raises:
-        AssertionError: 如果数据验证失败
-    """
+    """清洗日线行情数据。"""
     logger.info(f"开始清洗日线行情数据，行数: {len(df_pandas)}")
 
-    # Step 1: Pandas -> Polars，同时进行字段重命名
+    # 处理空 DataFrame
+    if len(df_pandas) == 0:
+        logger.warning("输入数据为空，返回空 LazyFrame")
+        empty_df = pl.DataFrame(schema=DAILY_BARS_SCHEMA)
+        return empty_df.lazy()
+
+    # Pandas -> Polars
     df: pl.DataFrame = pl.from_pandas(df_pandas)
     logger.debug(f"转换后 shape: {df.shape}, 列: {df.columns}")
 
-    # Step 2: 字段重命名
-    rename_mapping = {v: k for k, v in DAILY_BARS_MAPPING.items()}
-    df = df.rename(rename_mapping)
+    # 字段重命名
+    df = df.rename(DAILY_BARS_MAPPING)
 
-    # Step 3: 日期格式标准化 (_DATE_ 转为 Date 类型)
+    # 日期格式标准化
     df = df.with_columns(
-        pl.col("_DATE_").str.strptime(pl.Date, "%Y%m%d").alias("_DATE_")
+        pl.col("_DATE_").str.strptime(pl.Date, "%Y%m%d", strict=False).alias("_DATE_")
     )
 
-    # Step 4: 单位转换 (手 -> 股，千元 -> 元)
+    # 单位转换
     df = df.with_columns(
         (pl.col("VOLUME") * TUSHARE_VOLUME_UNIT).cast(pl.Float32).alias("VOLUME"),
         (pl.col("AMOUNT") * TUSHARE_AMOUNT_UNIT).cast(pl.Float32).alias("AMOUNT"),
     )
 
-    # Step 5: 原始价格列转为 Float32
+    # 原始价格列转为 Float32
     raw_price_cols = ["RAW_OPEN", "RAW_HIGH", "RAW_LOW", "RAW_CLOSE"]
     for col in raw_price_cols:
         df = df.with_columns(pl.col(col).cast(pl.Float32))
 
-    # Step 6: 计算后复权价格 (RAW_* * adj_factor)
+    # 计算后复权价格
     if with_adjustment and adj_factor_df is not None:
         logger.info("计算后复权价格...")
         df_adj = clean_adj_factors(adj_factor_df).collect()
-
-        # Join 复权因子
         df = df.join(
             df_adj.select(["_DATE_", "_ASSET_", "adj_factor"]),
             on=["_DATE_", "_ASSET_"],
             how="left",
         )
-
-        # 计算后复权价格
         for raw_col, adj_col in zip(
             ["RAW_OPEN", "RAW_HIGH", "RAW_LOW", "RAW_CLOSE"],
             ["OPEN", "HIGH", "LOW", "CLOSE"],
@@ -110,11 +89,8 @@ def clean_daily_bars(
                 .cast(pl.Float32)
                 .alias(adj_col)
             )
-
-        # 删除临时的 adj_factor 列
         df = df.drop("adj_factor")
     else:
-        # 无复权因子时，直接使用原始价格作为后复权价格
         logger.warning("未计算后复权价格，使用原始价格")
         df = df.with_columns(
             pl.col("RAW_OPEN").alias("OPEN"),
@@ -123,20 +99,18 @@ def clean_daily_bars(
             pl.col("RAW_CLOSE").alias("CLOSE"),
         )
 
-    # Step 7: 类型强制转换（确保完全符合 Schema）
-    df = df.select(
-        [
-            pl.col("_DATE_"),
-            pl.col("_ASSET_"),
-            *[pl.col(c).cast(pl.Float32) for c in raw_price_cols],
-            *[pl.col(c).cast(pl.Float32) for c in ["OPEN", "HIGH", "LOW", "CLOSE"]],
-            pl.col("VOLUME").cast(pl.Float32),
-            pl.col("AMOUNT").cast(pl.Float32),
-        ]
-    )
+    # 类型强制转换
+    df = df.select([
+        pl.col("_DATE_"),
+        pl.col("_ASSET_"),
+        *[pl.col(c).cast(pl.Float32) for c in raw_price_cols],
+        *[pl.col(c).cast(pl.Float32) for c in ["OPEN", "HIGH", "LOW", "CLOSE"]],
+        pl.col("VOLUME").cast(pl.Float32),
+        pl.col("AMOUNT").cast(pl.Float32),
+    ])
 
-    # Step 8: 验证 Schema (collect 验证)
-    df_collected = df.collect()
+    # 验证 Schema
+    df_collected = df.collect() if hasattr(df, 'collect') else df
     try:
         validate_schema(df_collected, DAILY_BARS_SCHEMA)
         logger.info(f"✓ Schema 验证通过，最终 shape: {df_collected.shape}")
@@ -144,7 +118,7 @@ def clean_daily_bars(
         logger.error(f"✗ Schema 验证失败: {e}")
         raise
 
-    return df.lazy()
+    return df.lazy() if hasattr(df, 'lazy') else df.lazy()
 
 
 # ============================================================================
@@ -153,37 +127,26 @@ def clean_daily_bars(
 
 
 def clean_calendar(df_pandas) -> pl.LazyFrame:
-    """
-    清洗交易日历数据。
-
-    Args:
-        df_pandas: 来自 Tushare 的 Pandas DataFrame
-
-    Returns:
-        符合系统标准的 Polars LazyFrame
-    """
+    """清洗交易日历数据。"""
     logger.info(f"开始清洗交易日历数据，行数: {len(df_pandas)}")
 
+    if len(df_pandas) == 0:
+        logger.warning("输入数据为空，返回空 LazyFrame")
+        empty_df = pl.DataFrame(schema=CALENDAR_SCHEMA)
+        return empty_df.lazy()
+
     df: pl.DataFrame = pl.from_pandas(df_pandas)
-
-    # 字段重命名
-    rename_mapping = {v: k for k, v in CALENDAR_MAPPING.items()}
-    df = df.rename(rename_mapping)
-
-    # 日期格式标准化
+    df = df.rename(CALENDAR_MAPPING)
     df = df.with_columns(
-        pl.col("_DATE_").str.strptime(pl.Date, "%Y%m%d").alias("_DATE_")
+        pl.col("_DATE_").str.strptime(pl.Date, "%Y%m%d", strict=False).alias("_DATE_")
     )
-
-    # 类型转换
     df = df.with_columns(pl.col("is_open").cast(pl.Boolean))
 
-    # 验证
-    df_collected = df.collect()
+    df_collected = df.collect() if hasattr(df, 'collect') else df
     validate_schema(df_collected, CALENDAR_SCHEMA)
     logger.info(f"✓ 交易日历验证通过，行数: {len(df_collected)}")
 
-    return df.lazy()
+    return df.lazy() if hasattr(df, 'lazy') else df.lazy()
 
 
 # ============================================================================
@@ -192,37 +155,26 @@ def clean_calendar(df_pandas) -> pl.LazyFrame:
 
 
 def clean_adj_factors(df_pandas) -> pl.LazyFrame:
-    """
-    清洗复权因子数据。
-
-    Args:
-        df_pandas: 来自 Tushare 的 Pandas DataFrame
-
-    Returns:
-        符合系统标准的 Polars LazyFrame
-    """
+    """清洗复权因子数据。"""
     logger.info(f"开始清洗复权因子数据，行数: {len(df_pandas)}")
 
+    if len(df_pandas) == 0:
+        logger.warning("输入数据为空，返回空 LazyFrame")
+        empty_df = pl.DataFrame(schema=ADJ_FACTOR_SCHEMA)
+        return empty_df.lazy()
+
     df: pl.DataFrame = pl.from_pandas(df_pandas)
-
-    # 字段重命名
-    rename_mapping = {v: k for k, v in ADJ_FACTOR_MAPPING.items()}
-    df = df.rename(rename_mapping)
-
-    # 日期格式标准化
+    df = df.rename(ADJ_FACTOR_MAPPING)
     df = df.with_columns(
-        pl.col("_DATE_").str.strptime(pl.Date, "%Y%m%d").alias("_DATE_")
+        pl.col("_DATE_").str.strptime(pl.Date, "%Y%m%d", strict=False).alias("_DATE_")
     )
-
-    # 类型转换
     df = df.with_columns(pl.col("adj_factor").cast(pl.Float32))
 
-    # 验证
-    df_collected = df.collect()
+    df_collected = df.collect() if hasattr(df, 'collect') else df
     validate_schema(df_collected, ADJ_FACTOR_SCHEMA)
     logger.info(f"✓ 复权因子验证通过，行数: {len(df_collected)}")
 
-    return df.lazy()
+    return df.lazy() if hasattr(df, 'lazy') else df.lazy()
 
 
 # ============================================================================
@@ -231,46 +183,33 @@ def clean_adj_factors(df_pandas) -> pl.LazyFrame:
 
 
 def clean_daily_basic(df_pandas) -> pl.LazyFrame:
-    """
-    清洗每日基础指标数据。
-
-    Args:
-        df_pandas: 来自 Tushare 的 Pandas DataFrame
-
-    Returns:
-        符合系统标准的 Polars LazyFrame
-    """
+    """清洗每日基础指标数据。"""
     logger.info(f"开始清洗每日基础指标数据，行数: {len(df_pandas)}")
 
+    if len(df_pandas) == 0:
+        logger.warning("输入数据为空，返回空 LazyFrame")
+        empty_df = pl.DataFrame(schema=DAILY_BASIC_SCHEMA)
+        return empty_df.lazy()
+
     df: pl.DataFrame = pl.from_pandas(df_pandas)
-
-    # 字段重命名
-    rename_mapping = {v: k for k, v in DAILY_BASIC_MAPPING.items()}
-    df = df.rename(rename_mapping)
-
-    # 日期格式标准化
+    df = df.rename(DAILY_BASIC_MAPPING)
     df = df.with_columns(
-        pl.col("_DATE_").str.strptime(pl.Date, "%Y%m%d").alias("_DATE_")
+        pl.col("_DATE_").str.strptime(pl.Date, "%Y%m%d", strict=False).alias("_DATE_")
     )
 
-    # 所有数值列转为 Float32
-    float_cols = [
-        c for c in df.columns
-        if c not in ["_DATE_", "_ASSET_"]
-    ]
+    float_cols = [c for c in df.columns if c not in ["_DATE_", "_ASSET_"]]
     for col in float_cols:
         df = df.with_columns(pl.col(col).cast(pl.Float32))
 
-    # 验证
-    df_collected = df.collect()
+    df_collected = df.collect() if hasattr(df, 'collect') else df
     validate_schema(df_collected, DAILY_BASIC_SCHEMA)
     logger.info(f"✓ 每日基础指标验证通过，行数: {len(df_collected)}")
 
-    return df.lazy()
+    return df.lazy() if hasattr(df, 'lazy') else df.lazy()
 
 
 # ============================================================================
-# 市场状态清洗（综合多个来源的数据）
+# 市场状态清洗
 # ============================================================================
 
 
@@ -279,76 +218,53 @@ def clean_market_status(
     stock_st_df=None,
     suspend_d_df=None,
 ) -> pl.LazyFrame:
-    """
-    清洗市场状态数据（涨跌停、ST、停牌）。
-
-    将来自多个 Tushare 接口的数据合并为一个综合表。
-
-    Args:
-        stk_limit_df: 涨跌停价 Pandas DataFrame (可选)
-        stock_st_df: ST 状态 Pandas DataFrame (可选)
-        suspend_d_df: 停牌记录 Pandas DataFrame (可选)
-
-    Returns:
-        符合系统标准的 Polars LazyFrame
-    """
+    """清洗市场状态数据（涨跌停、ST、停牌）。"""
     logger.info("开始清洗市场状态数据...")
 
+    dfs = []
 
     # 涨跌停价
-    if stk_limit_df is not None:
+    if stk_limit_df is not None and len(stk_limit_df) > 0:
         df_stk: pl.DataFrame = pl.from_pandas(stk_limit_df)
-        rename_map = {v: k for k, v in {"trade_date": "_DATE_", "ts_code": "_ASSET_", "up_limit": "up_limit", "down_limit": "down_limit"}.items()}
-        df_stk = df_stk.rename(rename_map)
+        df_stk = df_stk.rename({"trade_date": "_DATE_", "ts_code": "_ASSET_"})
         df_stk = df_stk.with_columns(
-            pl.col("_DATE_").str.strptime(pl.Date, "%Y%m%d").alias("_DATE_"),
+            pl.col("_DATE_").str.strptime(pl.Date, "%Y%m%d", strict=False).alias("_DATE_"),
             pl.col("up_limit").cast(pl.Float32),
             pl.col("down_limit").cast(pl.Float32),
         )
+        dfs.append(df_stk)
         logger.debug(f"涨跌停数据：{df_stk.shape}")
-    else:
-        df_stk = None
 
-    # ST 状态 (需要生成衍生的 is_st 列)
-    if stock_st_df is not None:
+    # ST 状态
+    if stock_st_df is not None and len(stock_st_df) > 0:
         df_st: pl.DataFrame = pl.from_pandas(stock_st_df)
         df_st = df_st.rename({"trade_date": "_DATE_", "ts_code": "_ASSET_"})
         df_st = df_st.with_columns(
-            pl.col("_DATE_").str.strptime(pl.Date, "%Y%m%d").alias("_DATE_"),
-            pl.lit(True).alias("is_st"),  # stock_st 返回的行都是 ST 股票
+            pl.col("_DATE_").str.strptime(pl.Date, "%Y%m%d", strict=False).alias("_DATE_"),
+            pl.lit(True).alias("is_st"),
         )
+        dfs.append(df_st)
         logger.debug(f"ST 状态数据：{df_st.shape}")
-    else:
-        df_st = None
 
-    # 停牌状态 (需要生成衍生的 is_suspended 列)
-    if suspend_d_df is not None:
+    # 停牌状态
+    if suspend_d_df is not None and len(suspend_d_df) > 0:
         df_suspend: pl.DataFrame = pl.from_pandas(suspend_d_df)
-        df_suspend = df_suspend.rename(
-            {"suspend_date": "_DATE_", "ts_code": "_ASSET_"}
-        )
+        df_suspend = df_suspend.rename({"suspend_date": "_DATE_", "ts_code": "_ASSET_"})
         df_suspend = df_suspend.with_columns(
-            pl.col("_DATE_").str.strptime(pl.Date, "%Y%m%d").alias("_DATE_"),
-            pl.lit(True).alias("is_suspended"),  # 标记为停牌
+            pl.col("_DATE_").str.strptime(pl.Date, "%Y%m%d", strict=False).alias("_DATE_"),
+            pl.lit(True).alias("is_suspended"),
         )
+        dfs.append(df_suspend)
         logger.debug(f"停牌状态数据：{df_suspend.shape}")
-    else:
-        df_suspend = None
 
-    # 合并所有表 (假设都有相同的 _DATE_, _ASSET_ 列)
-    result = None
-    for df_temp in [df_stk, df_st, df_suspend]:
-        if df_temp is not None:
-            if result is None:
-                result = df_temp
-            else:
-                result = result.join(df_temp, on=["_DATE_", "_ASSET_"], how="outer")
-
-    if result is None:
+    if not dfs:
         logger.warning("市场状态数据全为空，返回空 LazyFrame")
         return pl.LazyFrame({"_DATE_": [], "_ASSET_": []}).lazy()
 
-    # 填充缺失值
+    result = dfs[0]
+    for df_temp in dfs[1:]:
+        result = result.join(df_temp, on=["_DATE_", "_ASSET_"], how="outer")
+
     result = result.with_columns(
         pl.col("is_st").fill_null(False),
         pl.col("is_suspended").fill_null(False),
@@ -364,31 +280,22 @@ def clean_market_status(
 
 
 def clean_stock_basic(df_pandas) -> pl.LazyFrame:
-    """
-    清洗股票基础信息数据。
-
-    Args:
-        df_pandas: 来自 Tushare 的 Pandas DataFrame
-
-    Returns:
-        符合系统标准的 Polars LazyFrame
-    """
+    """清洗股票基础信息数据。"""
     logger.info(f"开始清洗股票基础信息，行数: {len(df_pandas)}")
 
+    if len(df_pandas) == 0:
+        logger.warning("输入数据为空，返回空 LazyFrame")
+        empty_df = pl.DataFrame(schema=STOCK_BASIC_SCHEMA)
+        return empty_df.lazy()
+
     df: pl.DataFrame = pl.from_pandas(df_pandas)
-
-    # 字段重命名
-    rename_mapping = {v: k for k, v in STOCK_BASIC_MAPPING.items()}
-    df = df.rename(rename_mapping)
-
-    # list_date 转为 Date 类型
+    df = df.rename(STOCK_BASIC_MAPPING)
     df = df.with_columns(
-        pl.col("list_date").str.strptime(pl.Date, "%Y%m%d").alias("list_date")
+        pl.col("list_date").str.strptime(pl.Date, "%Y%m%d", strict=False).alias("list_date")
     )
 
-    # 验证
-    df_collected = df.collect()
+    df_collected = df.collect() if hasattr(df, 'collect') else df
     validate_schema(df_collected, STOCK_BASIC_SCHEMA)
     logger.info(f"✓ 股票基础信息验证通过，行数: {len(df_collected)}")
 
-    return df.lazy()
+    return df.lazy() if hasattr(df, 'lazy') else df.lazy()
