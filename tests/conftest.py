@@ -66,9 +66,20 @@ def mock_daily_basic():
         "trade_date": [],
         "ts_code": [],
         "turnover_rate": [],
+        "turnover_rate_f": [],
+        "volume_ratio": [],
         "pe": [],
+        "pe_ttm": [],
         "pb": [],
+        "ps": [],
+        "ps_ttm": [],
+        "dv_ratio": [],
+        "dv_ttm": [],
+        "total_share": [],
+        "float_share": [],
+        "free_share": [],
         "total_mv": [],
+        "circ_mv": [],
     }
 
     for date in dates:
@@ -76,9 +87,20 @@ def mock_daily_basic():
             data["trade_date"].append(date)
             data["ts_code"].append(asset)
             data["turnover_rate"].append(0.02 + hash(asset) % 5 * 0.01)
+            data["turnover_rate_f"].append(0.02 + hash(asset) % 5 * 0.01)
+            data["volume_ratio"].append(1.0 + hash(asset) % 3)
             data["pe"].append(10.0 + hash(asset) % 10)
+            data["pe_ttm"].append(10.5 + hash(asset) % 10)
             data["pb"].append(1.0 + hash(asset) % 3)
+            data["ps"].append(2.0 + hash(asset) % 5)
+            data["ps_ttm"].append(2.1 + hash(asset) % 5)
+            data["dv_ratio"].append(0.03)
+            data["dv_ttm"].append(0.03)
+            data["total_share"].append(100000.0)
+            data["float_share"].append(80000.0)
+            data["free_share"].append(50000.0)
             data["total_mv"].append(100000000.0)
+            data["circ_mv"].append(80000000.0)
 
     df = pl.DataFrame(data)
     return df

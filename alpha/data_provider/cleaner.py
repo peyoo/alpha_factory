@@ -265,13 +265,30 @@ def clean_market_status(
     for df_temp in dfs[1:]:
         result = result.join(df_temp, on=["_DATE_", "_ASSET_"], how="outer")
 
+    # 确保所有预期的列都存在
+    if "up_limit" not in result.columns:
+        result = result.with_columns(pl.lit(None, dtype=pl.Float32).alias("up_limit"))
+    if "down_limit" not in result.columns:
+        result = result.with_columns(pl.lit(None, dtype=pl.Float32).alias("down_limit"))
+    if "is_st" not in result.columns:
+        result = result.with_columns(pl.lit(False).alias("is_st"))
+    if "is_suspended" not in result.columns:
+        result = result.with_columns(pl.lit(False).alias("is_suspended"))
+
+    # 填充 null 值
     result = result.with_columns(
         pl.col("is_st").fill_null(False),
         pl.col("is_suspended").fill_null(False),
     )
 
-    logger.info(f"✓ 市场状态数据合并完成，行数: {result.collect().shape[0]}")
-    return result.lazy()
+    # 确保返回的是 LazyFrame
+    if isinstance(result, pl.DataFrame):
+        logger.info(f"✓ 市场状态数据合并完成，行数: {result.shape[0]}")
+        return result.lazy()
+    else:
+        result_collected = result.collect()
+        logger.info(f"✓ 市场状态数据合并完成，行数: {result_collected.shape[0]}")
+        return result
 
 
 # ============================================================================
