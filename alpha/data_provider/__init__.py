@@ -40,6 +40,11 @@ from alpha.data_provider.tushare_source import (
     RateLimiter,
 )
 
+from alpha.data_provider.reader import (
+    DataProvider,
+    get_data,
+)
+
 __all__ = [
     # Schema 映射
     "DAILY_BARS_MAPPING",
@@ -69,4 +74,7 @@ __all__ = [
     # Tushare 服务
     "TushareDataService",
     "RateLimiter",
+    # 数据读取接口
+    "DataProvider",
+    "get_data",
 ]
