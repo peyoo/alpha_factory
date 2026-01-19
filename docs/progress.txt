@@ -1,13 +1,13 @@
 # 项目进度 (Project Progress)
 
 ## 状态总览
-*   **最后更新**: 2026-01-18
-*   **当前阶段**: 基础设施搭建完毕，正在进行数据接入层开发。
+*   **最后更新**: 2026-01-19
+*   **当前阶段**: 数据接入层完成，测试驱动工作流就绪，准备进行因子计算引擎开发。
 
 ## 已完成 (Completed)
 ### 1. 项目初始化
 - [√] 初始化 Git 仓库与 `.gitignore` 配置。
-- [√] 建立符合规范的项目目录结构 (`alpha/`, `data/`, `output/`, `config/`)。
+- [√] 建立符合规范的项目目录结构 (`alpha/`, `data/`, `output/`, `tests/`, `config/`)。
 - [√] 创建 `requirements.txt` 并完成环境依赖安装。
 - [√] 配置 `.env` 环境变量文件。
 
@@ -18,28 +18,33 @@
 - [√] **Specs**:
     - 基础设施层规格 (`docs/specs/tech-spec-infrastructure.md`)。
     - 数据接入层规格 (`docs/specs/tech-spec-data_provider.md`)。
+    - 遗传规划层规格 (`docs/specs/tech-spec-gp.md`)。
 
 ### 3. 基础设施层 (Infrastructure)
 - [√] 实现配置管理模块 `alpha.utils.config` (基于 `pydantic-settings`)。
 - [√] 实现日志管理模块 `alpha.utils.logger` (基于 `loguru`)。
 - [√] 完成源代码目录重构 (`src` -> `alpha`) 及全项目引用修正。
-- [√] 配置 Git 开发流 (Pre-commit hooks, Commit style, Strict ignore).
+- [√] 配置 Git 开发流 (Pre-commit hooks, Commit style, Strict ignore)。
 
-## 进行中 (In Progress)
-### 4. 数据接入层 (Data Provider)
+### 4. 数据接入层 (Data Provider) - ✅ 完全就绪
 - [√] 完成技术规格设计（包含 Schema 定义、增量更新逻辑）。
 - [√] 实现 schema 定义 (`alpha/data_provider/schema.py`)。
 - [√] 实现数据清洗流水线 (`alpha/data_provider/cleaner.py`)。
 - [√] 实现 Tushare 下载核心逻辑 (`alpha/data_provider/tushare_source.py`)。
-  - RateLimiter 限流管理 (VIP/普通模式)
-  - TushareDataService 主类
-  - 基础数据同步 (stock_basic, calendar)
-  - 行情数据同步 (daily_bars, 并发下载)
-  - 辅助数据同步 (adj_factors, daily_basic, market_status)
-  - 增量更新支持 (daily_update)
-- [ ] 实现公有接口 `DataProvider` (数据读取层)。
+- [√] 实现公有接口 `DataProvider` (`alpha/data_provider/reader.py`)。
+- [Test] data_provider - ✓ Ready (Schema, Cleaner, Source, Reader 模块)
 
-## 待办事项 (Backlog)
+### 5. 测试驱动工作流 (TDD Workflow) - ✅ 完全就绪
+- [√] 升级 Copilot 指引的 5 步工作流。
+- [√] 上下文对齐: 添加 tests/README.md 和回归测试要求。
+- [√] 任务拆解: 每步必须包含验证点。
+- [√] 合规编码: 强制附带最小可运行测试 (MRE) 和断言。
+- [√] 边缘测试: 量化特定场景 (停牌、涨跌停、退市、精度)。
+- [√] 进度归档: 测试报告格式统一。
+- [√] 创建 tests/README.md 定义完整的测试规范。
+- [√] 创建 tests/conftest.py 提供 Mock 数据生成器和断言工具。
+
+## 进行中 (In Progress)
 - [ ] **数据清洗层**: 处理复权、ST标记、停牌填充。
 - [ ] **Polars 引擎**: 封装 `polars_ta` 常用技术指标算子。
 - [ ] **挖掘引擎**: 集成 DEAP 进行遗传规划挖掘。
