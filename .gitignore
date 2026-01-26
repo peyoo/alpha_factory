@@ -44,5 +44,11 @@ output/
 !data/.gitkeep
 !output/.gitkeep
 
+# Temporary Assets (临时性资产管理)
+# 快速原型和实验代码不提交
+scratch/
+*.tmp
+*.experiment
+
 # Mac
 .DS_Store

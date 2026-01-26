@@ -26,4 +26,3 @@ ruff>=0.1.0
 
 sympy~=1.14.0
 more-itertools~=10.8.0
-ray~=2.49.2

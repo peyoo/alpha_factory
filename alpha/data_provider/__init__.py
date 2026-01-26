@@ -1,80 +1,55 @@
 """
-数据接入层 (Data Provider)
+数据接入层 (Data Provider) - L0-L4 ETL 管道
 
-核心模块：
-- schema: 字段映射与数据契约定义
-- cleaner: Polars 数据清洗流水线
-- tushare_source: Tushare API 交互
+【模块职责】
+- L0 (API层): 从 Tushare 异步/批量获取原始行情与基本面数据。
+- L1 (缓存层): HDF5 热缓存管理，支撑快速实验并减轻 API 额度压力。
+- L2/L3 (加工层): 统一因子库构建。执行清洗、对齐、前向填充及复权计算，按年分区存储。
+- L4 (接口层): 为下游提供标准化的 DataProvider 接口，支持 Lazy Mode 自动查询优化。
+
+【核心契约】
+- 坐标系: 始终以 (DATE, ASSET) 为主键。
+- 单位制: 统一为 (元 / 股 / 倍)，消除万元、手、千元等量纲陷阱。
+- 性能制: 深度集成 Polars LazyFrame，支持谓词下压与列过滤优化。
 """
 
-from alpha.data_provider.schema import (
-    DAILY_BARS_MAPPING,
-    DAILY_BARS_SCHEMA,
-    CALENDAR_MAPPING,
-    CALENDAR_SCHEMA,
-    ADJ_FACTOR_MAPPING,
-    ADJ_FACTOR_SCHEMA,
-    DAILY_BASIC_MAPPING,
-    DAILY_BASIC_SCHEMA,
-    MARKET_STATUS_SCHEMA,
-    STOCK_BASIC_MAPPING,
-    STOCK_BASIC_SCHEMA,
-    get_schema_by_type,
-    get_mapping_by_type,
-    validate_schema,
-    convert_volume_unit,
-    convert_amount_unit,
-)
+from __future__ import annotations
 
-from alpha.data_provider.cleaner import (
-    clean_daily_bars,
-    clean_calendar,
-    clean_adj_factors,
-    clean_daily_basic,
-    clean_market_status,
-    clean_stock_basic,
-)
+# 1. 基础服务与缓存管理 (L0/L1)
+from alpha.data_provider.cache_manager import HDF5CacheManager
+from alpha.data_provider.tushare_service import TushareDataService, RateLimiter
 
-from alpha.data_provider.tushare_source import (
-    TushareDataService,
-    RateLimiter,
-)
+# 2. 核心构建引擎 (L2/L3)
+from alpha.data_provider.unified_factor_builder import UnifiedFactorBuilder
 
-from alpha.data_provider.reader import (
-    DataProvider,
-    get_data,
-)
+# 3. 统一读取接口 (L4)
+from alpha.data_provider.data_provider import DataProvider
 
+# 4. 辅助元数据管理 (Assets & Calendar)
+from alpha.data_provider.stock_assets_manager import StockAssetsManager
+from alpha.data_provider.trade_calendar_manager import TradeCalendarManager
+
+# 显式暴露接口，方便 from alpha.data_provider import *
 __all__ = [
-    # Schema 映射
-    "DAILY_BARS_MAPPING",
-    "DAILY_BARS_SCHEMA",
-    "CALENDAR_MAPPING",
-    "CALENDAR_SCHEMA",
-    "ADJ_FACTOR_MAPPING",
-    "ADJ_FACTOR_SCHEMA",
-    "DAILY_BASIC_MAPPING",
-    "DAILY_BASIC_SCHEMA",
-    "MARKET_STATUS_SCHEMA",
-    "STOCK_BASIC_MAPPING",
-    "STOCK_BASIC_SCHEMA",
-    # Schema 工具函数
-    "get_schema_by_type",
-    "get_mapping_by_type",
-    "validate_schema",
-    "convert_volume_unit",
-    "convert_amount_unit",
-    # 清洗函数
-    "clean_daily_bars",
-    "clean_calendar",
-    "clean_adj_factors",
-    "clean_daily_basic",
-    "clean_market_status",
-    "clean_stock_basic",
-    # Tushare 服务
+    "HDF5CacheManager",
     "TushareDataService",
     "RateLimiter",
-    # 数据读取接口
+    "UnifiedFactorBuilder",
     "DataProvider",
-    "get_data",
+    "StockAssetsManager",
+    "TradeCalendarManager",
 ]
+
+# --- 快速诊断信息 ---
+def info():
+    """打印数据层核心状态简报"""
+    from alpha.utils.config import settings
+    import polars as pl
+
+    print("=" * 40)
+    print("📊 ALPHA DATA PROVIDER ENGINE STATUS")
+    print("-" * 40)
+    print(f"📦 Warehouse: {settings.WAREHOUSE_DIR}")
+    print(f"🔥 L1 Cache : {settings.RAW_DATA_DIR}")
+    print(f"🚀 Engine   : Polars {pl.__version__}")
+    print("=" * 40)

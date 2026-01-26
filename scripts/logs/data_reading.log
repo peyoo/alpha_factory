@@ -1,0 +1,4 @@
+2026-01-22 16:10:35.715 | WARNING  | alpha.data_provider.stock_assets_manager:_load_locked:72 - ⚠️ 资产表不存在，请执行 sync_from_tushare()
+2026-01-22 16:10:35.715 | DEBUG    | alpha.data_provider.data_provider:__init__:22 - ✓ DataProvider 初始化，仓库路径: /Users/yongpeng/Documents/github/alpha_factory/data/warehouse/unified_factors
+2026-01-22 16:10:35.715 | INFO     | __main__:run_analysis_2019:18 - 📅 正在从 L4 统一因子库加载 2019 年数据...
+2026-01-22 16:10:35.715 | WARNING  | alpha.data_provider.data_provider:load_data:46 - ⚠️ 因子库缺少年度数据: 2019
