@@ -82,18 +82,23 @@ class TushareDataService:
     # 核心同步流程
     # ---------------------------------------------------------------------
 
-    def sync_data(self, start_date: str, end_date: str) -> None:
+    def sync_data(self, start_date: str, end_date: Optional[str] = None) -> None:
         """
         全量同步主入口：按天打包同步所有分片（已适配长连接优化）
         """
         # 1. 前置元数据同步
         try:
             self.calendar.sync_from_tushare()
-            self.assets_mgr.sync_from_tushare(force=True)
+            self.assets_mgr.sync_from_tushare()
         except Exception as e:
             logger.warning(f"元数据同步告警: {e}")
 
-        # 2. 获取交易日列表
+        # 2. 确定 end_date：如果为 None，智能查找最新可用数据
+        if end_date is None:
+            end_date = self._find_latest_available_date()
+            logger.info(f"⏰ end_date 自动设置为: {end_date} (daily_basic 最新可用数据)")
+
+        # 3. 获取交易日列表
         start_dt = datetime.strptime(start_date, "%Y%m%d").date()
         end_dt = datetime.strptime(end_date, "%Y%m%d").date()
         trade_days = self.calendar.get_trade_days(start_dt, end_dt)
@@ -105,7 +110,7 @@ class TushareDataService:
         total = len(trade_days)
         logger.info(f"🚀 开始同步任务，共计 {total} 个交易日...")
 
-        # 3. 【核心修改】使用 try...finally 维护 HDF5 长连接
+        # 4. 【核心修改】使用 try...finally 维护 HDF5 长连接
         try:
             for i, current_date in enumerate(trade_days, 1):
                 # 此时内部调用的 is_cached 和 save_to_hdf5 会自动复用已打开的句柄
@@ -199,6 +204,60 @@ class TushareDataService:
                 logger.error(f"❌ {date_str} {source} 异常: {e}")
                 raise DataSyncError(f"API 中断: {source}")
 
+    def _find_latest_available_date(self, lookback_days: int = 10) -> str:
+        """
+        智能查找 Tushare 上最新可用数据的交易日
+
+        【使用 daily_basic 接口判断数据可用性】
+        daily_basic 包含 PE、PB、PS 等估值数据，数据完整性更好。
+        Tushare 网站上的数据通常有 1-2 个交易日的延迟。
+
+        参数:
+            lookback_days: 最多往前查找多少个交易日 (默认 10)
+
+        返回:
+            有数据的最新交易日 'YYYYMMDD' 格式
+        """
+        today = date.today()
+
+        # 获取过去的交易日列表
+        lookback_start = today - pd.Timedelta(days=lookback_days * 2)
+        trade_days_back = self.calendar.get_trade_days(lookback_start, today)
+
+        if not trade_days_back:
+            logger.warning(f"⚠️ 无法获取交易日历，返回今天: {today.strftime('%Y%m%d')}")
+            return today.strftime("%Y%m%d")
+
+        # 反向遍历（从最近往前），最多查找 lookback_days 个
+        checked_count = 0
+        for check_date in reversed(trade_days_back):
+            if checked_count >= lookback_days:
+                break
+
+            date_str = check_date.strftime("%Y%m%d")
+            checked_count += 1
+
+            try:
+                # 使用 daily_basic 接口，只获取 1 条记录检查数据可用性
+                self.rate_limiter.wait()
+                df = self.pro.daily_basic(trade_date=date_str, limit=1)
+
+                # 如果返回不为空，说明该日有数据
+                if df is not None and not df.empty:
+                    logger.info(f"✓ 找到最新可用数据 (daily_basic): {date_str} (检查了 {checked_count} 个交易日)")
+                    return date_str
+                else:
+                    logger.debug(f"⏭️  {date_str} 无数据，继续查找")
+
+            except Exception as e:
+                logger.debug(f"❌ 检查 {date_str} 时异常: {e}，继续查找")
+                continue
+
+        # 如果找不到任何有数据的日期，返回今天
+        logger.warning(
+            f"⚠️ 向前查找 {lookback_days} 个交易日都无数据，使用今天作为 end_date: {today.strftime('%Y%m%d')}")
+        return today.strftime("%Y%m%d")
+
     # ---------------------------------------------------------------------
     # 增量更新逻辑
     # ---------------------------------------------------------------------
@@ -218,7 +277,7 @@ class TushareDataService:
             logger.info("✅ 数据已是最新")
             return
 
-        self.sync_data(next_date.strftime("%Y%m%d"), date.today().strftime("%Y%m%d"))
+        self.sync_data(next_date.strftime("%Y%m%d"), end_date=None)
 
     def _get_latest_date_from_warehouse(self) -> tuple[Optional[int], Optional[str]]:
         """利用 Polars 快速探测 Parquet 仓库的最大日期"""
