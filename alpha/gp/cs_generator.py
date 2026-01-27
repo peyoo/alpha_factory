@@ -13,7 +13,6 @@ from polars import selectors as cs
 from deap import gp
 from alpha.gp.base import Expr, dummy
 from alpha.gp.base import get_fitness
-from alpha.gp.cs_mask import CUSTOM_OPERATORS
 
 from alpha.gp.generator import GPDeapGenerator
 
@@ -73,7 +72,8 @@ class CSGPGenerator(GPDeapGenerator):
         pset = gp.PrimitiveSetTyped("MAIN", [], Expr)
 
         # 1. 终端 (Terminals)
-        for factor in ['OPEN', 'HIGH', 'LOW', 'CLOSE', 'VOLUME','AMOUNT']:
+        # AMOUNT有极强的市值效应，不适合截面因子挖掘
+        for factor in ['OPEN', 'HIGH', 'LOW', 'CLOSE','TURNOVER_RATE']:
             pset.addTerminal(1, Expr, name=factor)
 
         # 2. 窗口参数 (Constants)

@@ -24,7 +24,6 @@ GP 因子生成器主类
 
 import operator
 import pickle
-import random
 from datetime import datetime
 from itertools import count
 from pathlib import Path
@@ -33,7 +32,7 @@ from typing import Any, Dict, List, Tuple
 import numpy as np
 import polars as pl
 from deap import base, creator, gp, tools
-from deap.gp import PrimitiveSetTyped, PrimitiveTree
+from deap.gp import PrimitiveTree
 from loguru import logger
 import more_itertools
 import polars.selectors as cs
@@ -41,7 +40,7 @@ import polars.selectors as cs
 from alpha.data_provider import DataProvider
 # 导入打过补丁的组件和基础工具
 from alpha.gp.deap_patch import eaMuPlusLambda  # 核心进化算法
-from alpha.gp.base import population_to_exprs, filter_exprs, print_population, dummy
+from alpha.gp.base import population_to_exprs, filter_exprs, print_population
 # from alpha.gp.cs.helper import batched_exprs, fill_fitness
 from alpha.gp.base import RET_TYPE, Expr
 from alpha.utils.config import settings
@@ -99,20 +98,13 @@ class GPDeapGenerator(object):
         self.label_y = config.get("label_y", f"RETURN_OO_{self.label_window}")  # 目标标签列名,当前仅支持 OPEN-OPEN 收益率
 
         # --- 4. 进化算法超参数 ---
-        self.mu = config.get("mu", 150) # 种群保留规模
-        self.lambda_ = config.get("lambda", 100)  # 每代生成后代规模
-        self.cxpb = config.get("cxpb", 0.5)  # 交叉概率
-        self.mutpb = config.get("mutpb", 0.1)  # 变异概率
+        self.mu = config.get("mu", 300) # 种群保留规模
+        self.lambda_ = config.get("lambda", 300)  # 每代生成后代规模
+        self.cxpb = config.get("cxpb", 0.6)  # 交叉概率
+        self.mutpb = config.get("mutpb", 0.2)  # 变异概率
         self.hof_size = config.get("hof_size", 1000) # 名人堂大小
         self.batch_size = config.get("batch_size", 100) # 批处理大小
-        self.max_height = config.get("max_height", 17) # 最大树高限制
-
-
-        # 验证配置
-        if self.batch_size <= 0:
-            raise ValueError(f"batch_size 必须大于 0，当前值: {self.batch_size}")
-        if not isinstance(self.label_y, str) or not self.label_y:
-            raise ValueError(f"label_y 必须是非空字符串，当前值: {self.label_y}")
+        self.max_height = config.get("max_height", 6) # 最大树高限制
 
 
         # 路径设置

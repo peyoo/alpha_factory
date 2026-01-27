@@ -11,7 +11,7 @@ import os
 import time
 from loguru import logger
 from datetime import datetime, date
-from typing import Optional, List, Any, Union
+from typing import Optional
 import pandas as pd
 import polars as pl
 
@@ -132,24 +132,39 @@ class TushareDataService:
         # 统一使用 dict 存储列名和 Dtype，既能用于 fields 参数，也能用于 astype
         tasks = [
             ("daily", self.pro.daily, {
-                "ts_code": "string", "open": "float32", "high": "float32",
-                "low": "float32", "close": "float32", "vol": "float32", "amount": "float64"
+                "ts_code": "string",
+                "open": "float32",
+                "high": "float32",
+                "low": "float32",
+                "close": "float32",
+                "vol": "float32",
+                "amount": "float64"
             }),
             ("adj_factor", self.pro.adj_factor, {
-                "ts_code": "string", "adj_factor": "float32"
+                "ts_code": "string",
+                "adj_factor": "float32"
             }),
             ("daily_basic", self.pro.daily_basic, {
-                "ts_code": "string", "turnover_rate": "float32", "pe": "float32",
-                "pb": "float32", "ps": "float32", "total_mv": "float64","circ_mv": "float64"
+                "ts_code": "string",
+                "turnover_rate": "float32",
+                "pe": "float32",
+                "pb": "float32",
+                "ps": "float32",
+                "total_mv": "float64",
+                "circ_mv": "float64"
             }),
             ("stk_limit", self.pro.stk_limit, {
-                "ts_code": "string", "up_limit": "float32", "down_limit": "float32"
+                "ts_code": "string",
+                "up_limit": "float32",
+                "down_limit": "float32"
             }),
             ("suspend_d", self.pro.suspend_d, {
-                "ts_code": "string", "suspend_type": "string"
+                "ts_code": "string",
+                "suspend_type": "string"
             }),
             ("st", self.pro.stock_st, {
-                "ts_code": "string", "is_st": "string"
+                "ts_code": "string",
+                "is_st": "string"
             }),
         ]
 

@@ -1,7 +1,8 @@
 import polars as pl
+import polars.selectors as cs
 from pathlib import Path
 from loguru import logger
-from typing import Optional, List, Union
+from typing import Optional, List
 from datetime import date, datetime
 
 from alpha.utils.config import settings
@@ -23,6 +24,71 @@ class DataProvider:
         # 确保目录存在
         self.factor_dir.mkdir(parents=True, exist_ok=True)
         logger.debug(f"✓ DataProvider 初始化完成 | 仓库路径: {self.factor_dir}")
+
+
+    def _prepare_labeled_data(self) -> pl.DataFrame:
+        """
+        从 DataProvider 获取数据并计算挖掘标签
+        计算逻辑：未来 N 日的 Open-to-Open 收益率
+        """
+
+        cache_file = self.save_dir / f"labeled_{self.label_y}.parquet"
+
+        data_provider = DataProvider()
+
+        if not self.overwrite and cache_file.exists():
+            logger.info(f"📂 发现标签数据缓存，直接加载: {cache_file}")
+            return pl.read_parquet(cache_file)
+
+        logger.info(f"📡 正在计算标签 '{self.label_y}'...")
+
+
+        # 2. 载入原始数据
+        # 挖掘因子通常需要 OHLCV，计算 OO 收益率需要 OPEN
+        lf = data_provider.load_data(
+            start_date= self.start_date,
+            end_date=self.end_date,
+            columns=["DATE", "ASSET", "OPEN", "CLOSE", "HIGH", "LOW", "VOLUME",'AMOUNT']
+        )
+
+        # 3. 计算未来收益率 (Label Generation)
+        # 计算公式: (未来第 N+1 日开盘价 / 未来第 1 日开盘价) - 1
+        # 注意：OO_1 实际上需要 shift(-2) 和 shift(-1)
+        lf = lf.sort(["ASSET", "DATE"]).with_columns([
+            (
+                    (pl.col("OPEN").shift(-(self.label_window  + 1)).over("ASSET") /
+                     pl.col("OPEN").shift(-1).over("ASSET")) - 1
+            ).alias(self.label_y)
+        ])
+
+        # 4. 截面中性化与去极值 (Z-Score)
+        # 这一步将收益率转化为“该股票在当日全市场中的相对强度”
+        date_col = "DATE"
+        lf = lf.filter(pl.col(self.label_y).is_not_null()).with_columns([
+            (
+                    (pl.col(self.label_y) - pl.col(self.label_y).mean().over(date_col))
+                    / (pl.col(self.label_y).std().over(date_col) + 1e-6)
+            )
+            .clip(-3, 3)  # 限制在正负 3 个标准差内，消除妖股噪声
+            .fill_nan(0.0)
+            .alias(self.label_y)
+        ])
+        lf = lf.sort(['ASSET', 'DATE']).with_columns([
+            pl.col("ASSET").set_sorted(),
+            # 强制将所有数值列转为 Float64，避免 GP 运行时 SchemaError
+            cs.numeric().cast(pl.Float64)
+        ])
+        # 5. 执行计算并持久化
+        df = lf.collect()
+
+        if df.height == 0:
+            raise ValueError("计算后数据为空，请检查 DataProvider 返回结果或日期范围")
+
+        df.write_parquet(cache_file, compression="snappy")
+        logger.info(f"💾 标签数据已就绪 | 行数: {df.height:,} | 均值: {df[self.label_y].mean():.4f}")
+
+        return df
+
 
     def load_data(
             self,
@@ -79,10 +145,10 @@ class DataProvider:
 
         # 状态过滤
         if exclude_suspended:
-            lf = lf.filter(pl.col("IS_SUSPENDED") == False)
+            lf = lf.filter(pl.col("IS_SUSPENDED") is False)
 
         if exclude_st:
-            lf = lf.filter(pl.col("IS_ST") == False)
+            lf = lf.filter(pl.col("IS_ST") is False)
 
         # 4. 列投影优化 (Projection Pushdown)
         if columns:
