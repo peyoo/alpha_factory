@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from datetime import date
-from typing import Optional, List
+from typing import List
 import pandas as pd
 import polars as pl
 import polars.selectors as cs
@@ -37,11 +37,14 @@ class UnifiedFactorBuilder:
 ,UP_LIMIT,F32,元,当日涨停价：用于计算封板强度。
 ,DOWN_LIMIT,F32,元,当日跌停价：用于判断极端流动性风险。
 ,ADJ_FACTOR,F32,-,Tushare 原始复权因子。
-量价指标,VOLUME,F64,股,当日成交股数（已由“手”换算为“股”，停牌日为 0）。
-,AMOUNT,F64,元,当日成交金额（已由“千元”换算为“元”，停牌日为 0）。
-基本面,TOTAL_MV,F64,元,当日总市值（已换算为“元”，用于市值加权）。
-,CIRC_MV,F64,元,当日流通市值（已换算为“元”，用于成分股筛选）。
-,PE / PB,F32,倍,估值指标（TTM/最近），停牌日由前一日填充。
+量价指标,VOLUME,F64,股,当日成交股数（已由"手"换算为"股"，停牌日为 0）。
+,AMOUNT,F64,元,当日成交金额（已由"千元"换算为"元"，停牌日为 0）。
+,TURNOVER_RATE,F32,%,当日成交量占总流通股比例（用于流动性分析）。
+基本面,TOTAL_MV,F64,元,当日总市值（已换算为"元"，用于市值加权）。
+,CIRC_MV,F64,元,当日流通市值（已换算为"元"，用于成分股筛选）。
+,PE,F32,倍,市盈率（TTM/最近），停牌日由前一日填充。
+,PB,F32,倍,市净率（最近），停牌日由前一日填充。
+,PS,F32,倍,市销率（最近），停牌日由前一日填充。
     """
 
     def __init__(self, assets_mgr: StockAssetsManager, calendar_mgr: TradeCalendarManager):
@@ -66,7 +69,7 @@ class UnifiedFactorBuilder:
             cur_end = min(end_date, date(year, 12, 31))
             self._execute_single_year_build(cur_start, cur_end, year)
 
-        logger.success(f"✨ 所有年度任务已处理完毕。")
+        logger.success("✨ 所有年度任务已处理完毕。")
 
     def _execute_single_year_build(self, start_dt: date, end_dt: date, year: int) -> None:
         """
@@ -145,7 +148,7 @@ class UnifiedFactorBuilder:
         """生成基于资产存续期的标准坐标轴"""
         date_df = pl.DataFrame({"DATE": trading_dates}).select(pl.col("DATE").cast(pl.Date))
         properties = self.assets_mgr.get_properties()
-        
+
         return (
             date_df.join(properties.select(["asset", "list_date", "delist_date"]), how="cross")
             .rename({"asset": "ASSET"})
@@ -171,7 +174,8 @@ class UnifiedFactorBuilder:
         """清洗原始行情：使用 load_as_polars 获取数据"""
         # 1. 直接获取已经转好 Date 类型的 Polars DataFrame
         df_pl = self.cache_manager.load_as_polars("daily", trading_dates)
-        if df_pl is None: return pl.LazyFrame(schema={"DATE": pl.Date, "ASSET": self.assets_mgr.stock_type})
+        if df_pl is None:
+            return pl.LazyFrame(schema={"DATE": pl.Date, "ASSET": self.assets_mgr.stock_type})
 
         # 2. 这里的 DATE 和 ASSET 已经是正确类型，保留字符串以支持新资产
         return (self._ensure_valid_assets(df_pl.lazy())
@@ -188,7 +192,8 @@ class UnifiedFactorBuilder:
 
     def _op_clean_adj(self, trading_dates: List[date]) -> pl.LazyFrame:
         df_pl = self.cache_manager.load_as_polars("adj_factor", trading_dates)
-        if df_pl is None: return pl.LazyFrame()
+        if df_pl is None:
+            return pl.LazyFrame()
 
         return self._ensure_valid_assets(df_pl.lazy()).select([
             pl.col("DATE"),
@@ -202,7 +207,10 @@ class UnifiedFactorBuilder:
             return pl.LazyFrame(schema={
                 "DATE": pl.Date,
                 "ASSET": self.assets_mgr.stock_type,
-                "PE": pl.Float32, "PB": pl.Float32,
+                "PE": pl.Float32,
+                "PB": pl.Float32,
+                "PS": pl.Float32,
+                "TURNOVER_RATE": pl.Float32,
                 "TOTAL_MV": pl.Float64,
                 "CIRC_MV": pl.Float64
             })
@@ -212,6 +220,8 @@ class UnifiedFactorBuilder:
             pl.col("ASSET"),  # 已经在 load_as_polars 重命名过，且在 _ensure_valid_assets 转了 Enum
             pl.col("pe").cast(pl.Float32).alias("PE"),
             pl.col("pb").cast(pl.Float32).alias("PB"),
+            pl.col("ps").cast(pl.Float32).alias("PS"),
+            pl.col("turnover_rate").cast(pl.Float32).alias("TURNOVER_RATE"),
             # 💡 这里一定要补齐 circ_mv，且金额换算为"元"
             (pl.col("total_mv") * 10000).cast(pl.Float64).alias("TOTAL_MV"),
             (pl.col("circ_mv") * 10000).cast(pl.Float64).alias("CIRC_MV"),
@@ -219,7 +229,8 @@ class UnifiedFactorBuilder:
 
     def _op_clean_limit(self, trading_dates: List[date]) -> pl.LazyFrame:
         df_pl = self.cache_manager.load_as_polars("stk_limit", trading_dates)
-        if df_pl is None: return pl.LazyFrame()
+        if df_pl is None:
+            return pl.LazyFrame()
         return self._ensure_valid_assets(df_pl.lazy()).select([
             pl.col("DATE"),
             pl.col("ASSET").cast(self.assets_mgr.stock_type),
@@ -265,7 +276,7 @@ class UnifiedFactorBuilder:
 
     def _op_process_indicators(self, lf: pl.LazyFrame) -> pl.LazyFrame:
         """核心业务逻辑：填充、状态判定、复权计算"""
-        ffill_cols = ["CLOSE_RAW", "ADJ_FACTOR", "TOTAL_MV", "CIRC_MV", "PE", "PB", "UP_LIMIT", "DOWN_LIMIT"]
+        ffill_cols = ["CLOSE_RAW", "ADJ_FACTOR", "TOTAL_MV", "CIRC_MV", "PE", "PB", "PS", "TURNOVER_RATE", "UP_LIMIT", "DOWN_LIMIT"]
 
         return (
             lf.sort(["ASSET", "DATE"])
@@ -308,7 +319,7 @@ class UnifiedFactorBuilder:
             pl.col("DATE").null_count().alias("null_date"),
             pl.col("ASSET").null_count().alias("null_asset")
         ]).collect()
-        
+
         if check["null_date"][0] > 0 or check["null_asset"][0] > 0:
             raise ValueError(f"✗ 关键坐标轴包含 Null 值: {check}")
         logger.debug("✓ 坐标轴完整性验证通过")
