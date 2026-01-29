@@ -9,6 +9,7 @@ import polars.selectors as cs
 from expr_codegen.tool import ExprTool
 from loguru import logger
 from deap import gp
+
 from alpha.gp.base import Expr, dummy
 
 from alpha.gp.base import get_fitness
@@ -132,8 +133,7 @@ class TSGPGenerator(GPDeapGenerator):
         if df is None:
             return {}, {}
 
-        # TODO 是否要强插一个根算子???
-        # df = root_operator(df)
+
 
         # 将所有数值列转换为 Float64，避免类型不匹配
         df = df.with_columns(cs.numeric().cast(pl.Float64))

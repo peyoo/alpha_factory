@@ -40,6 +40,7 @@ class UnifiedFactorBuilder:
 量价指标,VOLUME,F64,股,当日成交股数（已由"手"换算为"股"，停牌日为 0）。
 ,AMOUNT,F64,元,当日成交金额（已由"千元"换算为"元"，停牌日为 0）。
 ,TURNOVER_RATE,F32,%,当日成交量占总流通股比例（用于流动性分析）。
+,VWAP,F32,元,成交量加权平均价（AMOUNT/VOLUME），停牌日由前一日填充。
 基本面,TOTAL_MV,F64,元,当日总市值（已换算为"元"，用于市值加权）。
 ,CIRC_MV,F64,元,当日流通市值（已换算为"元"，用于成分股筛选）。
 ,PE,F32,倍,市盈率（TTM/最近），停牌日由前一日填充。
@@ -188,6 +189,11 @@ class UnifiedFactorBuilder:
             pl.col("close").cast(pl.Float32).alias("CLOSE_RAW"),
             (pl.col("vol") * 100).cast(pl.Float32).alias("VOLUME"),  # 手 -> 股
             (pl.col("amount") * 1000).cast(pl.Float32).alias("AMOUNT"),  # 千元 -> 元
+            # 💡 成交量加权平均价：AMOUNT / VOLUME（停牌日为 None，前向填充）
+            pl.when(pl.col("vol") > 0)
+                .then((pl.col("amount") * 1000 / (pl.col("vol") * 100)).cast(pl.Float32))
+                .otherwise(None)
+                .alias("VWAP"),
         ]))
 
     def _op_clean_adj(self, trading_dates: List[date]) -> pl.LazyFrame:
@@ -276,7 +282,7 @@ class UnifiedFactorBuilder:
 
     def _op_process_indicators(self, lf: pl.LazyFrame) -> pl.LazyFrame:
         """核心业务逻辑：填充、状态判定、复权计算"""
-        ffill_cols = ["CLOSE_RAW", "ADJ_FACTOR", "TOTAL_MV", "CIRC_MV", "PE", "PB", "PS", "TURNOVER_RATE", "UP_LIMIT", "DOWN_LIMIT"]
+        ffill_cols = ["CLOSE_RAW", "ADJ_FACTOR", "TOTAL_MV", "CIRC_MV", "PE", "PB", "PS", "TURNOVER_RATE", "VWAP", "UP_LIMIT", "DOWN_LIMIT"]
 
         return (
             lf.sort(["ASSET", "DATE"])

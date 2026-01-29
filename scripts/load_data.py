@@ -1,14 +1,8 @@
-import os
-import pandas as pd
-from datetime import date
 from loguru import logger
 
 # 导入你的模块
 from alpha.data_provider import (
     TushareDataService,
-    UnifiedFactorBuilder,
-    StockAssetsManager,
-    TradeCalendarManager
 )
 from alpha.utils.logger import setup_logger
 
@@ -21,7 +15,7 @@ def initialize_pipeline():
 
 
 
-    ts_service.sync_data('20190101', '20260101')
+    ts_service.sync_data('20190101')
     logger.info("✅ Tushare 数据同步完成。")
 
 

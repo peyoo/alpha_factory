@@ -69,7 +69,7 @@ class StockAssetsManager:
             except Exception as e:
                 logger.error(f"✗ 加载本地资产表失败: {e}")
         else:
-            logger.warning(f"⚠️ 资产表不存在，请执行 sync_from_tushare()")
+            logger.warning("⚠️ 资产表不存在，请执行 sync_from_tushare()")
 
     def _refresh_internal_state_locked(self):
         """
@@ -106,44 +106,32 @@ class StockAssetsManager:
         - 已有资产：保留原位（__pos__），仅更新属性（如 delist_date）。
         - 新增资产：追加到末尾。
         """
-        # 规范化快照
-        snap = (
-            snapshot_df.select(self.schema.keys())
-            .cast(self.schema)
-            .unique(subset="asset")
-        )
+        snap = snapshot_df.select(self.schema.keys()).cast(self.schema)
 
         with self._lock:
-            # 2. 💡 核心改动：在合并前先给当前数据打补丁
-            # 这样如果 snap 中有重复的，unique 逻辑会处理掉
-            self._df = self._apply_manual_patches(self._df)
-
             if self._df.height == 0:
-                self._df = snap
+                self._df = snap.unique(subset="asset")
             else:
-                # 1. 锁定现有资产的物理顺序
-                existing = self._df.with_row_index("__pos__")
+                # 1. 提取旧数据的 asset 和 __pos__
+                # 2. 将 snap 与旧数据合并。核心思路：
+                #    对于已有资产，我们要更新其属性，但保留旧位置。
+                #    所以我们先通过 join 拿到 snap 里的最新信息，关联到旧的位置上。
 
-                # 2. 构造属性融合表达式 (Coalesce)
-                # 如果快照中有新值则取新值，否则保留原值
-                update_exprs = [
-                    pl.coalesce([pl.col(f"{c}_new"), pl.col(c)]).alias(c)
-                    for c in self.schema.keys() if c != "asset"
-                ]
+                existing_base = self._df.select("asset").with_row_index("__pos__")
 
-                # 3. 原地更新已有资产
-                updated = (
-                    existing.join(snap, on="asset", how="left", suffix="_new")
-                    .select([pl.col("__pos__"), pl.col("asset")] + update_exprs)
-                    .sort("__pos__")
-                    .drop("__pos__")
+                # 更新已有资产属性
+                updated_existing = (
+                    existing_base
+                    .join(snap, on="asset", how="left")  # 此时 snap 里的新属性被带入旧位置
+                    .cast(self.schema)
                 )
 
-                # 4. 追加新标的
-                new_assets = snap.join(existing.select("asset"), on="asset", how="anti")
-                self._df = pl.concat([updated, new_assets], how="vertical")
+                # 获取真正的新资产
+                new_assets = snap.join(existing_base, on="asset", how="anti")
 
-            # 5. 刷新内存映射并落盘
+                # 垂直堆叠：旧的(更新后) + 新的(追加)
+                self._df = pl.concat([updated_existing, new_assets], how="vertical")
+
             self._refresh_internal_state_locked()
             self._save_locked()
 
@@ -151,13 +139,15 @@ class StockAssetsManager:
         """持久化资产表。"""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         # 写盘前必须将 Enum/Categorical 转回 Utf8 以保持 Parquet 的通用兼容性
+        temp_path = self.path.with_suffix(".tmp")
         (
             self._df.with_columns([
                 pl.col("asset").cast(pl.Utf8),
                 pl.col("exchange").cast(pl.Utf8)
             ])
-            .write_parquet(self.path, compression="snappy")
+            .write_parquet(temp_path, compression="snappy")
         )
+        temp_path.replace(self.path)  # 原子替换
 
     def _apply_manual_patches(self, current_df: pl.DataFrame) -> pl.DataFrame:
         """
@@ -203,7 +193,8 @@ class StockAssetsManager:
         try:
             import tushare as ts
             token = getattr(settings, "TUSHARE_TOKEN", None)
-            if not token: raise ValueError("TUSHARE_TOKEN 未配置")
+            if not token:
+                raise ValueError("TUSHARE_TOKEN 未配置")
             pro = ts.pro_api(token)
 
             logger.info("📡 正在拉取 Tushare 股票快照 (L/D/P)...")
@@ -216,7 +207,8 @@ class StockAssetsManager:
                 if df_pd is not None and not df_pd.empty:
                     parts.append(pl.from_pandas(df_pd))
 
-            if not parts: return
+            if not parts:
+                return
 
             # 合并并清理格式
             snapshot = (

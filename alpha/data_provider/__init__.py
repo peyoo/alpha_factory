@@ -16,28 +16,15 @@
 from __future__ import annotations
 
 # 1. 基础服务与缓存管理 (L0/L1)
-from alpha.data_provider.cache_manager import HDF5CacheManager
-from alpha.data_provider.tushare_service import TushareDataService, RateLimiter
-
-# 2. 核心构建引擎 (L2/L3)
-from alpha.data_provider.unified_factor_builder import UnifiedFactorBuilder
+from alpha.data_provider.tushare_service import TushareDataService
 
 # 3. 统一读取接口 (L4)
 from alpha.data_provider.data_provider import DataProvider
 
-# 4. 辅助元数据管理 (Assets & Calendar)
-from alpha.data_provider.stock_assets_manager import StockAssetsManager
-from alpha.data_provider.trade_calendar_manager import TradeCalendarManager
-
 # 显式暴露接口，方便 from alpha.data_provider import *
 __all__ = [
-    "HDF5CacheManager",
     "TushareDataService",
-    "RateLimiter",
-    "UnifiedFactorBuilder",
     "DataProvider",
-    "StockAssetsManager",
-    "TradeCalendarManager",
 ]
 
 # --- 快速诊断信息 ---

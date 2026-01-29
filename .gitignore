@@ -25,6 +25,9 @@ wheels/
 pip-log.txt
 pip-delete-this-directory.txt
 
+scripts/logs/
+scripts/runs/
+
 # Environment
 .env
 .venv/
