@@ -15,6 +15,8 @@ from alpha.gp.base import Expr, dummy
 from alpha.gp.base import get_fitness
 
 from alpha.gp.generator import GPDeapGenerator
+from alpha.polars.utils import CUSTOM_OPERATORS
+
 
 def get_groupby_from_tuple(tup, func_name, drop_cols):
     """从传入的元组中生成分组运行代码"""
@@ -168,7 +170,7 @@ class CSGPGenerator(GPDeapGenerator):
         logger.info("{}代{}批 代码 开始执行。共 {} 条 表达式", gen, batch_id, cnt)
         tic = time.perf_counter()
 
-        globals_ = {}
+        globals_ = {**CUSTOM_OPERATORS}
         exec(codes, globals_)
         df_output = globals_['main'](df_input.lazy(), ge_date_idx=0).collect()
 

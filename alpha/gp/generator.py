@@ -48,6 +48,9 @@ from alpha.utils.config import settings
 from typing import TypeVar
 from polars import DataFrame as _pl_DataFrame
 from polars import LazyFrame as _pl_LazyFrame
+
+from alpha.utils.schema import F
+
 DataFrame = TypeVar("DataFrame", _pl_LazyFrame, _pl_DataFrame)
 
 
@@ -96,11 +99,23 @@ class GPDeapGenerator(object):
         self.start_date = config.get("start_date", "20190101")
         self.end_date = config.get("end_date", "20241231")
         self.split_date = config.get("split_date", datetime(2022, 1, 1))
-        self.overwrite = config.get("overwrite_data", False)
+        self.opt_names = config.get("opt_names",("ic_mean", "ic_ir", "complexity"))  # 多目标优化名称及权重
+        self.opt_weights = config.get("opt_weights",(1.0, 1.0, -0.01))  # 多目标优化名称及权重
+        # 整体种群fitness函数,输入参数为:df,factors,split_date
+        # 其它参数采用默认名
+        self.fitness_population_func = config.get("fitness_population_func", None)
+
+        self.pool_func = config.get("pool_func", None)  # 股票池函数
+        self.label_func = config.get("label_func", None)  # 标签计算函数
+        self.random_window_func = config.get("random_window_func", None)  # 随机窗口函数
+        self.extra_terminal_func = config.get("extra_terminal_func", [])  # 额外终端因子计算函数
+
+        self.terminals = config.get('terminals', [])  # 终端因子列表
+
 
         # --- 3. 标签计算配置 ---
         self.label_window = config.get("label_window", 1) # 计算标签的未来窗口大小
-        self.label_y = config.get("label_y", f"RETURN_OO_{self.label_window}")  # 目标标签列名,当前仅支持 OPEN-OPEN 收益率
+        self.label_y = config.get("label_y", f"LABEL_OO_{self.label_window}")  # 目标标签列名,当前仅支持 OPEN-OPEN 收益率
 
         # --- 4. 进化算法超参数 ---
         self.mu = config.get("mu", 300) # 种群保留规模
@@ -118,43 +133,6 @@ class GPDeapGenerator(object):
 
         logger.info(f"✓ GP 生成器初始化完成 | 标签: {self.label_y} | 批大小: {self.batch_size}")
 
-        self.pset = self._build_pset()
-        self._setup_deap_creator()
-
-
-    def _add_label(self, df: DataFrame) -> DataFrame:
-        """为数据添加标签列"""
-        if self.label_y not in df.collect_schema().names():
-            # 3. 计算未来收益率 (Label Generation)
-            # 计算公式: (未来第 N+1 日开盘价 / 未来第 1 日开盘价) - 1
-            # 注意：OO_1 实际上需要 shift(-2) 和 shift(-1)
-            df = df.sort(["ASSET", "DATE"]).with_columns([
-                (
-                        (pl.col("OPEN").shift(-(self.label_window + 1)).over("ASSET") /
-                         pl.col("OPEN").shift(-1).over("ASSET")) - 1
-                ).alias(self.label_y)
-            ])
-
-            # 4. 截面中性化与去极值 (Z-Score)
-            # 这一步将收益率转化为“该股票在当日全市场中的相对强度”
-            date_col = "DATE"
-            df = df.filter(pl.col(self.label_y).is_not_null()).with_columns([
-                (
-                        (pl.col(self.label_y) - pl.col(self.label_y).mean().over(date_col))
-                        / (pl.col(self.label_y).std().over(date_col) + 1e-6)
-                )
-                .clip(-3, 3)  # 限制在正负 3 个标准差内，消除妖股噪声
-                .fill_nan(0.0)
-                .alias(self.label_y)
-            ])
-        return df
-
-    def _add_extra_features(self, df: DataFrame) -> DataFrame:
-        """为数据添加额外特征列"""
-        return df
-
-    def _static_universe(self, df: DataFrame) -> DataFrame:
-        return df
 
     def _prepare_labeled_data(self) -> DataFrame:
         """
@@ -163,44 +141,29 @@ class GPDeapGenerator(object):
         """
 
         cache_file = self.save_dir / f"labeled_{self.label_y}.parquet"
-        if not self.overwrite and cache_file.exists():
-            logger.info(f"📂 发现标签数据缓存，直接加载: {cache_file}")
-            df = pl.read_parquet(cache_file)
-            logger.info(f"💾 标签数据已就绪 | 行数: {df.height:,} | 均值: {df[self.label_y].mean():.4f}")
-            return df
-
         logger.info(f"📡 正在计算标签 '{self.label_y}'...")
 
         data_provider = DataProvider()
-
 
         # 2. 载入原始数据
         # 挖掘因子通常需要 OHLCV，计算 OO 收益率需要 OPEN
         lf = data_provider.load_data(
             start_date= self.start_date,
             end_date=self.end_date,
+            funcs=[self.pool_func,self.label_func,self.extra_terminal_func],
+            select_cols=[F.POOL_MASK,self.label_y,*self.terminals],
+            cache_path= cache_file
         )
-
-        lf = self._add_label(lf)
-        lf = self._add_extra_features(lf)
-
-        df = lf.collect()
-        df = self._static_universe(df)
-
         # 排序
-        df = df.sort(['ASSET', 'DATE']).with_columns([
+        lf = lf.sort(['ASSET', 'DATE']).with_columns([
             pl.col("ASSET").set_sorted(),
             # 强制将所有数值列转为 Float64，避免 GP 运行时 SchemaError
             cs.numeric().cast(pl.Float64)
         ])
+        logger.info("💾 标签数据已就绪")
 
-        if df.height == 0:
-            raise ValueError("计算后数据为空，请检查 DataProvider 返回结果或日期范围")
+        return lf
 
-        df.write_parquet(cache_file, compression="snappy")
-        logger.info(f"💾 标签数据已就绪 | 行数: {df.height:,} | 均值: {df[self.label_y].mean():.4f}")
-
-        return df
 
     def run_workflow(self, n_gen: int = 10) -> Tuple[List, Any, Any]:
         """
@@ -229,26 +192,6 @@ class GPDeapGenerator(object):
 
         return result
 
-    def _setup_deap_creator(self) -> None:
-        """
-        初始化 DEAP creator 类型系统
-
-        创建自定义的 Fitness 和 Individual 类型，用于遗传编程。
-        使用多目标优化：(IC_train, IC_test) 或 (IC, IR)
-
-        Note:
-            creator.create 会修改全局状态，重复调用会报错。
-            这里使用 hasattr 检查避免重复创建。
-        """
-        # weights=(1.0, 1.0) 代表同时最大化样本内和样本外 IC
-        if not hasattr(creator, "FitnessMulti"):
-            creator.create("FitnessMulti", base.Fitness, weights=(1.0, 1.0))
-            logger.debug("✓ 创建 FitnessMulti 类型")
-
-        if not hasattr(creator, "Individual"):
-            creator.create("Individual", PrimitiveTree, fitness=creator.FitnessMulti)
-            logger.debug("✓ 创建 Individual 类型")
-
     def _build_pset(self) -> gp.PrimitiveSetTyped:
         """
         精简版算子集：专为 LightGBM/ElasticNet 特征工程设计
@@ -268,6 +211,9 @@ class GPDeapGenerator(object):
         Returns:
             base.Toolbox: DEAP 工具箱实例
         """
+        creator.create("FitnessMulti", base.Fitness, weights=self.opt_weights)
+        creator.create("Individual", PrimitiveTree, fitness=creator.FitnessMulti)
+
         toolbox = base.Toolbox()
 
         # 树生成算法: 半数半萌法 (Half and Half)
@@ -321,7 +267,7 @@ class GPDeapGenerator(object):
         Args:
             evaluate_func: 评估函数（未使用，由 map 调用要求）
             individuals: 当前代的个体列表
-            gen_iter: 代数迭代器
+            gen: 代数迭代器
             label: 标签列名
             split_date: 训练/测试分割日期
             input_data: 输入数据
@@ -331,12 +277,6 @@ class GPDeapGenerator(object):
         """
         g = next(gen)
         logger.info(f">>> 第 {g} 代 | 种群大小: {len(individuals)}")
-
-        # # 1. 备份原始种群（因子表达式）（断点恢复用）
-        # expr_backup_path = self.save_dir / f'exprs_{g:03d}.pkl'
-        # with open(expr_backup_path, 'wb') as f:
-        #     pickle.dump(individuals, f)
-        # logger.debug(f"✓ 种群已备份至: {expr_backup_path}")
 
         # 2. 缓存管理
         cache_path = self.save_dir / 'fitness_cache.pkl'
@@ -411,13 +351,11 @@ class GPDeapGenerator(object):
             ValueError: 如果输入数据无效
         """
         # 验证输入数据
-        if input_data.height == 0:
-            raise ValueError("输入数据为空")
-        if self.label_y not in input_data.columns:
+        if self.label_y not in input_data.collect_schema().names():
             raise ValueError(f"输入数据缺少标签列: {self.label_y}")
 
         logger.info(f"🚀 启动 GP 进化 | 代数: {n_gen} | 种群: {n_pop}")
-
+        self.pset = self._build_pset()
         toolbox = self.build_toolbox(input_data)
         stats = self.build_statistics()
         hof = tools.HallOfFame(self.hof_size)

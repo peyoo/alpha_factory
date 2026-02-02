@@ -12,6 +12,7 @@ from alpha.utils.config import settings
 from alpha.data_provider.cache_manager import HDF5CacheManager
 from alpha.data_provider.stock_assets_manager import StockAssetsManager
 from alpha.data_provider.trade_calendar_manager import TradeCalendarManager
+from alpha.utils.schema import F
 
 
 class UnifiedFactorBuilder:
@@ -105,12 +106,12 @@ class UnifiedFactorBuilder:
             # 多路左连接
             panel = (
                 skeleton
-                .join(daily_lf, on=["DATE", "ASSET"], how="left")
-                .join(adj_lf, on=["DATE", "ASSET"], how="left")
-                .join(basic_lf, on=["DATE", "ASSET"], how="left")
-                .join(limit_lf, on=["DATE", "ASSET"], how="left")
-                .join(st_lf, on=["DATE", "ASSET"], how="left")
-                .join(suspend_lf, on=["DATE", "ASSET"], how="left")
+                .join(daily_lf, on=[F.DATE, F.ASSET], how="left")
+                .join(adj_lf, on=[F.DATE, F.ASSET], how="left")
+                .join(basic_lf, on=[F.DATE, F.ASSET], how="left")
+                .join(limit_lf, on=[F.DATE, F.ASSET], how="left")
+                .join(st_lf, on=[F.DATE, F.ASSET], how="left")
+                .join(suspend_lf, on=[F.DATE, F.ASSET], how="left")
             )
 
             # 核心指标处理 (包含 ST 填充、价格补全、复权计算)
@@ -126,7 +127,7 @@ class UnifiedFactorBuilder:
             # 💡 关键：过滤掉 Buffer 天数，只保留当前年度的数据落盘
             # 但此时 1 月 1 日的数据已经通过 Buffer 完成了前向填充
             df_year = df_full.filter(
-                (pl.col("DATE") >= start_dt) & (pl.col("DATE") <= end_dt)
+                (pl.col(F.DATE) >= start_dt) & (pl.col(F.DATE) <= end_dt)
             )
 
             if df_year.is_empty():
@@ -147,15 +148,14 @@ class UnifiedFactorBuilder:
 
     def _generate_skeleton_lf(self, trading_dates: List[date]) -> pl.LazyFrame:
         """生成基于资产存续期的标准坐标轴"""
-        date_df = pl.DataFrame({"DATE": trading_dates}).select(pl.col("DATE").cast(pl.Date))
+        date_df = pl.DataFrame({F.DATE: trading_dates}).select(pl.col(F.DATE).cast(pl.Date))
         properties = self.assets_mgr.get_properties()
 
         return (
-            date_df.join(properties.select(["asset", "list_date", "delist_date"]), how="cross")
-            .rename({"asset": "ASSET"})
+            date_df.join(properties.select([F.ASSET, "list_date", "delist_date"]), how="cross")
             .filter(
-                (pl.col("DATE") >= pl.col("list_date")) &
-                (pl.col("delist_date").is_null() | (pl.col("DATE") <= pl.col("delist_date")))
+                (pl.col(F.DATE) >= pl.col("list_date")) &
+                (pl.col("delist_date").is_null() | (pl.col(F.DATE) <= pl.col("delist_date")))
             )
             .drop(["list_date", "delist_date"])
             .lazy()
@@ -176,13 +176,13 @@ class UnifiedFactorBuilder:
         # 1. 直接获取已经转好 Date 类型的 Polars DataFrame
         df_pl = self.cache_manager.load_as_polars("daily", trading_dates)
         if df_pl is None:
-            return pl.LazyFrame(schema={"DATE": pl.Date, "ASSET": self.assets_mgr.stock_type})
+            return pl.LazyFrame(schema={F.DATE: pl.Date, F.ASSET: self.assets_mgr.stock_type})
 
         # 2. 这里的 DATE 和 ASSET 已经是正确类型，保留字符串以支持新资产
         return (self._ensure_valid_assets(df_pl.lazy())
         .select([
-            pl.col("DATE"),
-            pl.col("ASSET").cast(self.assets_mgr.stock_type),  # 保留为字符串而非 Enum
+            pl.col(F.DATE),
+            pl.col(F.ASSET).cast(self.assets_mgr.stock_type),  # 保留为字符串而非 Enum
             pl.col("open").cast(pl.Float32).alias("OPEN_RAW"),
             pl.col("high").cast(pl.Float32).alias("HIGH_RAW"),
             pl.col("low").cast(pl.Float32).alias("LOW_RAW"),
@@ -202,8 +202,8 @@ class UnifiedFactorBuilder:
             return pl.LazyFrame()
 
         return self._ensure_valid_assets(df_pl.lazy()).select([
-            pl.col("DATE"),
-            pl.col("ASSET").cast(self.assets_mgr.stock_type),  # 保留为字符串
+            pl.col(F.DATE),
+            pl.col(F.ASSET).cast(self.assets_mgr.stock_type),  # 保留为字符串
             pl.col("adj_factor").cast(pl.Float32).alias("ADJ_FACTOR"),
         ])
 
@@ -211,8 +211,8 @@ class UnifiedFactorBuilder:
         df_pl = self.cache_manager.load_as_polars("daily_basic", trading_dates)
         if df_pl is None:
             return pl.LazyFrame(schema={
-                "DATE": pl.Date,
-                "ASSET": self.assets_mgr.stock_type,
+                F.DATE: pl.Date,
+                F.ASSET: self.assets_mgr.stock_type,
                 "PE": pl.Float32,
                 "PB": pl.Float32,
                 "PS": pl.Float32,
@@ -222,8 +222,8 @@ class UnifiedFactorBuilder:
             })
 
         return self._ensure_valid_assets(df_pl.lazy()).select([
-            pl.col("DATE"),
-            pl.col("ASSET"),  # 已经在 load_as_polars 重命名过，且在 _ensure_valid_assets 转了 Enum
+            pl.col(F.DATE),
+            pl.col(F.ASSET),  # 已经在 load_as_polars 重命名过，且在 _ensure_valid_assets 转了 Enum
             pl.col("pe").cast(pl.Float32).alias("PE"),
             pl.col("pb").cast(pl.Float32).alias("PB"),
             pl.col("ps").cast(pl.Float32).alias("PS"),
@@ -238,8 +238,8 @@ class UnifiedFactorBuilder:
         if df_pl is None:
             return pl.LazyFrame()
         return self._ensure_valid_assets(df_pl.lazy()).select([
-            pl.col("DATE"),
-            pl.col("ASSET").cast(self.assets_mgr.stock_type),
+            pl.col(F.DATE),
+            pl.col(F.ASSET).cast(self.assets_mgr.stock_type),
             pl.col("up_limit").cast(pl.Float32).alias("UP_LIMIT"),
             pl.col("down_limit").cast(pl.Float32).alias("DOWN_LIMIT"),
         ])
@@ -250,14 +250,14 @@ class UnifiedFactorBuilder:
 
         if df_pl is None:
             return pl.LazyFrame(schema={
-                "DATE": pl.Date,
-                "ASSET": self.assets_mgr.stock_type,
+                F.DATE: pl.Date,
+                F.ASSET: self.assets_mgr.stock_type,
                 "_TMP_SUSPEND_": pl.Boolean # 💡 使用临时前缀，方便批量剔除
             })
 
         return self._ensure_valid_assets(df_pl.lazy()).select([
-            pl.col("DATE"),
-            pl.col("ASSET"),
+            pl.col(F.DATE),
+            pl.col(F.ASSET),
             pl.lit(True).alias("_TMP_SUSPEND_")
         ])
 
@@ -269,14 +269,14 @@ class UnifiedFactorBuilder:
         # 如果没有 ST 数据（可能该年度无 ST 股票或未同步），返回带 Schema 的空表
         if df_pl is None:
             return pl.LazyFrame(schema={
-                "DATE": pl.Date,
-                "ASSET": self.assets_mgr.stock_type,
+                F.DATE: pl.Date,
+                F.ASSET: self.assets_mgr.stock_type,
                 "IS_ST": pl.Boolean
             })
 
         return self._ensure_valid_assets(df_pl.lazy()).select([
-            pl.col("DATE"),
-            pl.col("ASSET").cast(self.assets_mgr.stock_type),
+            pl.col(F.DATE),
+            pl.col(F.ASSET).cast(self.assets_mgr.stock_type),
             pl.lit(True).alias("IS_ST")
         ])
 
@@ -285,7 +285,7 @@ class UnifiedFactorBuilder:
         ffill_cols = ["CLOSE_RAW", "ADJ_FACTOR", "TOTAL_MV", "CIRC_MV", "PE", "PB", "PS", "TURNOVER_RATE", "VWAP", "UP_LIMIT", "DOWN_LIMIT"]
 
         return (
-            lf.sort(["ASSET", "DATE"])
+            lf.sort([F.ASSET, F.DATE])
             .with_columns([
                 # 1. 综合停牌判定：显式标记 OR 价格缺失
                 (
@@ -293,10 +293,10 @@ class UnifiedFactorBuilder:
                 ).alias("IS_SUSPENDED"),
 
                 # ST 状态填充
-                pl.col("IS_ST").fill_null(False).forward_fill().over("ASSET"),
+                pl.col("IS_ST").fill_null(False).forward_fill().over(F.ASSET),
 
                 # 时序填充
-                pl.col(ffill_cols).forward_fill().over("ASSET"),
+                pl.col(ffill_cols).forward_fill().over(F.ASSET),
                 pl.col(["VOLUME", "AMOUNT"]).fill_null(0.0),
             ])
             .with_columns([
@@ -322,8 +322,8 @@ class UnifiedFactorBuilder:
         """数据质量验证"""
         # 示例验证：检查关键主键是否包含 Null
         check = lf.select([
-            pl.col("DATE").null_count().alias("null_date"),
-            pl.col("ASSET").null_count().alias("null_asset")
+            pl.col(F.DATE).null_count().alias("null_date"),
+            pl.col(F.ASSET).null_count().alias("null_asset")
         ]).collect()
 
         if check["null_date"][0] > 0 or check["null_asset"][0] > 0:

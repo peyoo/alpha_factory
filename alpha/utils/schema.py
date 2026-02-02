@@ -27,11 +27,20 @@ class F(StrEnum):
     IS_ST = "IS_ST"
     IS_SUSPENDED = "IS_SUSPENDED"
 
+    POOL_MASK = "POOL_MASK"    # 股票池掩码
+
+
     # 内部衍生列
-    POOL_TRADABLE = "POOL_TRADABLE"
     LIST_DAYS = "LIST_DAYS"
-    IS_UP_LIMIT = "is_up_limit"
-    IS_DOWN_LIMIT = "is_down_limit"
+    IS_UP_LIMIT = "IS_UP_LIMIT"
+    IS_DOWN_LIMIT = "IS_DOWN_LIMIT"
+
+    INDUSTRY = "INDUSTRY"
+
+    EXCHANGE = "EXCHANGE"
+
+    NOT_BUYABLE = "not_buyable"
+    NOT_SELLABLE = "not_sellable"
 
 class DataSchema:
     # 1. 唯一标识列 (Key Columns)

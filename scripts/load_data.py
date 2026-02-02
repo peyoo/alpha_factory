@@ -15,7 +15,7 @@ def initialize_pipeline():
 
 
 
-    ts_service.sync_data('20190101')
+    ts_service.sync_data('20180101')
     logger.info("✅ Tushare 数据同步完成。")
 
 

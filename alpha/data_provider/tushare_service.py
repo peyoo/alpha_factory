@@ -20,6 +20,7 @@ from alpha.data_provider.cache_manager import HDF5CacheManager
 from alpha.data_provider.unified_factor_builder import UnifiedFactorBuilder
 from alpha.data_provider.trade_calendar_manager import TradeCalendarManager
 from alpha.data_provider.stock_assets_manager import StockAssetsManager
+from alpha.utils.schema import F
 
 
 class DataSyncError(RuntimeError):
@@ -285,7 +286,7 @@ class TushareDataService:
         try:
             # 极致性能：只扫描不加载，获取最大值
             # 注意：统一因子库的日期列是 DATE（而非 trade_date）
-            max_date = pl.scan_parquet(str(path)).select(pl.col("DATE").max()).collect().item()
+            max_date = pl.scan_parquet(str(path)).select(pl.col(F.DATE).max()).collect().item()
             if max_date:
                 if isinstance(max_date, pl.Date):
                     max_date = max_date.as_py()

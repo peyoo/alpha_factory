@@ -3,88 +3,42 @@
 
 """
 
-
+import polars.selectors as cs
 from typing import List
 
 import polars as pl
+from loguru import logger
 
-
-def batch_calc_rank_ic(df: pl.DataFrame,
-                       factor_pattern: str = r"^factor_.*",
-                       ret_col: str = "target_ret",
-                       date_col: str = "DATE") -> pl.DataFrame:
-    """
-    大批量并行计算 Rank IC
-    factor_pattern: 匹配所有因子的正则表达式
-    ret_col: 目标收益列名
-    date_col: 日期列名
-    结果返回每日各因子的 IC 宽表
-
-    """
-    # 1. 获取所有因子列名
-    factor_cols = df.select(pl.col(factor_pattern)).columns
-
-    # 2. 核心计算：一次 group_by 完成所有因子的 Spearman 相关性计算
-    # 这里直接对因子和收益率进行 rank 预处理，然后算 pearson，在数学上等价于 spearman 且更快
-    ic_series = (
-        df.group_by(date_col)
-        .agg([
-            pl.corr(
-                pl.col(f).rank(),
-                pl.col(ret_col).rank(),
-                method="pearson"
-            ).alias(f)
-            for f in factor_cols
-        ])
-        .sort(date_col)
-    )
-    return ic_series
-
-
-def batch_calc_ic_metrics(ic_series: pl.DataFrame, date_col: str = "DATE") -> pl.DataFrame:
-    """
-    输入是每日各因子的 IC 宽表
-    输出是每个因子的 IC Mean, ICIR, t-stat 等
-    结果返回因子 IC 汇总统计表
-
-    """
-    # 剔除日期列，剩下全是因子列
-    factor_cols = [c for c in ic_series.columns if c != date_col]
-
-    # 使用 unpivot (melt) 将宽表转回长表，方便统一聚合统计
-    metrics = (
-        ic_series.unpivot(
-            index=date_col,
-            on=factor_cols,
-            variable_name="factor",
-            value_name="ic"
-        )
-        .group_by("factor")
-        .agg([
-            pl.col("ic").mean().alias("ic_mean"),
-            pl.col("ic").std().alias("ic_std"),
-            (pl.col("ic").mean() / pl.col("ic").std()).alias("ic_ir"),
-            (pl.col("ic").mean() / pl.col("ic").std() * pl.count().sqrt()).alias("t_stat"),
-            # 胜率：IC > 0 的比例
-            (pl.col("ic").filter(pl.col("ic") > 0).count() / pl.count()).alias("win_rate")
-        ])
-    )
-    return metrics
+from alpha.utils.schema import F
 
 
 def batch_get_ic_summary(df: pl.DataFrame,
                          factor_pattern: str = r"^factor_.*",
-                         ret_col: str = "ret_real_trade", # 建议这里默认值与你常用的保持一致
-                         date_col: str = "DATE") -> pl.DataFrame:
+                         ret_col: str = "LABEL_OO_1", # 建议这里默认值与你常用的保持一致
+                         # label_ic_col: str = "LABEL_IC",
+
+                         split_date: str = None,
+                         date_col: str = F.DATE,
+                         pool_mask_col: str = F.POOL_MASK  # 🆕 新增股票池参数
+                         ) -> pl.DataFrame:
+    lf = df.lazy() if isinstance(df, pl.DataFrame) else df
+
     # 1. 自动获取因子列
-    factor_cols = df.select(pl.col(factor_pattern)).collect_schema().names()
-    if not factor_cols:
-        raise ValueError(f"未找到匹配 {factor_pattern} 的因子列")
+    # 如果 factor_pattern 被误传成了列表（例如因子名列表），直接使用该列表
+    if isinstance(factor_pattern, (list, tuple)):
+        factor_cols = [c for c in factor_pattern if c in lf.collect_schema().names()]
+    else:
+        # 否则使用正则匹配
+        factor_cols = lf.select(cs.matches(factor_pattern)).collect_schema().names()
+
+    # A. 首先应用股票池过滤
+    if pool_mask_col in lf.collect_schema().names():
+        lf = lf.filter(pl.col(pool_mask_col))
+        logger.debug(f"ℹ️ 已应用股票池掩码: {pool_mask_col}")
 
     # 2. 构造计算链路
     ic_summary = (
-        df.lazy()
-        .select([date_col, ret_col] + factor_cols)
+        lf.select([date_col, ret_col] + factor_cols)
         .drop_nulls()  # 【关键修复】确保参与计算的行没有空值
         .group_by(date_col)
         .agg([
@@ -99,20 +53,27 @@ def batch_get_ic_summary(df: pl.DataFrame,
             pl.col("ic").std().alias("ic_std"),
             # 增加 fill_nan(0) 防止除以 0 的情况
             (pl.col("ic").mean() / pl.col("ic").std().fill_nan(1e-9)).alias("ic_ir"),
+
             (pl.col("ic").mean() / pl.col("ic").std().fill_nan(1e-9) * pl.count().sqrt()).alias("t_stat"),
             (pl.col("ic").filter(pl.col("ic") > 0).count() / pl.count()).alias("win_rate")
-        ])
+        ]).with_columns(
+            [# 添加一个ic_mean_abs列，方便后续筛选
+            pl.col("ic_mean").abs().alias("ic_mean_abs"),
+            pl.col('ic_ir').abs().alias('ic_ir_abs')
+            ]
+        )
         .collect()
     )
+
     return ic_summary
 
 def batch_calc_factor_decay_stats(
         df: pl.DataFrame,
         factor_pattern: List[str],
         ret_col: str,
-        date_col: str = "DATE",
-        asset_col: str = "ASSET",
-        max_lag: int = 10
+        max_lag: int = 10,
+        date_col: str = F.DATE,
+        asset_col: str = F.ASSET,
 ) -> pl.DataFrame:
     """
     大批量计算因子 IC 衰减图谱
@@ -248,8 +209,8 @@ def batch_calc_factor_full_metrics(
 def batch_calc_factor_turnover(
         df: pl.DataFrame,
         factor_pattern: str = r"^factor_.*",
-        date_col: str = "DATE",
-        asset_col: str = "ASSET",
+        date_col: str = F.DATE,
+        asset_col: str = F.ASSET,
         lag: int = 1
 ) -> pl.DataFrame:
     """
@@ -288,7 +249,8 @@ def batch_calc_quantile_returns(
         df: pl.DataFrame,
         factor_pattern: str = r"^factor_.*",
         ret_col: str = "target_ret",
-        date_col: str = "DATE",
+        date_col: str = F.DATE,
+        asset_col: str = F.ASSET,
         n_bins: int = 5  # 分为5层
 ) -> pl.DataFrame:
     """
@@ -299,7 +261,7 @@ def batch_calc_quantile_returns(
     # 1. 长表化并计算分层
     # 结果：[date, factor, factor_value, target_ret]
     q_long = df.lazy().unpivot(
-        index=[date_col, "ASSET", ret_col],
+        index=[date_col, asset_col, ret_col],
         on=factor_cols,
         variable_name="factor",
         value_name="value"
@@ -340,6 +302,8 @@ def batch_factor_alpha_lens(
     """
     【终极全能版】大批量因子体检引擎：IC/IR + 衰减 + 换手 + 分层收益
     """
+    # lf = df.lazy() if isinstance(df, pl.DataFrame) else df
+
     factor_cols = df.select(pl.col(factor_pattern)).columns
 
     # --- 第一部分：基础指标与衰减 (IC/IR/t-stat/WinRate) ---

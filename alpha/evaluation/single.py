@@ -10,13 +10,14 @@ import polars as pl
 from loguru import logger
 
 from alpha.evaluation.batch import batch_get_ic_summary
+from alpha.utils.schema import F
 
 
 def single_calc_ic_analysis(
         df: pl.DataFrame,
         factor_col: str,
         ret_col: str,
-        date_col: str = "DATE",
+        date_col: str = F.DATE,
         rolling_window: int = 20
 ) -> pl.DataFrame:
     """
@@ -73,15 +74,16 @@ def single_calc_quantile_metrics(
         df: Union[pl.DataFrame, pl.LazyFrame],  # 修改支持 LazyFrame
         factor_col: str,
         ret_col: str,
-        date_col: str = "DATE",
-        asset_col: str = "ASSET",
-        pool_mask_col: str = 'POOL',
-        n_bins: int = 5,
+        date_col: str = F.DATE,
+        asset_col: str = F.ASSET,
+        pool_mask_col: str = F.POOL_MASK,
+        n_bins: int = 10,
         mode: Literal['long_only', 'long_short', 'active'] = 'active',
         period: int = 1,
         cost: float = 0.0,
         est_turnover: float = 0.2,
-        annual_days: int = 251
+        annual_days: int = 251,
+        direction: Literal[1, -1] = 1,  # 🆕 新增方向参数
 ) -> dict:
     # --- 0. 统一转为 LazyFrame 以便利用下压优化 ---
     lf = df.lazy() if isinstance(df, pl.DataFrame) else df
@@ -133,15 +135,26 @@ def single_calc_quantile_metrics(
 
     # --- 4. 扣除成本 ---
     reb_cost = est_turnover * period * cost
+    # --- 根据方向确定多头和空头桶 ---
+    if direction == 1:
+        long_col = f"Q{n_bins}"  # 因子值最大为多头
+        short_col = "Q1"
+    else:
+        long_col = "Q1"  # 因子值最小为多头
+        short_col = f"Q{n_bins}"
     all_q_cols = [f"Q{i + 1}" for i in range(n_bins)]
 
     if mode == "long_only":
-        res_series = res_series.with_columns(pl.col("Q1").alias("raw_ret"))
+        res_series = res_series.with_columns(pl.col(long_col).alias("raw_ret"))
     elif mode == "long_short":
-        res_series = res_series.with_columns((pl.col("Q1") - pl.col(f"Q{n_bins}")).alias("raw_ret"))
+        # 此时如果是 direction=-1，会自动变成 Q1 - Q10
+        res_series = res_series.with_columns((pl.col(long_col) - pl.col(short_col)).alias("raw_ret"))
         reb_cost = reb_cost * 2
     elif mode == "active":
-        res_series = res_series.with_columns((pl.col("Q1") - pl.mean_horizontal(all_q_cols)).alias("raw_ret"))
+        # 使用 long_col 减去截面平均
+        res_series = res_series.with_columns(
+            (pl.col(long_col) - pl.mean_horizontal(all_q_cols)).alias("raw_ret")
+        )
 
     res_series = res_series.with_columns(
         pl.when(pl.col(date_col).is_in(rebalance_dates))
@@ -195,50 +208,54 @@ def single_calc_quantile_metrics(
         }
     }
 
-
 def single_calc_decay_turnover(
         df: Union[pl.DataFrame, pl.LazyFrame],
         factor_col: str,
         ret_col: str,
-        date_col: str = "DATE",
-        asset_col: str = "ASSET",
+        date_col: str = F.DATE,
+        asset_col: str = F.ASSET,
+        pool_mask_col: str = F.POOL_MASK,
         max_lag: int = 10
 ) -> dict:
-    # 0. 保证为 Lazy
     lf = df.lazy() if isinstance(df, pl.DataFrame) else df
 
-    # 1. 预处理：只保留必要的列，减少数据载入量
-    lf = lf.select([date_col, asset_col, factor_col, ret_col])
-
-    # 2. 【核心优化】平铺位移列
-    # 我们不在 group_by 里做 shift().over()，而是先在全局做好位移
-    # 这样 Polars 内部会优化成一次数据重排
-    shift_cols = [
+    # 1. 在“完整时序”上计算位移列（不要先 filter！）
+    # 这样 shift(1).over(asset) 才能找到物理上的前一个交易日
+    shift_exprs = [
         pl.col(ret_col).shift(-i).over(asset_col).alias(f"_ret_lag_{i}")
         for i in range(max_lag)
     ]
-    shift_cols.append(pl.col(factor_col).shift(1).over(asset_col).alias("_factor_pre"))
+    shift_exprs.append(pl.col(factor_col).shift(1).over(asset_col).alias("_factor_pre"))
 
-    # 3. 计算每日相关系数
-    # 注意：这里只进行一次 group_by，且内部是简单的两列相关
+    # 2. 预计算位移并应用过滤
+    # 在这里 filter，保证 corr 计算时只使用 POOL_MASK=True 且位移成功的行
+    filtered_lf = (
+        lf.with_columns(shift_exprs)
+        .filter(pl.col(pool_mask_col)) # 计算完位移再过滤
+        .select([date_col, factor_col, "_factor_pre"] + [f"_ret_lag_{i}" for i in range(max_lag)])
+    )
+
+    # 3. 计算聚合指标
     daily_res = (
-        lf.with_columns(shift_cols)
-        .group_by(date_col)
+        filtered_lf.group_by(date_col)
         .agg([
-                 pl.corr(factor_col, f"_ret_lag_{i}", method="pearson").fill_nan(None).alias(f"ic_{i}")
-                 for i in range(max_lag)
-             ] + [
-                 pl.corr(factor_col, "_factor_pre", method="pearson").fill_nan(None).alias("ac")
-             ])
+            pl.corr(factor_col, f"_ret_lag_{i}", method="spearman").alias(f"ic_{i}")
+            for i in range(max_lag)
+        ] + [
+            pl.corr(factor_col, "_factor_pre", method="spearman").alias("ac")
+        ])
         .collect()
     )
 
-    # 4. 提取结果
-    lags = [daily_res.get_column(f"ic_{i}").mean() or 0.0 for i in range(max_lag)]
-    autocorr_val = daily_res.get_column("ac").mean() or 0.0
+    # 4. 提取均值并处理空
+    # 使用 drop_nans().mean() 保证稳健性
+    lags = [daily_res.get_column(f"ic_{i}").drop_nans().mean() or 0.0 for i in range(max_lag)]
+    autocorr_val = daily_res.get_column("ac").drop_nans().mean() or 0.0
 
-    # 换手率估算
-    est_daily_turnover = (1 - autocorr_val) * 0.85
+    # 5. 换手率计算逻辑保护
+    # 如果 autocorr 还是 nan，给定一个保守的极低值 0.0 (代表 100% 换手)
+    safe_ac = autocorr_val if not np.isnan(autocorr_val) else 0.0
+    est_daily_turnover = (1 - max(0, safe_ac)) * 0.85
 
     return {
         "ic_lags": lags,
@@ -250,9 +267,9 @@ def single_factor_alpha_analysis(
         df: Union[pl.DataFrame, pl.LazyFrame],
         factor_col: str,
         ret_col: str,
-        date_col: str = "DATE",
-        asset_col: str = "ASSET",
-        pool_mask_col: str = 'POOL',
+        date_col: str = F.DATE,
+        asset_col: str = F.ASSET,
+        pool_mask_col: str = F.POOL_MASK,
         mode: Literal['long_only', 'long_short', 'active'] = 'active',
         n_bins: int = 5,
         period: int = 1,
@@ -281,7 +298,8 @@ def single_factor_alpha_analysis(
         ret_col=ret_col,
         date_col=date_col
     )
-    logger.info(f"    > IC 均值: {ic_summary['ic_mean'][0]:.4f}, ICIR: {ic_summary['ic_ir'][0]:.4f}")
+    ic_mean = ic_summary['ic_mean'][0]
+    logger.info(f"    > IC 均值: {ic_mean:.4f}, ICIR: {ic_summary['ic_ir'][0]:.4f}")
 
     # 3. 分层收益与实盘风险指标 (传入估算的 est_turnover 进行扣费)
     quantile_res = single_calc_quantile_metrics(
@@ -293,7 +311,8 @@ def single_factor_alpha_analysis(
         n_bins=n_bins,
         period=period,
         cost=cost,
-        est_turnover=est_turnover  # 自动关联换手
+        est_turnover=est_turnover,  # 自动关联换手
+        direction= 1 if ic_mean > 0 else -1  # 根据信号方向调整多空逻辑
     )
 
     m = quantile_res['metrics']

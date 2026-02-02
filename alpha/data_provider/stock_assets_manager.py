@@ -32,6 +32,7 @@ import polars as pl
 
 from alpha.utils.config import settings
 from alpha.utils.logger import logger
+from alpha.utils.schema import F
 
 
 class StockAssetsManager:
@@ -76,7 +77,7 @@ class StockAssetsManager:
         同步刷新内存中的 Enum 类型和映射字典。
         """
         # 提取当前所有资产代码（维持原始物理顺序）
-        assets_list = self._df.get_column("asset").to_list()
+        assets_list = self._df.get_column(F.ASSET).to_list()
 
         # 1. 更新计算层 Enum：使 Polars 计算时将 Asset 当做 Int 处理
         self.stock_type = pl.Enum(assets_list)
@@ -86,7 +87,10 @@ class StockAssetsManager:
 
         # 3. 预处理 Exchange 为分类变量（节省空间并提升计算效率）
         # if "exchange" in self._df.columns:
-        #     self._df = self._df.with_columns(pl.col("exchange").cast(pl.Categorical))
+        self._df = self._df.with_columns([
+            pl.col("exchange").cast(pl.Categorical),
+            pl.col('market').cast(pl.Categorical)]
+        )
 
     def get_asset_mapping(self) -> Dict[str, int]:
         """获取资产映射字典 {ts_code: row_index}。"""
@@ -98,7 +102,7 @@ class StockAssetsManager:
         用于后续在 Polars 中执行高性能 join。
         """
         with self._lock:
-            return self._df.with_columns(pl.col("asset").cast(self.stock_type))
+            return self._df.with_columns(pl.col(F.ASSET).cast(self.stock_type))
 
     def update_assets(self, snapshot_df: pl.DataFrame):
         """
@@ -110,24 +114,24 @@ class StockAssetsManager:
 
         with self._lock:
             if self._df.height == 0:
-                self._df = snap.unique(subset="asset")
+                self._df = snap.unique(subset=F.ASSET)
             else:
                 # 1. 提取旧数据的 asset 和 __pos__
                 # 2. 将 snap 与旧数据合并。核心思路：
                 #    对于已有资产，我们要更新其属性，但保留旧位置。
                 #    所以我们先通过 join 拿到 snap 里的最新信息，关联到旧的位置上。
 
-                existing_base = self._df.select("asset").with_row_index("__pos__")
+                existing_base = self._df.select(F.ASSET).with_row_index("__pos__")
 
                 # 更新已有资产属性
                 updated_existing = (
                     existing_base
-                    .join(snap, on="asset", how="left")  # 此时 snap 里的新属性被带入旧位置
+                    .join(snap, on=F.ASSET, how="left")  # 此时 snap 里的新属性被带入旧位置
                     .cast(self.schema)
                 )
 
                 # 获取真正的新资产
-                new_assets = snap.join(existing_base, on="asset", how="anti")
+                new_assets = snap.join(existing_base, on=F.ASSET, how="anti")
 
                 # 垂直堆叠：旧的(更新后) + 新的(追加)
                 self._df = pl.concat([updated_existing, new_assets], how="vertical")
@@ -142,7 +146,7 @@ class StockAssetsManager:
         temp_path = self.path.with_suffix(".tmp")
         (
             self._df.with_columns([
-                pl.col("asset").cast(pl.Utf8),
+                pl.col(F.ASSET).cast(pl.Utf8),
                 pl.col("exchange").cast(pl.Utf8)
             ])
             .write_parquet(temp_path, compression="snappy")
@@ -171,11 +175,11 @@ class StockAssetsManager:
         # 3. 智能合并逻辑：
         # 使用 left_anti join 找出那些“名录里还没有”的补丁
         new_patches = patch_df.join(
-            current_df.select("asset"), on="asset", how="anti"
+            current_df.select(F.ASSET), on=F.ASSET, how="anti"
         )
 
         if new_patches.height > 0:
-            logger.info(f"🩹 正在为名录打补丁，新增 {new_patches.height} 条缺失标的: {new_patches['asset'].to_list()}")
+            logger.info(f"🩹 正在为名录打补丁，新增 {new_patches.height} 条缺失标的: {new_patches[F.ASSET].to_list()}")
             # 合并新补丁并返回
             return pl.concat([current_df, new_patches])
 
@@ -198,7 +202,7 @@ class StockAssetsManager:
             pro = ts.pro_api(token)
 
             logger.info("📡 正在拉取 Tushare 股票快照 (L/D/P)...")
-            fields = "ts_code,name,list_date,delist_date,exchange"
+            fields = "ts_code,name,list_date,delist_date,market,exchange"
 
             # 分别获取上市、退市、暂停上市标的，消除生存者偏差
             parts = []
@@ -214,13 +218,14 @@ class StockAssetsManager:
             snapshot = (
                 pl.concat(parts)
                 .select([
-                    pl.col("ts_code").str.strip_chars().alias("asset"),  # 2. 强力去除两端空格
+                    pl.col("ts_code").str.strip_chars().alias(F.ASSET),  # 2. 强力去除两端空格
                     pl.col("name").str.strip_chars(),
                     pl.col("list_date").str.to_date("%Y%m%d", strict=False),
                     pl.col("delist_date").str.to_date("%Y%m%d", strict=False),
                     pl.col("exchange"),
+                    pl.col("market"),
                 ])
-                .unique(subset="asset")
+                .unique(subset=F.ASSET)
             )
 
             self.update_assets(snapshot)
@@ -238,4 +243,4 @@ class StockAssetsManager:
         """获取当前名录中所有合法的资产代码列表。"""
         with self._lock:
             # 确保返回的是字符串列表，用于后续 filter 的 is_in 判断
-            return self._df.get_column("asset").to_list()
+            return self._df.get_column(F.ASSET).to_list()
