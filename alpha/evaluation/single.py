@@ -270,7 +270,7 @@ def single_factor_alpha_analysis(
         date_col: str = F.DATE,
         asset_col: str = F.ASSET,
         pool_mask_col: str = F.POOL_MASK,
-        mode: Literal['long_only', 'long_short', 'active'] = 'active',
+        mode: Literal['long_only', 'long_short', 'active'] = 'long_only',
         n_bins: int = 5,
         period: int = 1,
         cost: float = 0.0015  # 默认单边费率（如印花税+佣金）
@@ -294,8 +294,8 @@ def single_factor_alpha_analysis(
     # 2. 基础 IC 统计 (预测效力)
     ic_summary = batch_get_ic_summary(
         df,
-        factor_pattern=f"^{factor_col}$",
-        ret_col=ret_col,
+        factors=f"^{factor_col}$",
+        label_for_ic=ret_col,
         date_col=date_col
     )
     ic_mean = ic_summary['ic_mean'][0]

@@ -42,6 +42,9 @@ class F(StrEnum):
     NOT_BUYABLE = "not_buyable"
     NOT_SELLABLE = "not_sellable"
 
+    LABEL_FOR_IC = "LABEL_FOR_IC"
+    LABEL_FOR_RET = "LABEL_FOR_RET"
+
 class DataSchema:
     # 1. 唯一标识列 (Key Columns)
     IDS: Dict[str, pl.DataType] = {

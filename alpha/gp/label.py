@@ -28,7 +28,7 @@ def label_OO_for_IC(lf: pl.LazyFrame, label_window=1, mask_col=F.POOL_MASK) -> p
 
     """
 
-    label_y = f"LABEL_OO_{label_window}"
+    label_y = F.LABEL_FOR_IC
 
     # 1. 计算原始收益率
     lf = lf.with_columns([
@@ -64,7 +64,6 @@ label_OO_1 = partial(label_OO_for_IC, label_window=1)
 
 def label_OO_for_tradable(lf: pl.LazyFrame,
                           label_window=1,
-                          fee=0.0015,
                           mask_col=F.POOL_MASK) -> pl.LazyFrame:
     """
     针对收益率类适应度的标签函数
@@ -73,7 +72,7 @@ def label_OO_for_tradable(lf: pl.LazyFrame,
     3. 扣除交易税费
     """
     # 定义列名
-    label_y = f"LABEL_RET_{label_window}"
+    label_y = F.LABEL_FOR_RET
 
     # 1. 基础收益率计算 (未来 T+1 开盘买入, T+1+window 开盘卖出)
     # 注意：shift(-1) 是明天的开盘价，shift(-(1+window)) 是卖出时的开盘价
@@ -96,7 +95,7 @@ def label_OO_for_tradable(lf: pl.LazyFrame,
         )
         .then(0.0)
         # 情况 C: 可成交 -> 原始收益 - 双边费用 (买入+卖出)
-        .otherwise(pl.col(label_y) - fee)
+        .otherwise(pl.col(label_y))
         .alias(label_y)
     ])
 

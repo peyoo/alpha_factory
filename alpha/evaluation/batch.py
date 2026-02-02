@@ -13,11 +13,8 @@ from alpha.utils.schema import F
 
 
 def batch_get_ic_summary(df: pl.DataFrame,
-                         factor_pattern: Union[str, List[str]] = r"^factor_.*",
-                         ret_col: str = "LABEL_OO_1", # 建议这里默认值与你常用的保持一致
-                         # label_ic_col: str = "LABEL_IC",
-
-                         split_date: str = None,
+                         factors: Union[str, List[str]] = r"^factor_.*",
+                         label_for_ic: str = F.LABEL_FOR_IC,  # 建议这里默认值与你常用的保持一致
                          date_col: str = F.DATE,
                          pool_mask_col: str = F.POOL_MASK  # 🆕 新增股票池参数
                          ) -> pl.DataFrame:
@@ -25,7 +22,7 @@ def batch_get_ic_summary(df: pl.DataFrame,
     lf = df.lazy() if isinstance(df, pl.DataFrame) else df
 
     # 自动获取因子列
-    f_selector = cs.matches(factor_pattern) if isinstance(factor_pattern, str) else cs.by_name(factor_pattern)
+    f_selector = cs.matches(factors) if isinstance(factors, str) else cs.by_name(factors)
     factor_cols = lf.select(f_selector).collect_schema().names()
     if not factor_cols:
         return pl.DataFrame()
@@ -37,12 +34,12 @@ def batch_get_ic_summary(df: pl.DataFrame,
 
     # 2. 构造计算链路
     ic_summary = (
-        lf.select([date_col, ret_col] + factor_cols)
+        lf.select([date_col, label_for_ic] + factor_cols)
         .drop_nulls()  # 【关键修复】确保参与计算的行没有空值
         .group_by(date_col)
         .agg([
             # 使用 Spearman (Rank) 相关性通常比 Pearson 更稳健
-            pl.corr(pl.col(f), pl.col(ret_col), method="spearman").alias(f) for f in factor_cols
+            pl.corr(pl.col(f), pl.col(label_for_ic), method="spearman").alias(f) for f in factor_cols
         ])
         .unpivot(index=date_col, on=factor_cols, variable_name="factor", value_name="ic")
         .filter(pl.col("ic").is_not_nan() & pl.col("ic").is_not_null())
@@ -65,8 +62,8 @@ def batch_get_ic_summary(df: pl.DataFrame,
 
 def batch_calc_factor_decay_stats(
         df: pl.DataFrame,
-        factor_pattern: List[str],
-        ret_col: str,
+        factors: List[str],
+        ret_col: str = F.LABEL_FOR_RET,
         max_lag: int = 10,
         date_col: str = F.DATE,
         asset_col: str = F.ASSET,
@@ -84,7 +81,7 @@ def batch_calc_factor_decay_stats(
     适用于大规模因子评估场景。
 
     :param df:
-    :param factor_pattern:
+    :param factors:
     :param ret_col:
     :param date_col:
     :param asset_col:
@@ -94,10 +91,10 @@ def batch_calc_factor_decay_stats(
 
     # 1. 统一选取因子列名
     # 如果传入的是字符串，则视为正则匹配；如果已经是 List，则直接使用
-    if isinstance(factor_pattern, str):
-        factor_cols = df.select(pl.col(factor_pattern)).columns
+    if isinstance(factors, str):
+        factor_cols = df.select(pl.col(factors)).columns
     else:
-        factor_cols = factor_pattern
+        factor_cols = factors
 
     # 1. 预处理：构造滞后收益率并 Rank
     # 这一步保持不变，是最高效的对齐方式

@@ -4,7 +4,7 @@ from typing import Dict, Any
 from deap import gp
 
 from alpha.data_provider.pool import main_small_pool
-from alpha.evaluation.batch import batch_get_ic_summary
+from alpha.evaluation.batch_return import batch_quantile_returns
 from alpha.gp.base import Expr, dummy
 from alpha.gp.cs_generator import CSGPGenerator
 from alpha.gp.extra_terminal import add_extra_terminals
@@ -13,7 +13,7 @@ from alpha.gp.label import label_OO_1
 
 def _random_window_int():
     # 偏向短周期：5, 10, 21, 42, 63
-    return random.choice([5, 10, 15, 20, 30, 40, 60])
+    return random.choice([5, 10, 15, 20, 30, 40, 60,80])
 
 class SmallCSGenerator(CSGPGenerator):
     """
@@ -27,10 +27,11 @@ class SmallCSGenerator(CSGPGenerator):
         self.label_func = config.get("label_func", label_OO_1)  # 标签计算函数
         self.random_window_func = config.get("random_window_func", _random_window_int)  # 随机窗口函数
         self.extra_terminal_func = config.get("extra_terminal_func", add_extra_terminals)  # 额外终端因子计算函数
-        self.terminals = config.get('terminals', ['OPEN', 'HIGH', 'LOW', 'CLOSE','TURNOVER_RATE','VWAP','RET','VWAP_RET','ILLIQ'])
+        self.terminals = config.get('terminals', ['OPEN', 'HIGH', 'LOW', 'CLOSE','TURNOVER_RATE','VWAP','RET','VWAP_RET'])
 
-        self.fitness_population_func = config.get("fitness_population_func", batch_get_ic_summary)
-        self.opt_names_weights = config.get("opt_names_weights", (("ic_mean_abs", "ic_ir_abs", "complexity"), (1.0, 1.0, -0.01)))  # 多目标优化名称及权重
+        self.fitness_population_func = config.get("fitness_population_func", batch_quantile_returns)
+        self.opt_names = config.get("opt_names", ("ann_ret", "sharpe", "complexity"))  #
+        self.opt_weights = config.get("opt_weights", (1.2, 0.8, -0.1))  # 多目标优化权重
 
     def _build_pset(self) -> gp.PrimitiveSetTyped:
         """
@@ -49,8 +50,8 @@ class SmallCSGenerator(CSGPGenerator):
         pset.addEphemeralConstant("rand_int", _random_window_int, int)
 
         # 3. 基础算术算子 (线性模型 ElasticNet 无法自学除法和乘法交互)
-        for name in ['add', 'sub', 'mul', 'div', 'max', 'min']:
-            pset.addPrimitive(dummy, [Expr, Expr], Expr, name=f'oo_{name}')
+        # for name in ['add', 'sub', 'mul', 'div']:
+        #     pset.addPrimitive(dummy, [Expr, Expr], Expr, name=f'oo_{name}')
 
         # 4. 时序统计算子 (LightGBM 的盲区：无法跨行感知历史)
         # ts_mean:最基础的趋势中枢（均线）。它提供了价格的“锚点”。
@@ -83,7 +84,7 @@ class SmallCSGenerator(CSGPGenerator):
 
         # 6. 数值变换 (改善线性模型的特征分布)
         # 可选:sigmoid / tanh (软截断)
-        for op in ['abs_', 'log', 'sign']:
-            pset.addPrimitive(dummy, [Expr], Expr, name=op)
+        # for op in ['abs_', 'log']:
+        #     pset.addPrimitive(dummy, [Expr], Expr, name=op)
 
         return pset

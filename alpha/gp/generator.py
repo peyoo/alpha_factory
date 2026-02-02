@@ -11,7 +11,6 @@ GP 因子生成器主类
 
 典型用法：
     config = {
-        "label_y": "RETURN_OO_1",
         "split_date": datetime(2021, 1, 1),
         "batch_size": 50,
         "mu": 100,
@@ -28,7 +27,7 @@ import time
 from datetime import datetime
 from itertools import count
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Union, Sequence
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import polars as pl
@@ -37,7 +36,6 @@ from deap.gp import PrimitiveTree
 from expr_codegen.tool import ExprTool
 from loguru import logger
 import more_itertools
-import polars.selectors as cs
 
 from alpha.data_provider import DataProvider
 # 导入打过补丁的组件和基础工具
@@ -45,6 +43,7 @@ from alpha.gp.base import population_to_exprs, filter_exprs, print_population
 # from alpha.gp.cs.helper import batched_exprs, fill_fitness
 from alpha.gp.base import RET_TYPE, Expr
 from alpha.gp.ea import eaMuPlusLambda_NSGA2
+from alpha.gp.label import label_OO_for_IC, label_OO_for_tradable
 from alpha.polars.utils import CUSTOM_OPERATORS
 from alpha.utils.config import settings
 
@@ -66,7 +65,6 @@ class GPDeapGenerator(object):
 
     Attributes:
         config (Dict): 配置参数字典
-        label_y (str): 目标标签列名
         split_date (datetime): 训练/测试集分割日期
         batch_size (int): 批量计算大小
         save_dir (Path): 结果保存目录
@@ -74,15 +72,13 @@ class GPDeapGenerator(object):
         lambda_ (int): 每代生成后代规模
         hof_size (int): 名人堂大小
     """
-
     def __init__(self, config: Dict[str, Any] = {}) -> None:
         """
         初始化 GP 因子生成器
 
         Args:
             config: 配置字典，支持的键：
-                - label_y (str): 目标列名，默认 "RETURN_OO_1"
-                - split_date (datetime): 分割日期，默认 2021-01-01
+                - split_date (datetime): 分割日期，训练集于验证集的分割日期，默认None
                 - batch_size (int): 批处理大小，默认 50
                 - mu (int): 进化算法的 mu 参数，默认 100
                 - lambda (int): 进化算法的 lambda 参数，默认 100
@@ -98,24 +94,31 @@ class GPDeapGenerator(object):
         # --- 2. 数据与日期配置 ---
         self.start_date = config.get("start_date", "20190101")
         self.end_date = config.get("end_date", "20241231")
+        # 分割日期，训练集与验证集的分割日期，默认None
         self.split_date = config.get("split_date", None)
-        # 多目标优化名称
-        self.opt_names = config.get("opt_names",("ic", "ir",'complexity'))  #
+        # 多目标优化名称及权重
+        # 这里的名称和权重要和fitness_population_func 输出指标保持一致
+        # complexity，表示因子复杂度，可以不包含在fitness_population_func输出指标中
+        self.opt_names = config.get("opt_names",("ic_mean_abs", "ic_ir_abs",'complexity'))  #
         self.opt_weights = config.get("opt_weights",(1.0, 1.0,-0.01))  # 多目标优化权重
-        # 整体种群fitness函数,输入参数为:df,factors,split_date,其它参数采用默认名
+        # 整体种群fitness函数,
+        # 输入参数为:df,factors（所有的因子列名）,split_date(可以没有，训练集与验证集的分割日期),其它参数采用默认值
+        # 输出数据格式为: pl.DataFrame，必须包含列factor,以及opt_names所包含的列
         self.fitness_population_func = config.get("fitness_population_func", None)
 
         self.pool_func = config.get("pool_func", None)  # 股票池函数
-        self.label_func = config.get("label_func", None)  # 标签计算函数
-        self.random_window_func = config.get("random_window_func", None)  # 随机窗口函数
+        # 标签计算函数，提供fitness_population_func计算所需的标签列，
+        # 生成的标签列名必须和函数所需列名一致，一般为 F.LABEL_FOR_IC 和 F.LABEL_FOR_RET
+        self.label_funcs = config.get("label_funcs", [label_OO_for_IC,label_OO_for_tradable])
         self.extra_terminal_func = config.get("extra_terminal_func", [])  # 额外终端因子计算函数
 
         self.terminals = config.get('terminals', [])  # 终端因子列表
+        self.random_window_func = config.get("random_window_func", None)  # 随机窗口函数
+
+        # 判断某个方法是否有某个参数名,比如 self.fitness_population_func，是否含有split_date参数
 
 
-        # --- 3. 标签计算配置 ---
-        self.label_window = config.get("label_window", 1) # 计算标签的未来窗口大小
-        self.label_y = config.get("label_y", f"LABEL_OO_{self.label_window}")  # 目标标签列名,当前仅支持 OPEN-OPEN 收益率
+
 
         # --- 4. 进化算法超参数 ---
         self.mu = config.get("mu", 400) # 种群保留规模
@@ -124,12 +127,12 @@ class GPDeapGenerator(object):
         self.mutpb = config.get("mutpb", 0.2)  # 变异概率
         self.hof_size = config.get("hof_size", 1000) # 名人堂大小
         self.batch_size = config.get("batch_size", 200) # 批处理大小
-        self.max_height = config.get("max_height", 6) # 最大树高限制
+        self.max_height = config.get("max_height", 2) # 最大树高限制
         # 路径设置
         self.save_dir = Path(settings.GP_DEAP_DIR)/ self.name
         self.save_dir.mkdir(parents=True, exist_ok=True)
 
-        logger.info(f"✓ GP 生成器初始化完成 | 标签: {self.label_y} | 批大小: {self.batch_size}")
+        logger.info(f"✓ GP 生成器初始化完成 | 批大小: {self.batch_size}")
 
 
     def _build_pset(self) -> gp.PrimitiveSetTyped:
@@ -162,8 +165,8 @@ class GPDeapGenerator(object):
         toolbox.register("population", tools.initRepeat, list, toolbox.individual)
 
         # 遗传算子: 锦标赛选择、交叉、变异
-        toolbox.register("select", tools.selTournament, tournsize=3) # 单目标优化选择
-        # toolbox.register("select", tools.selNSGA2)  # 多目标优化选择
+        # toolbox.register("select", tools.selTournament, tournsize=3) # 单目标优化选择
+        toolbox.register("select", tools.selNSGA2)  # 多目标优化选择
 
         toolbox.register("mate", gp.cxOnePoint)
         toolbox.register("expr_mut", gp.genFull, min_=0, max_=2)
@@ -179,7 +182,6 @@ class GPDeapGenerator(object):
             "map",
             self.map_exprs,
             gen=count(),
-            label=self.label_y,
             split_date=self.split_date,
             input_data=input_data
         )
@@ -192,7 +194,6 @@ class GPDeapGenerator(object):
         evaluate_func: Any,
         individuals: List,
         gen,
-        label: str,
         split_date: datetime,
         input_data: pl.DataFrame
     ) -> List[Tuple[float, float]]:
@@ -210,7 +211,6 @@ class GPDeapGenerator(object):
             evaluate_func: 评估函数（未使用，由 map 调用要求）
             individuals: 当前代的个体列表
             gen: 代数迭代器
-            label: 标签列名
             split_date: 训练/测试分割日期
             input_data: 输入数据
 
@@ -242,7 +242,7 @@ class GPDeapGenerator(object):
         if len(exprs_to_calc) > 0:
             for batch_id, batch in enumerate(more_itertools.batched(exprs_to_calc, self.batch_size)):
                 logger.debug(f"  批次 {batch_id + 1} | 大小: {len(list(batch))}")
-                new_scores = self.batched_exprs(batch_id, list(batch), g, label, split_date, input_data)
+                new_scores = self.batched_exprs(batch_id, list(batch), g, split_date, input_data)
                 fitness_results.update(new_scores)
 
             # 更新全局缓存
@@ -296,9 +296,9 @@ class GPDeapGenerator(object):
         input_data = DataProvider().load_data(
             start_date=self.start_date,
             end_date=self.end_date,
-            funcs=[self.pool_func, self.label_func, self.extra_terminal_func],
-            select_cols=[F.POOL_MASK, self.label_y, *self.terminals],
-            cache_path=self.save_dir / f"{self.label_y}.parquet"
+            funcs=[self.pool_func, *self.label_funcs, self.extra_terminal_func],
+            select_cols=[F.POOL_MASK, F.LABEL_FOR_IC,F.LABEL_FOR_RET, *self.terminals],
+            cache_path=self.save_dir / f"{self.pool_func.__name__}.parquet"
         )
         logger.info("💾 标签数据已就绪")
 
@@ -377,11 +377,11 @@ class GPDeapGenerator(object):
         logger.info(f"✅ 名人堂因子已导出至 CSV: {output_path}")
         return df
 
-    def fitness_individual(self,a: str, b: str) -> pl.Expr:
-        """个体fitness函数"""
-        return pl.corr(a, b, method='spearman', ddof=0, propagate_nans=False)
+    # def fitness_individual(self,a: str, b: str) -> pl.Expr:
+    #     """个体fitness函数"""
+    #     return pl.corr(a, b, method='spearman', ddof=0, propagate_nans=False)
 
-    def batched_exprs(self, batch_id, exprs_list, gen, label, split_date, df_input):
+    def batched_exprs(self, batch_id, exprs_list, gen, split_date, df_input):
         """每代种群分批计算，包含详细性能日志及平均用时"""
         if len(exprs_list) == 0:
             return {}
@@ -412,15 +412,15 @@ class GPDeapGenerator(object):
         )
 
         # --- 阶段 B: 适应度计算 ---
-        logger.info("第{}代-第{}批：开始聚合 IC/IR 指标", gen, batch_id)
+        logger.info("第{}代-第{}批：开始聚合 IC/RET 指标", gen, batch_id)
         tic_fit = time.perf_counter()
 
-        fitness_df = self.fitness_population(
-            df_output,
-            columns=[k for k, v, c in exprs_list],
-            label=label,
-            split_date=split_date
-        )
+        factor_columns = [k for k, v, c in exprs_list]
+        import inspect
+        if 'split_date' in inspect.signature(self.fitness_population_func).parameters:
+            fitness_df = self.fitness_population_func(df_output, factors=factor_columns, split_date=split_date)
+        else:
+            fitness_df = self.fitness_population_func(df_output, factors=factor_columns)
 
         toc_fit = time.perf_counter()
         fit_duration = toc_fit - tic_fit
@@ -433,7 +433,7 @@ class GPDeapGenerator(object):
         # 3. 结果转换
         key_to_expr = {k: str(v) for k, v, c in exprs_list}
         new_results = {
-            key_to_expr[row.pop("column")]: row
+            key_to_expr[row.pop("factor")]: row
             for row in fitness_df.to_dicts()
         }
 
@@ -445,64 +445,6 @@ class GPDeapGenerator(object):
         )
 
         return new_results
-
-    def fitness_population(self, df: Union[pl.DataFrame, pl.LazyFrame], columns: Sequence[str], label: str,
-                           split_date: datetime = None) -> pl.DataFrame:
-        if df is None:
-            return pl.DataFrame()
-
-        lf = df.lazy() if isinstance(df, pl.DataFrame) else df
-
-        # 计算每日 IC
-        lf_ic = (
-            lf.select(["DATE", label, *columns])
-            .with_columns(cs.numeric().cast(pl.Float64))
-            .group_by('DATE')
-            .agg([pl.corr(col, label, method='spearman').alias(col) for col in columns])
-        )
-
-        # 标记数据集：修复警告的核心逻辑
-        if split_date is not None:
-            # 只有 split_date 不为 None 时才进行列对比
-            lf_ic = lf_ic.with_columns(
-                pl.when(pl.col("DATE") < split_date)
-                .then(pl.lit("train"))
-                .otherwise(pl.lit("valid"))
-                .alias("dataset")
-            )
-        else:
-            lf_ic = lf_ic.with_columns(pl.lit("all").alias("dataset"))
-
-        # 聚合统计指标
-        lf_stats = (
-            lf_ic.group_by("dataset")
-            .agg([
-                pl.when(cs.numeric().null_count() / pl.len() <= 0.5)
-                .then(cs.numeric().mean())
-                .otherwise(None).name.suffix("_ic"),
-                (cs.numeric().mean() / cs.numeric().std(ddof=0)).name.suffix("_ir")
-            ])
-        )
-
-        # 转换结构：先 collect 避免 LazyFrame.pivot 兼容性问题
-        summary_df = lf_stats.collect()
-
-        final_df = (
-            summary_df.unpivot(index="dataset", variable_name="raw", value_name="value")
-            .with_columns([
-                pl.col("raw").str.extract(r"^(.*)_(ic|ir)$", 1).alias("column"),
-                pl.col("raw").str.extract(r"^(.*)_(ic|ir)$", 2).alias("metric")
-            ])
-            .with_columns(
-                pl.when(pl.col("dataset") != "all")
-                .then(pl.format("{}_{}", pl.col("metric"), pl.col("dataset")))
-                .otherwise(pl.col("metric"))
-                .alias("final_metric")
-            )
-            .pivot(index="column", on="final_metric", values="value")
-        )
-
-        return final_df
 
     def fill_fitness(self, individuals, exprs_old, fitness_results):
         """
@@ -535,6 +477,11 @@ class GPDeapGenerator(object):
 
             # 情况 A: 匹配失败 (该因子因非法、重复被过滤，或计算模块报错)
             if score_dict is None:
+                fit_tuples_list.append(penalty_values)
+                ind.stats = None  # 清空或初始化 stats
+                continue
+
+            if self.is_penalty(score_dict):
                 fit_tuples_list.append(penalty_values)
                 ind.stats = None  # 清空或初始化 stats
                 continue
@@ -576,3 +523,11 @@ class GPDeapGenerator(object):
                 ind.stats = None
 
         return fit_tuples_list
+
+    def is_penalty(self,score_dict):
+        """判断某个计算结果是否为惩罚值"""
+        if 'ic_ir' in score_dict:
+            val = score_dict['ic_ir']
+            if np.isnan(val) or val < 0.0001:
+                return True
+        return False

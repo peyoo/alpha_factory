@@ -1,5 +1,6 @@
 import numpy as np
 from deap import tools, algorithms
+from loguru import logger
 
 
 def eaMuPlusLambda_NSGA2(population, toolbox, mu, lambda_, cxpb, mutpb, ngen,
@@ -42,6 +43,12 @@ def eaMuPlusLambda_NSGA2(population, toolbox, mu, lambda_, cxpb, mutpb, ngen,
 
         if halloffame is not None:
             halloffame.update(offspring)
+            # 日志输出排在前5位的个体，及其表达式
+            logger.debug("Hall of Fame Top 5 Individuals:")
+            for i, ind in enumerate(halloffame.items[:5]):
+                logger.debug(f"Rank {i+1}: {ind} with fitness {ind.fitness.values}")
+                logger.debug(f"Expression: {str(ind)}")
+
 
         # 统计
         record = stats.compile(population) if stats is not None else {}
