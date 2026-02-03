@@ -1,5 +1,5 @@
-import expr_codegen
 from expr_codegen.expr import TS, CS, GP
+from loguru import logger
 
 
 def get_groupby_from_tuple(tup, func_name, drop_cols):
@@ -24,5 +24,8 @@ def get_groupby_from_tuple(tup, func_name, drop_cols):
 
     return f'df = {func_name}(df){drop_str}'
 
-# 打个补丁，取消排序
-expr_codegen.polars.code.get_groupby_from_tuple = get_groupby_from_tuple
+def apply_expr_codegen_patches():
+    import expr_codegen.polars.code
+    # 可以在这里做一些防御性编程，比如打印一下替换过程
+    logger.info("Applying patch to expr_codegen.polars.code.get_groupby_from_tuple")
+    expr_codegen.polars.code.get_groupby_from_tuple = get_groupby_from_tuple

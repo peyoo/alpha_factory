@@ -29,6 +29,7 @@ from itertools import count
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+
 import numpy as np
 import polars as pl
 from deap import base, creator, gp, tools
@@ -40,10 +41,10 @@ import more_itertools
 from alpha.data_provider import DataProvider
 # 导入打过补丁的组件和基础工具
 from alpha.gp.base import population_to_exprs, filter_exprs, print_population
-# from alpha.gp.cs.helper import batched_exprs, fill_fitness
 from alpha.gp.base import RET_TYPE, Expr
 from alpha.gp.ea import eaMuPlusLambda_NSGA2
 from alpha.gp.label import label_OO_for_IC, label_OO_for_tradable
+from alpha.patch.expr_codegen_patch import apply_expr_codegen_patches
 from alpha.polars.utils import CUSTOM_OPERATORS
 from alpha.utils.config import settings
 
@@ -56,6 +57,8 @@ from alpha.utils.schema import F
 DataFrame = TypeVar("DataFrame", _pl_LazyFrame, _pl_DataFrame)
 
 
+# 在脚本最上方或 __init__ 中调用一次即可
+apply_expr_codegen_patches()
 
 class GPDeapGenerator(object):
     """
@@ -115,19 +118,14 @@ class GPDeapGenerator(object):
         self.terminals = config.get('terminals', [])  # 终端因子列表
         self.random_window_func = config.get("random_window_func", None)  # 随机窗口函数
 
-        # 判断某个方法是否有某个参数名,比如 self.fitness_population_func，是否含有split_date参数
-
-
-
-
         # --- 4. 进化算法超参数 ---
         self.mu = config.get("mu", 400) # 种群保留规模
         self.lambda_ = config.get("lambda", 400)  # 每代生成后代规模
-        self.cxpb = config.get("cxpb", 0.6)  # 交叉概率
-        self.mutpb = config.get("mutpb", 0.2)  # 变异概率
+        self.cxpb = config.get("cxpb", 0.5)  # 交叉概率
+        self.mutpb = config.get("mutpb", 0.3)  # 变异概率
         self.hof_size = config.get("hof_size", 1000) # 名人堂大小
         self.batch_size = config.get("batch_size", 200) # 批处理大小
-        self.max_height = config.get("max_height", 2) # 最大树高限制
+        self.max_height = config.get("max_height", 3) # 最大树高限制
         # 路径设置
         self.save_dir = Path(settings.GP_DEAP_DIR)/ self.name
         self.save_dir.mkdir(parents=True, exist_ok=True)
@@ -189,74 +187,6 @@ class GPDeapGenerator(object):
         logger.debug("✓ Toolbox 构建完成")
         return toolbox
 
-    def map_exprs(
-        self,
-        evaluate_func: Any,
-        individuals: List,
-        gen,
-        split_date: datetime,
-        input_data: pl.DataFrame
-    ) -> List[Tuple[float, float]]:
-        """
-        批量计算种群适应度的核心方法
-
-        处理流程：
-        1. 备份当前代的表达式
-        2. 加载历史适应度缓存
-        3. 提取并过滤表达式
-        4. 批量计算新表达式的适应度
-        5. 更新缓存并返回结果
-
-        Args:
-            evaluate_func: 评估函数（未使用，由 map 调用要求）
-            individuals: 当前代的个体列表
-            gen: 代数迭代器
-            split_date: 训练/测试分割日期
-            input_data: 输入数据
-
-        Returns:
-            List[Tuple[float, float]]: 每个个体的适应度元组列表
-        """
-        g = next(gen)
-        logger.info(f">>> 第 {g} 代 | 种群大小: {len(individuals)}")
-
-        # 2. 缓存管理
-        cache_path = self.save_dir / 'fitness_cache.pkl'
-        fitness_results: Dict = {} # 表达式字符串 -> 适应度元组
-        if cache_path.exists():
-            try:
-                with open(cache_path, 'rb') as f:
-                    fitness_results = pickle.load(f)
-                logger.debug(f"✓ 加载历史缓存 | 已有结果: {len(fitness_results)}")
-            except Exception as e:
-                logger.warning(f"⚠️ 缓存加载失败: {e}")
-
-        # 3. 表达式清洗与过滤
-        logger.debug("🔄 转换 DEAP 树 -> Sympy 表达式...")
-        exprs_list = population_to_exprs(individuals, globals().copy())
-        exprs_to_calc = filter_exprs(exprs_list, self.pset, RET_TYPE, fitness_results)
-
-        logger.info(f"📊 需计算: {len(exprs_to_calc)} / {len(exprs_list)} 个表达式")
-
-        # 4. 批量计算
-        if len(exprs_to_calc) > 0:
-            for batch_id, batch in enumerate(more_itertools.batched(exprs_to_calc, self.batch_size)):
-                logger.debug(f"  批次 {batch_id + 1} | 大小: {len(list(batch))}")
-                new_scores = self.batched_exprs(batch_id, list(batch), g, split_date, input_data)
-                fitness_results.update(new_scores)
-
-            # 更新全局缓存
-            try:
-                with open(cache_path, 'wb') as f:
-                    pickle.dump(fitness_results, f)
-                logger.debug(f"✓ 缓存已更新 | 总结果数: {len(fitness_results)}")
-            except Exception as e:
-                logger.warning(f"⚠️ 缓存保存失败: {e}")
-
-        # 5. 回填适应度
-        fitness_values = self.fill_fitness(individuals,exprs_list, fitness_results)
-        logger.info(f"✓ 第 {g} 代评估完成")
-        return fitness_values
 
     def build_statistics(self) -> tools.Statistics:
         """
@@ -306,7 +236,9 @@ class GPDeapGenerator(object):
         self.pset = self._build_pset()
         toolbox = self.build_toolbox(input_data)
         stats = self.build_statistics()
-        hof = tools.HallOfFame(self.hof_size)
+        # hof = tools.HallOfFame(self.hof_size)
+        # 多目标 selNSGA2
+        hof = tools.ParetoFront(self.hof_size)
 
         # 初始化种群
         pop = toolbox.population(n=n_pop)
@@ -345,46 +277,82 @@ class GPDeapGenerator(object):
         self.export_hof_to_csv(hof, globals().copy())
         return pop, logbook, hof
 
-    def export_hof_to_csv(self, hof, globals_, filename="best_factors.csv"):
+
+    def map_exprs(
+        self,
+        evaluate_func: Any,
+        individuals: List,
+        gen,
+        split_date: datetime,
+        input_data: pl.DataFrame
+    ) -> List[Tuple]:
         """
-        将名人堂内容导出到 CSV
+        批量计算种群适应度的核心方法
+
+        处理流程：
+        1. 备份当前代的表达式
+        2. 加载历史适应度缓存
+        3. 提取并过滤表达式
+        4. 批量计算新表达式的适应度
+        5. 更新缓存并返回结果
 
         Args:
-            hof: 名人堂对象
-            globals_: 全局命名空间 globals()
-            filename: 输出文件名
+            evaluate_func: 评估函数（未使用，由 map 调用要求）
+            individuals: 当前代的个体列表
+            gen: 代数迭代器
+            split_date: 训练/测试分割日期
+            input_data: 输入数据
+
+        Returns:
+            List[Tuple]: 每个个体的适应度元组列表
         """
-        import pandas as pd
-        # exprs_list 得到的是 (简化名 k, 表达式文本 v, 复杂度 c)
-        exprs_list = population_to_exprs(hof, globals_)
-        data = []
-        for (k, v, c), ind in zip(exprs_list, hof):
-            kvs = {
-                "factor_name": k,  # 因子简化名
-                "expression": v,  # 简化后的表达式文本 (v)
-                "complexity": c,  # 复杂度 (c)
-                "raw_tree": str(ind),  # 原始 DEAP 树结构
-            }
-            # 提取名人堂个体的适应度值并存储到字典中
-            for name, value in zip(self.opt_names, ind.fitness.values):
-                kvs[name] = value
-            data.append(kvs)
+        g = next(gen)
+        logger.info(f">>> 第 {g} 代 | 种群大小: {len(individuals)}")
 
-        # 2. 转换为 DataFrame 并保存
-        df = pd.DataFrame(data)
-        output_path = self.save_dir / filename
-        df.to_csv(output_path, index=False, encoding='utf-8-sig')
-        logger.info(f"✅ 名人堂因子已导出至 CSV: {output_path}")
-        return df
+        # 2. 缓存管理
+        cache_path = self.save_dir / 'fitness_cache.pkl'
+        fitness_results: Dict = {} # 表达式字符串 -> 适应度元组
+        if cache_path.exists():
+            try:
+                with open(cache_path, 'rb') as f:
+                    fitness_results = pickle.load(f)
+                logger.debug(f"✓ 加载历史缓存 | 已有结果: {len(fitness_results)}")
+            except Exception as e:
+                logger.warning(f"⚠️ 缓存加载失败: {e}")
 
-    # def fitness_individual(self,a: str, b: str) -> pl.Expr:
-    #     """个体fitness函数"""
-    #     return pl.corr(a, b, method='spearman', ddof=0, propagate_nans=False)
+        # 3. 表达式清洗与过滤
+        logger.debug("🔄 转换 DEAP 树 -> Sympy 表达式...")
+        exprs_list = population_to_exprs(individuals, globals().copy())
+        exprs_to_calc = filter_exprs(exprs_list, self.pset, RET_TYPE, fitness_results)
+
+        logger.info(f"📊 需计算: {len(exprs_to_calc)} / {len(exprs_list)} 个表达式")
+
+        # 4. 批量计算
+        if len(exprs_to_calc) > 0:
+            for batch_id, batch in enumerate(more_itertools.batched(exprs_to_calc, self.batch_size)):
+                logger.debug(f"  批次 {batch_id + 1} | 大小: {len(list(batch))}")
+                new_scores = self.batched_exprs(batch_id, list(batch), g, split_date, input_data)
+                fitness_results.update(new_scores)
+
+            # 更新全局缓存
+            try:
+                with open(cache_path, 'wb') as f:
+                    pickle.dump(fitness_results, f)
+                logger.debug(f"✓ 缓存已更新 | 总结果数: {len(fitness_results)}")
+            except Exception as e:
+                logger.warning(f"⚠️ 缓存保存失败: {e}")
+
+        # 5. 回填适应度（可加入惩罚）
+        fitness_values = self.fill_fitness(individuals,exprs_list, fitness_results)
+        logger.info(f"✓ 第 {g} 代评估完成")
+        return fitness_values
 
     def batched_exprs(self, batch_id, exprs_list, gen, split_date, df_input):
         """每代种群分批计算，包含详细性能日志及平均用时"""
         if len(exprs_list) == 0:
             return {}
+
+        lf = df_input.lazy() if isinstance(df_input, pl.DataFrame) else df_input
 
         tool = ExprTool()
         codes, G = tool.all(exprs_list, style='polars', template_file='template.py.j2',
@@ -400,7 +368,10 @@ class GPDeapGenerator(object):
         logger.info("第{}代-第{}批：开始计算因子值 (共 {} 条)", gen, batch_id, cnt)
         tic_calc = time.perf_counter()
 
-        df_output = globals_['main'](df_input.lazy(), ge_date_idx=0).collect()
+        df_output = globals_['main'](lf, ge_date_idx=0).collect()
+
+        # 临时增加打印，查看列名
+        logger.debug(f"df_output columns: {df_output.columns}")
 
         toc_calc = time.perf_counter()
         calc_duration = toc_calc - tic_calc
@@ -412,12 +383,12 @@ class GPDeapGenerator(object):
         )
 
         # --- 阶段 B: 适应度计算 ---
-        logger.info("第{}代-第{}批：开始聚合 IC/RET 指标", gen, batch_id)
+        logger.info("第{}代-第{}批：开始聚合计算 IC/RET 适应度指标", gen, batch_id)
         tic_fit = time.perf_counter()
 
         factor_columns = [k for k, v, c in exprs_list]
         import inspect
-        if 'split_date' in inspect.signature(self.fitness_population_func).parameters:
+        if split_date and 'split_date' in inspect.signature(self.fitness_population_func).parameters:
             fitness_df = self.fitness_population_func(df_output, factors=factor_columns, split_date=split_date)
         else:
             fitness_df = self.fitness_population_func(df_output, factors=factor_columns)
@@ -433,6 +404,7 @@ class GPDeapGenerator(object):
         # 3. 结果转换
         key_to_expr = {k: str(v) for k, v, c in exprs_list}
         new_results = {
+            # 要求返回的 fitness_df 包含 factor 列
             key_to_expr[row.pop("factor")]: row
             for row in fitness_df.to_dicts()
         }
@@ -470,6 +442,7 @@ class GPDeapGenerator(object):
         fit_tuples_list = []
 
         # 2. 遍历个体与对应的表达式描述
+        # v 表示因子表达式字符串
         for ind, (_, v, _) in zip(individuals, exprs_old):
             # 统一使用字符串键匹配结果字典
             search_key = str(v)
@@ -531,3 +504,35 @@ class GPDeapGenerator(object):
             if np.isnan(val) or val < 0.0001:
                 return True
         return False
+
+    def export_hof_to_csv(self, hof, globals_, filename="best_factors.csv"):
+        """
+        将名人堂内容导出到 CSV
+
+        Args:
+            hof: 名人堂对象
+            globals_: 全局命名空间 globals()
+            filename: 输出文件名
+        """
+        import pandas as pd
+        # exprs_list 得到的是 (简化名 k, 表达式文本 v, 复杂度 c)
+        exprs_list = population_to_exprs(hof, globals_)
+        data = []
+        for (k, v, c), ind in zip(exprs_list, hof):
+            kvs = {
+                "factor_name": k,  # 因子简化名
+                "expression": v,  # 简化后的表达式文本 (v)
+                "complexity": c,  # 复杂度 (c)
+                "raw_tree": str(ind),  # 原始 DEAP 树结构
+            }
+            # 提取名人堂个体的适应度值并存储到字典中
+            for name, value in zip(self.opt_names, ind.fitness.values):
+                kvs[name] = value
+            data.append(kvs)
+
+        # 2. 转换为 DataFrame 并保存
+        df = pd.DataFrame(data)
+        output_path = self.save_dir / filename
+        df.to_csv(output_path, index=False, encoding='utf-8-sig')
+        logger.info(f"✅ 名人堂因子已导出至 CSV: {output_path}")
+        return df
