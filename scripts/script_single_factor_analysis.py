@@ -10,17 +10,12 @@ from alpha.gp.label import label_OO_for_tradable
 from alpha.utils.schema import F
 
 # expr = 'ts_corr(cs_rank_mask(CLOSE), cs_rank_mask(VOLUME), 20)'
-# expr = "(cs_mad_zscore_mask(ts_mean(RET, 20)) + cs_mad_zscore_mask(ts_mean(TURNOVER_RATE, 20)))"
-# expr = 'ts_std_dev(cs_mad_zscore_mask(RET) + cs_mad_zscore_mask(log(LOW)/ts_corr(VWAP_RET, CLOSE, 5)), 5)'
-# expr = 'ts_rank(cs_mad_zscore_mask(RET) + cs_mad_zscore_mask(log(LOW)/ts_corr(VWAP_RET, CLOSE, 5)), 5)'
 # 中性120日换手率因子表达式
-# expr = "ts_mean(TURNOVER_RATE, 40)"
-expr = 'ts_rank(cs_mad_zscore_mask(VWAP), 80)'
-# N日波动率(120)
-# expr = 'abs_(log(max_(min_(cs_mad_zscore_mask(RET), cs_mad_zscore_mask(TURNOVER_RATE)), ts_decay_linear(ts_BIAS(TURNOVER_RATE, 5), 30))))'
+expr = "ts_mean(TURNOVER_RATE, 60)"
+expr = 'cs_mad_zscore_mask(ts_corr(cs_rank_mask(HIGH), ts_std_dev(OPEN, 80), 10))'
 logger.info(f"使用因子表达式: {expr}")
 lf = DataProvider().load_data(
-    start_date="20210101",
+    start_date="20190101",
     end_date="20251231",
     funcs=[main_small_pool, add_extra_terminals,label_OO_for_tradable],
     column_exprs= ['ret_real_trade=OPEN[-2] / OPEN[-1] - 1',f"factor_1={expr}"],

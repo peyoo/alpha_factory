@@ -27,11 +27,11 @@ class SmallCSGenerator(GPDeapGenerator):
         self.label_funcs = config.get("label_funcs", [label_OO_for_IC,label_OO_for_tradable])
         self.random_window_func = config.get("random_window_func", _random_window_int)  # 随机窗口函数
         self.extra_terminal_func = config.get("extra_terminal_func", add_extra_terminals)  # 额外终端因子计算函数
-        self.terminals = config.get('terminals', ['OPEN','HIGH','LOW','CLOSE','TURNOVER_RATE','VWAP','RET','VWAP_RET'])
+        self.terminals = config.get('terminals', ['OPEN', 'HIGH','LOW','CLOSE','TURNOVER_RATE','VWAP','RET','VWAP_RET'])
 
         self.fitness_population_func = config.get("fitness_population_func", batch_quantile_returns)
         self.opt_names = config.get("opt_names", ("ann_ret", "sharpe", "complexity"))  #
-        self.opt_weights = config.get("opt_weights", (1.2, 0.8, -0.1))  # 多目标优化权重
+        self.opt_weights = config.get("opt_weights", (5, 0.8, -0.1))  # 多目标优化权重
 
     def _build_pset(self) -> gp.PrimitiveSetTyped:
         """
@@ -50,8 +50,8 @@ class SmallCSGenerator(GPDeapGenerator):
         pset.addEphemeralConstant("rand_int", _random_window_int, int)
 
         # 3. 基础算术算子 (线性模型 ElasticNet 无法自学除法和乘法交互)
-        for name in ['add', 'sub', 'mul', 'div']:
-            pset.addPrimitive(dummy, [Expr, Expr], Expr, name=f'oo_{name}')
+        # for name in ['add', 'sub', 'mul', 'div']:
+        #     pset.addPrimitive(dummy, [Expr, Expr], Expr, name=f'oo_{name}')
 
         # 4. 时序统计算子 (LightGBM 的盲区：无法跨行感知历史)
         # ts_mean:最基础的趋势中枢（均线）。它提供了价格的“锚点”。
@@ -84,7 +84,7 @@ class SmallCSGenerator(GPDeapGenerator):
 
         # 6. 数值变换 (改善线性模型的特征分布)
         # 可选:sigmoid / tanh (软截断)
-        for op in ['abs_', 'log','sqrt']:
-            pset.addPrimitive(dummy, [Expr], Expr, name=op)
+        # for op in ['abs_', 'log','sqrt']:
+        #     pset.addPrimitive(dummy, [Expr], Expr, name=op)
 
         return pset

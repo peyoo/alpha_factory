@@ -5,7 +5,7 @@ from loguru import logger
 
 def eaMuPlusLambda_NSGA2(population, toolbox, mu, lambda_, cxpb, mutpb, ngen,
                          stats=None, halloffame=None, verbose=__debug__,
-                         early_stopping_rounds=15, delta=1e-4):
+                         early_stopping_rounds=15, delta=1e-4,generator=None):
     """
     专门为 NSGA-II 优化的进化循环
     """
@@ -43,6 +43,9 @@ def eaMuPlusLambda_NSGA2(population, toolbox, mu, lambda_, cxpb, mutpb, ngen,
 
         if halloffame is not None:
             halloffame.update(offspring)
+            if generator and "independence" in generator.opt_names:
+                # 传入最新的 HOF 对象，内部自动提取表达式并清理寄存站
+                generator.dep_manager.update_and_prune(halloffame)
             # 日志输出排在前5位的个体，及其表达式
             logger.debug("Hall of Fame Top 5 Individuals:")
             for i, ind in enumerate(halloffame.items[:5]):

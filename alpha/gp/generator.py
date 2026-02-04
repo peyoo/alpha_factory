@@ -42,6 +42,7 @@ from alpha.data_provider import DataProvider
 # 导入打过补丁的组件和基础工具
 from alpha.gp.base import population_to_exprs, filter_exprs, print_population
 from alpha.gp.base import RET_TYPE, Expr
+from alpha.gp.dependence import DependenceManager
 from alpha.gp.ea import eaMuPlusLambda_NSGA2
 from alpha.gp.label import label_OO_for_IC, label_OO_for_tradable
 from alpha.patch.expr_codegen_patch import apply_expr_codegen_patches
@@ -121,7 +122,7 @@ class GPDeapGenerator(object):
         # --- 4. 进化算法超参数 ---
         self.mu = config.get("mu", 400) # 种群保留规模
         self.lambda_ = config.get("lambda", 400)  # 每代生成后代规模
-        self.cxpb = config.get("cxpb", 0.5)  # 交叉概率
+        self.cxpb = config.get("cxpb", 0.4)  # 交叉概率
         self.mutpb = config.get("mutpb", 0.3)  # 变异概率
         self.hof_size = config.get("hof_size", 1000) # 名人堂大小
         self.batch_size = config.get("batch_size", 200) # 批处理大小
@@ -129,6 +130,8 @@ class GPDeapGenerator(object):
         # 路径设置
         self.save_dir = Path(settings.GP_DEAP_DIR)/ self.name
         self.save_dir.mkdir(parents=True, exist_ok=True)
+
+        self.dep_manager = None  # 因子独立性管理器，稍后初始化
 
         logger.info(f"✓ GP 生成器初始化完成 | 批大小: {self.batch_size}")
 
@@ -221,6 +224,13 @@ class GPDeapGenerator(object):
         Raises:
             ValueError: 如果输入数据无效
         """
+        # 初始化管理器, 用于因子独立性评估
+        self.dep_manager = DependenceManager(
+            opt_names=self.opt_names,
+            opt_weights=self.opt_weights,
+            cluster_threshold=0.7
+        )
+
         # 2. 载入原始数据
         # 挖掘因子通常需要 OHLCV，计算 OO 收益率需要 OPEN
         input_data = DataProvider().load_data(
@@ -236,9 +246,9 @@ class GPDeapGenerator(object):
         self.pset = self._build_pset()
         toolbox = self.build_toolbox(input_data)
         stats = self.build_statistics()
-        # hof = tools.HallOfFame(self.hof_size)
+        hof = tools.HallOfFame(self.hof_size)
         # 多目标 selNSGA2
-        hof = tools.ParetoFront(self.hof_size)
+        # hof = tools.ParetoFront(similar=operator.eq)
 
         # 初始化种群
         pop = toolbox.population(n=n_pop)
@@ -255,7 +265,8 @@ class GPDeapGenerator(object):
             ngen=n_gen,
             stats=stats,
             halloffame=hof,
-            verbose=True
+            verbose=True,
+            generator = self
         )
 
         # 保存名人堂
@@ -370,9 +381,6 @@ class GPDeapGenerator(object):
 
         df_output = globals_['main'](lf, ge_date_idx=0).collect()
 
-        # 临时增加打印，查看列名
-        logger.debug(f"df_output columns: {df_output.columns}")
-
         toc_calc = time.perf_counter()
         calc_duration = toc_calc - tic_calc
 
@@ -381,6 +389,8 @@ class GPDeapGenerator(object):
             "第{}代-第{}批：计算完成。总耗时: {:.3f}s | 速度: {:.2f} 条/s | 平均: {:.4f}s/条",
             gen, batch_id, calc_duration, cnt / calc_duration, calc_duration / cnt
         )
+
+
 
         # --- 阶段 B: 适应度计算 ---
         logger.info("第{}代-第{}批：开始聚合计算 IC/RET 适应度指标", gen, batch_id)
@@ -403,12 +413,19 @@ class GPDeapGenerator(object):
 
         # 3. 结果转换
         key_to_expr = {k: str(v) for k, v, c in exprs_list}
-        new_results = {
-            # 要求返回的 fitness_df 包含 factor 列
-            key_to_expr[row.pop("factor")]: row
-            for row in fitness_df.to_dicts()
-        }
+        new_results = {}
+        for row in fitness_df.to_dicts():
+            f_name = row.pop("factor")
+            # 获取对应的表达式字符串作为 Key
+            expr_str = key_to_expr[f_name]
+            new_results[expr_str] = row
 
+        if "independence" in self.opt_names:
+            # 这里的 exprs_list 包含了 (因子名, 表达式对象, 复杂度)
+            indep_map = self.dep_manager.evaluate_independence(df_output, exprs_list,new_results)
+            for expr_str, indep_score in indep_map.items():
+                if expr_str in new_results:
+                    new_results[expr_str]['independence'] = indep_score
         # 4. 汇总
         total_dur = calc_duration + fit_duration
         logger.info(
@@ -446,6 +463,7 @@ class GPDeapGenerator(object):
         for ind, (_, v, _) in zip(individuals, exprs_old):
             # 统一使用字符串键匹配结果字典
             search_key = str(v)
+            ind.expr_str = search_key  # 原地挂载表达式字符串，便于后续查询
             score_dict = fitness_results.get(search_key)
 
             # 情况 A: 匹配失败 (该因子因非法、重复被过滤，或计算模块报错)

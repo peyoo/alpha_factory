@@ -130,13 +130,16 @@ def is_invalid(e, pset, ret_type):
 def _invalid_atom_infinite(e):
     """无效。单元素。无穷大或无穷小"""
     if isinstance(e, (int, float)):
+        logger.debug(f"发现无意义表达式,直接数值常量：{str(e)}")
         return True
     # 根是单元素，直接返回
     if e.is_Atom:
+        logger.debug(f"发现无意义表达式,单元素：{str(e)}")
         return True
     # 有无限值
     for node in preorder_traversal(e):
         if node.is_infinite:
+            logger.debug(f"发现无意义表达式,含无限值：{str(e)}")
             return True
     return False
 
@@ -157,10 +160,12 @@ def _invalid_number_type(e, pset, ret_type):
         for i, arg in enumerate(prim.args):
             if issubclass(arg, ret_type):  # 此处非常重要
                 if node.args[i].is_Number:
+                    logger.debug(f"发现无意义表达式,返回类型参数为RET_TYPE，但结果为数值：{str(e)}")
                     return True
             elif issubclass(arg, int):
                 # 应当是整数，结果却是浮点
                 if node.args[i].is_Float:
+                    logger.debug(f"发现无意义表达式,整数类型参数结果为浮点数：{str(e)}")
                     return True
             elif issubclass(arg, float):
                 pass
@@ -182,11 +187,14 @@ def _meaningless__ts_xxx_1(e):
             node_name = get_node_name(node)
             if node_name in ('ts_delay', 'ts_delta'):
                 if not node.args[1].is_Integer:
+                    logger.debug(f"发现无意义表达式,时序参数非整数：{str(e)}")
                     return True
             if node_name.startswith('ts_'):
                 if not node.args[-1].is_Number:
+                    logger.debug(f"发现无意义表达式,时序参数非数字：{str(e)}")
                     return True
                 if node.args[-1] <= 1:
+                    logger.debug(f"发现无意义表达式,时序参数为1或更小：{str(e)}")
                     return True
     return False
 
@@ -196,6 +204,7 @@ def _meaningless__xx_xx(e):
     for node in preorder_traversal(e):
         if len(node.args) >= 2:
             if node.args[0] == node.args[1]:
+                logger.debug(f"发现无意义表达式,参数完全一样：{str(e)}")
                 return True
     return False
 

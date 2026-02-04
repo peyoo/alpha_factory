@@ -11,7 +11,7 @@ def batch_quantile_returns(
         date_col: str = "DATE",
         pool_mask_col: str = "POOL_MASK",
         n_bins: int = 10,
-        mode: Literal['long_only', 'long_short', 'active'] = 'active',
+        mode: Literal['long_only', 'long_short', 'active'] = 'long_only',
         annual_days: int = 252
 ) -> pl.DataFrame:
     """
