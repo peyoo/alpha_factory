@@ -30,8 +30,8 @@ class SmallCSGenerator(GPDeapGenerator):
         self.terminals = config.get('terminals', ['OPEN', 'HIGH','LOW','CLOSE','TURNOVER_RATE','VWAP','RET','VWAP_RET'])
 
         self.fitness_population_func = config.get("fitness_population_func", batch_quantile_returns)
-        self.opt_names = config.get("opt_names", ("ann_ret", "sharpe", "complexity"))  #
-        self.opt_weights = config.get("opt_weights", (5, 0.8, -0.1))  # 多目标优化权重
+        self.opt_names = config.get("opt_names", ("ann_ret", "independence"))  #
+        self.opt_weights = config.get("opt_weights", (5, 1.0))  # 多目标优化权重
 
     def _build_pset(self) -> gp.PrimitiveSetTyped:
         """

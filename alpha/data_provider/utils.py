@@ -10,6 +10,7 @@ from expr_codegen.tool import ExprTool
 from loguru import logger
 
 from alpha.polars.utils import CUSTOM_OPERATORS
+from alpha.utils.config import settings
 from alpha.utils.schema import F
 
 
@@ -17,6 +18,7 @@ def extract_expressions_from_csv(
         file_path: Union[str, Path],
         formula_col: str = "expression",
         name_col: Optional[str] = 'factor_name',
+        only_formula: bool = True
 ) -> List[str]:
     """
     从 CSV 中提取符合 expr_codegen 格式的表达式列表。
@@ -39,7 +41,7 @@ def extract_expressions_from_csv(
         formula = str(row[formula_col]).strip()
 
         # 如果提供了 name 列，构造 "name=formula" 格式
-        if name_col and name_col in df.columns:
+        if name_col and name_col in df.columns and not only_formula:
             name = str(row[name_col]).strip()
             expressions.append(f"{name}={formula}")
         else:
@@ -127,3 +129,10 @@ def my_codegen_exec(
     df_output = exec_globals['main'](lf,ge_date_idx = 0)
 
     return df_output
+
+
+if __name__ == "__main__":
+    # 简单测试
+    path = settings.OUTPUT_DIR/'gp'/'SmallCSGenerator'/'best_factors.csv'
+    exprs = extract_expressions_from_csv(path)
+    print(exprs)

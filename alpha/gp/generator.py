@@ -45,6 +45,7 @@ from alpha.gp.base import RET_TYPE, Expr
 from alpha.gp.dependence import DependenceManager
 from alpha.gp.ea import eaMuPlusLambda_NSGA2
 from alpha.gp.label import label_OO_for_IC, label_OO_for_tradable
+from alpha.patch.deap_patch import apply_deap_patches
 from alpha.patch.expr_codegen_patch import apply_expr_codegen_patches
 from alpha.polars.utils import CUSTOM_OPERATORS
 from alpha.utils.config import settings
@@ -57,9 +58,9 @@ from alpha.utils.schema import F
 
 DataFrame = TypeVar("DataFrame", _pl_LazyFrame, _pl_DataFrame)
 
-
 # 在脚本最上方或 __init__ 中调用一次即可
 apply_expr_codegen_patches()
+apply_deap_patches()
 
 class GPDeapGenerator(object):
     """
@@ -103,8 +104,9 @@ class GPDeapGenerator(object):
         # 多目标优化名称及权重
         # 这里的名称和权重要和fitness_population_func 输出指标保持一致
         # complexity，表示因子复杂度，可以不包含在fitness_population_func输出指标中
-        self.opt_names = config.get("opt_names",("ic_mean_abs", "ic_ir_abs",'complexity'))  #
-        self.opt_weights = config.get("opt_weights",(1.0, 1.0,-0.01))  # 多目标优化权重
+        # independence，表示因子独立性分数，可以不包含在fitness_population_func输出指标中
+        self.opt_names = config.get("opt_names",("ic_mean_abs", "ic_ir_abs",'complexity','independence'))  #
+        self.opt_weights = config.get("opt_weights",(1.0, 1.0,-0.01,1.0))  # 多目标优化权重
         # 整体种群fitness函数,
         # 输入参数为:df,factors（所有的因子列名）,split_date(可以没有，训练集与验证集的分割日期),其它参数采用默认值
         # 输出数据格式为: pl.DataFrame，必须包含列factor,以及opt_names所包含的列
@@ -124,7 +126,7 @@ class GPDeapGenerator(object):
         self.lambda_ = config.get("lambda", 400)  # 每代生成后代规模
         self.cxpb = config.get("cxpb", 0.4)  # 交叉概率
         self.mutpb = config.get("mutpb", 0.3)  # 变异概率
-        self.hof_size = config.get("hof_size", 1000) # 名人堂大小
+        self.hof_size = config.get("hof_size", 100) # 名人堂大小
         self.batch_size = config.get("batch_size", 200) # 批处理大小
         self.max_height = config.get("max_height", 3) # 最大树高限制
         # 路径设置
@@ -426,6 +428,31 @@ class GPDeapGenerator(object):
             for expr_str, indep_score in indep_map.items():
                 if expr_str in new_results:
                     new_results[expr_str]['independence'] = indep_score
+
+        # if "independence" in self.opt_names:
+        #     indep_map = self.dep_manager.evaluate_independence(df_output, exprs_list, new_results)
+        #
+        #     # 获取 new_results 的所有 Key 类型，确保比对是有效的
+        #     # 如果 new_results 的 key 是对象，建议先统一转为 str
+        #     for expr_str, indep_score in indep_map.items():
+        #         if expr_str in new_results:
+        #             new_results[expr_str]['independence'] = indep_score
+        #         else:
+        #             # --- 增加调试日志 ---
+        #             logger.warning(f"⚠️ 独立性分数合并失败！Key 不匹配: {expr_str}")
+        #             # 尝试模糊匹配或强制补齐
+        #             # 查找是否存在 str(k) == expr_str 的 key
+        #             match_found = False
+        #             for k in new_results.keys():
+        #                 if str(k) == expr_str:
+        #                     new_results[k]['independence'] = indep_score
+        #                     match_found = True
+        #                     break
+        #
+        #             if not match_found:
+        #                 logger.error(f"❌ 无法在 new_results 中找到对应因子，指标缺失风险！")
+
+
         # 4. 汇总
         total_dur = calc_duration + fit_duration
         logger.info(
