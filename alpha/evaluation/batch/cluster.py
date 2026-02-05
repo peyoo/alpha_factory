@@ -3,7 +3,7 @@ import polars.selectors as cs
 import numpy as np
 import fastcluster
 from loguru import logger
-from typing import Union, List, Optional
+from typing import Union, List, Optional, Any
 from scipy.cluster.hierarchy import fcluster
 from scipy.spatial.distance import squareform
 
@@ -14,7 +14,7 @@ def batch_clustering(
         threshold: float = 0.8,
         method: str = "average",
         sample_n: Optional[int] = None
-) -> dict:
+) -> dict[str, int] | dict[Any, Any] | tuple[dict[str, int], dict[int, list]]:
     """
     因子聚类分析核心函数：识别并归类逻辑冗余的因子。
 
@@ -31,11 +31,13 @@ def batch_clustering(
             - 'average': 组平均法 (UPGMA)，对金融数据噪声较稳健。
             - 'complete': 全联动，倾向于产生紧凑且直径小的簇。
         sample_n (Optional[int]): 采样行数。
-            - 若为 None，则使用全量数据计算。
+            - 若为 None，则使用全量数据计算，或表示输入数据已被采样。
             - 若为 int，则在 collect 后随机采样 N 行，以加速相关性矩阵计算。
 
     Returns:
-        dict: 因子名与聚类标签的映射字典 {因子名: 簇ID}。簇ID相同的因子逻辑同质化较高。
+        name_to_cluster: 因子名与聚类标签的映射字典 {因子名: 簇ID}。簇ID相同的因子逻辑同质化较高。
+        cluster_to_names: 聚类标签与因子名列表的映射字典 {簇ID: [因子名列表]}。
+
     """
 
     # 1. 统一转换为 LazyFrame 以复用执行计划优化器
@@ -55,15 +57,16 @@ def batch_clustering(
             logger.info(f"📊 因子聚类全量计算：共计 {factor_df.height} 行数据")
     except Exception as e:
         logger.error(f"❌ 数据提取失败: {e}")
-        return {}
+        return {},{}
 
     # 3. 边界条件检查
     if factor_df.width < 1:
         logger.warning("⚠️ 未匹配到任何因子列，请检查 selector 参数")
-        return {}
+        return {},{}
+
     if factor_df.width == 1:
         logger.info("ℹ️ 仅有一个因子，跳过聚类")
-        return {factor_df.columns[0]: 1}
+        return {factor_df.columns[0]: 1},{1: [factor_df.columns[0]]}
 
     # 4. 数据预处理：剔除方差过小的常数因子
     stats = factor_df.std()
@@ -109,14 +112,30 @@ def batch_clustering(
         logger.error(f"❌ 层次聚类算法崩溃: {e}")
         return {col: i + 1 for i, col in enumerate(factor_df.columns)}
 
-    # 9. 构造最终结果映射
-    result = {col: 0 for col in factor_df.columns}
-    for col, label in zip(valid_cols, labels):
-        result[col] = int(label)
+    # --- 9. 构造最终双向映射结果 ---
+    from collections import defaultdict
 
-    # 10. 打印聚类摘要日志
+    # 映射 A: {因子名: 簇ID}
+    name_to_cluster = {col: 0 for col in factor_df.columns}
+    # 映射 B: {簇ID: List[因子名]}
+    cluster_to_names = defaultdict(list)
+
+    # 首先处理参与聚类的有效因子
+    for col, label in zip(valid_cols, labels):
+        cid = int(label)
+        name_to_cluster[col] = cid
+        cluster_to_names[cid].append(col)
+
+    # 处理被剔除的常数因子（统一归为簇 0）
+    invalid_cols = [c for c in factor_df.columns if c not in valid_cols]
+    if invalid_cols:
+        cluster_to_names[0] = invalid_cols
+        # name_to_cluster 默认值已为 0，无需重复赋值
+
+    # --- 10. 打印聚类摘要日志 ---
     num_clusters = len(set(labels))
     logger.success(
-        f"✅ 因子聚类完成 | 原始因子: {len(factor_df.columns)} | 有效参与: {len(valid_cols)} | 逻辑簇数量: {num_clusters}")
+        f"✅ 因子聚类完成 | 总数: {len(factor_df.columns)} | 逻辑簇: {num_clusters} | 常数因子: {len(invalid_cols)}"
+    )
 
-    return result
+    return name_to_cluster, dict(cluster_to_names)

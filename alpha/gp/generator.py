@@ -22,7 +22,6 @@ GP 因子生成器主类
 """
 
 import operator
-import pickle
 import time
 from datetime import datetime
 from itertools import count
@@ -40,7 +39,7 @@ import more_itertools
 
 from alpha.data_provider import DataProvider
 # 导入打过补丁的组件和基础工具
-from alpha.gp.base import population_to_exprs, filter_exprs, print_population
+from alpha.gp.base import population_to_exprs, filter_exprs, print_population, strings_to_sympy
 from alpha.gp.base import RET_TYPE, Expr
 from alpha.gp.dependence import DependenceManager
 from alpha.gp.ea import eaMuPlusLambda_NSGA2
@@ -124,18 +123,39 @@ class GPDeapGenerator(object):
         # --- 4. 进化算法超参数 ---
         self.mu = config.get("mu", 400) # 种群保留规模
         self.lambda_ = config.get("lambda", 400)  # 每代生成后代规模
-        self.cxpb = config.get("cxpb", 0.4)  # 交叉概率
-        self.mutpb = config.get("mutpb", 0.3)  # 变异概率
+        self.cxpb = config.get("cxpb", 0.3)  # 交叉概率
+        self.mutpb = config.get("mutpb", 0.5)  # 变异概率
         self.hof_size = config.get("hof_size", 100) # 名人堂大小
         self.batch_size = config.get("batch_size", 200) # 批处理大小
         self.max_height = config.get("max_height", 3) # 最大树高限制
         # 路径设置
-        self.save_dir = Path(settings.GP_DEAP_DIR)/ self.name
-        self.save_dir.mkdir(parents=True, exist_ok=True)
-
+        self._save_dir = None
         self.dep_manager = None  # 因子独立性管理器，稍后初始化
+        self.cluster_threshold = config.get('cluster_threshold', 0.7)  # 因子独立性聚类阈值
+        self.penalty_factor = config.get('penalty_factor', -0.1)  # 因子独立性惩罚因子
+
+
+        self.seed_file = config.get("seed_file", 'best_factors.csv')  # 种子文件路径，用于断点恢复
+        self.expression_formula = config.get("expression_formula", 'expression')  # 预定义种子公式列表
+        self.max_seed = config.get("max_seed", 0)  # 最大种子注入数量，默认0不注入
+
+        # 缓存本轮实验的适应度结果，避免重复计算
+        self.fitness_cache = {}
 
         logger.info(f"✓ GP 生成器初始化完成 | 批大小: {self.batch_size}")
+
+
+    @property
+    def save_dir(self):
+        """获取结果保存目录"""
+        if self._save_dir is None:
+            self._save_dir = Path(settings.OUTPUT_DIR) / self.pool_func.__name__
+            self._save_dir.mkdir(parents=True, exist_ok=True)
+        return self._save_dir
+
+    def seep_file_path(self):
+        """获取种子文件路径"""
+        return self.save_dir / self.seed_file
 
 
     def _build_pset(self) -> gp.PrimitiveSetTyped:
@@ -163,16 +183,18 @@ class GPDeapGenerator(object):
         toolbox = base.Toolbox()
 
         # 树生成算法: 半数半萌法 (Half and Half)
-        toolbox.register("expr", gp.genHalfAndHalf, pset=self.pset, min_=2, max_=5)
+        toolbox.register("expr", gp.genHalfAndHalf, pset=self.pset, min_=2, max_=3)
         toolbox.register("individual", tools.initIterate, creator.Individual, toolbox.expr)
         toolbox.register("population", tools.initRepeat, list, toolbox.individual)
 
         # 遗传算子: 锦标赛选择、交叉、变异
-        # toolbox.register("select", tools.selTournament, tournsize=3) # 单目标优化选择
-        toolbox.register("select", tools.selNSGA2)  # 多目标优化选择
+        if len(self.opt_weights) == 1:
+            toolbox.register("select", tools.selTournament, tournsize=3) # 单目标优化选择
+        else:
+            toolbox.register("select", tools.selNSGA2)  # 多目标优化选择
 
         toolbox.register("mate", gp.cxOnePoint)
-        toolbox.register("expr_mut", gp.genFull, min_=0, max_=2)
+        toolbox.register("expr_mut", gp.genFull, min_=1, max_=2)
         toolbox.register("mutate", gp.mutUniform, expr=toolbox.expr_mut, pset=self.pset)
 
         # 限制树高，防止膨胀 (Bloat)
@@ -192,6 +214,10 @@ class GPDeapGenerator(object):
         logger.debug("✓ Toolbox 构建完成")
         return toolbox
 
+    def _extra_toolbox_settings(self,toolbox):
+        """额外的 Toolbox 设置（可选扩展）,会覆盖默认的设置"""
+        pass
+
 
     def build_statistics(self) -> tools.Statistics:
         """
@@ -206,6 +232,58 @@ class GPDeapGenerator(object):
         stats.register("min", np.nanmin, axis=0)
         stats.register("std", np.nanstd, axis=0)
         return stats
+
+    def seed_load(self, pop, seed_exprs: List[str], max_seeds: int = 20) -> List:
+        """
+        将预定义的种子公式注入种群。去掉了聚类逻辑，直接进行强类型转换。
+
+        Args:
+            pop: 初始化的 DEAP 种群列表
+            seed_exprs: 候选公式字符串列表
+            max_seeds: 最大注入数量
+
+        Returns:
+            pop: 注入种子后的种群
+        """
+        if not seed_exprs:
+            return pop
+
+        logger.info(f"🌱 正在加载种子选手 (上限: {max_seeds})...")
+
+        # 1. 限制种子数量，防止其完全占据初始种群
+        actual_seeds_to_load = seed_exprs[:max_seeds]
+
+        # 2. 利用 Sympy 进行预处理（主要为了格式规范化和简化）
+        try:
+            # strings_to_sympy 返回 [(name, expr_obj, complexity), ...]
+            processed = strings_to_sympy(actual_seeds_to_load, globals().copy())
+        except Exception as e:
+            logger.error(f"❌ Sympy 预处理种子失败: {e}")
+            return pop
+
+        seeds_count = 0
+        for i, (name, expr_obj, _) in enumerate(processed):
+            if i >= len(pop):
+                break
+
+            try:
+                # 3. 将 Sympy 表达式转回字符串并处理潜在的类型不匹配
+                # 针对 PrimitiveSetTyped 的常见问题：将 "20.0" 替换回 "20"
+                expr_str = str(expr_obj).replace('.0)', ')').replace('.0,', ',')
+
+                # 4. 强类型转换并替换种群中的个体
+                ind = creator.Individual.from_string(expr_str, self.pset)
+                pop[i] = ind
+                seeds_count += 1
+                logger.debug(f"✅ 种子注入成功 [{seeds_count}]: {expr_str}")
+
+            except Exception as e:
+                # 如果转换失败（通常是算子名不匹配或参数类型不对），跳过该种子
+                logger.warning(f"⚠️ 种子转换跳过: {expr_obj} | 错误: {e}")
+                continue
+
+        logger.success(f"✨ 种子注入流程结束，成功注入 {seeds_count} 个个体")
+        return pop
 
     def run(
         self,
@@ -230,7 +308,8 @@ class GPDeapGenerator(object):
         self.dep_manager = DependenceManager(
             opt_names=self.opt_names,
             opt_weights=self.opt_weights,
-            cluster_threshold=0.7
+            cluster_threshold=self.cluster_threshold,
+            penalty_factor=self.penalty_factor
         )
 
         # 2. 载入原始数据
@@ -248,13 +327,24 @@ class GPDeapGenerator(object):
         self.pset = self._build_pset()
         toolbox = self.build_toolbox(input_data)
         stats = self.build_statistics()
-        hof = tools.HallOfFame(self.hof_size)
-        # 多目标 selNSGA2
-        # hof = tools.ParetoFront(similar=operator.eq)
+        if len(self.opt_weights) == 1:
+            # 单目标 selTournament
+            hof = tools.HallOfFame(self.hof_size, similar=lambda ind1, ind2: str(ind1) == str(ind2))
+        else:
+            # 多目标 selNSGA2
+            hof = tools.ParetoFront(similar=lambda ind1, ind2: str(ind1) == str(ind2))
 
         # 初始化种群
         pop = toolbox.population(n=n_pop)
         logger.info(f"✓ 初始种群已生成 | 大小: {len(pop)}")
+
+        if self.seep_file_path().exists() and self.max_seed > 0:
+            try:
+                seed_df = pl.read_csv(self.seep_file_path())
+                seed_exprs = seed_df[self.expression_formula].to_list()
+                pop = self.seed_load(pop, seed_exprs, self.max_seed)
+            except Exception as e:
+                logger.error(f"❌ 种子文件加载失败: {e}")
 
         # 执行进化
         logger.info("▶️ 开始遗传编程进化...")
@@ -270,15 +360,6 @@ class GPDeapGenerator(object):
             verbose=True,
             generator = self
         )
-
-        # 保存名人堂
-        hof_path = self.save_dir / 'best_hof.pkl'
-        try:
-            with open(hof_path, 'wb') as f:
-                pickle.dump(hof, f)
-            logger.info(f"💾 名人堂已保存至: {hof_path}")
-        except Exception as e:
-            logger.error(f"❌ 名人堂保存失败: {e}")
 
         logger.info(f"✨ GP 进化完成 | 最终种群: {len(pop)} | 名人堂: {len(hof)}")
 
@@ -322,21 +403,10 @@ class GPDeapGenerator(object):
         g = next(gen)
         logger.info(f">>> 第 {g} 代 | 种群大小: {len(individuals)}")
 
-        # 2. 缓存管理
-        cache_path = self.save_dir / 'fitness_cache.pkl'
-        fitness_results: Dict = {} # 表达式字符串 -> 适应度元组
-        if cache_path.exists():
-            try:
-                with open(cache_path, 'rb') as f:
-                    fitness_results = pickle.load(f)
-                logger.debug(f"✓ 加载历史缓存 | 已有结果: {len(fitness_results)}")
-            except Exception as e:
-                logger.warning(f"⚠️ 缓存加载失败: {e}")
-
         # 3. 表达式清洗与过滤
         logger.debug("🔄 转换 DEAP 树 -> Sympy 表达式...")
         exprs_list = population_to_exprs(individuals, globals().copy())
-        exprs_to_calc = filter_exprs(exprs_list, self.pset, RET_TYPE, fitness_results)
+        exprs_to_calc = filter_exprs(exprs_list, self.pset, RET_TYPE, self.fitness_cache)
 
         logger.info(f"📊 需计算: {len(exprs_to_calc)} / {len(exprs_list)} 个表达式")
 
@@ -345,26 +415,14 @@ class GPDeapGenerator(object):
             for batch_id, batch in enumerate(more_itertools.batched(exprs_to_calc, self.batch_size)):
                 logger.debug(f"  批次 {batch_id + 1} | 大小: {len(list(batch))}")
                 new_scores = self.batched_exprs(batch_id, list(batch), g, split_date, input_data)
-                fitness_results.update(new_scores)
-
-            # 更新全局缓存
-            try:
-                with open(cache_path, 'wb') as f:
-                    pickle.dump(fitness_results, f)
-                logger.debug(f"✓ 缓存已更新 | 总结果数: {len(fitness_results)}")
-            except Exception as e:
-                logger.warning(f"⚠️ 缓存保存失败: {e}")
+                self.fitness_cache.update(new_scores)
 
         # 5. 回填适应度（可加入惩罚）
-        fitness_values = self.fill_fitness(individuals,exprs_list, fitness_results)
+        fitness_values = self.fill_fitness(individuals,exprs_list, self.fitness_cache)
         logger.info(f"✓ 第 {g} 代评估完成")
         return fitness_values
 
-    def batched_exprs(self, batch_id, exprs_list, gen, split_date, df_input):
-        """每代种群分批计算，包含详细性能日志及平均用时"""
-        if len(exprs_list) == 0:
-            return {}
-
+    def _calc_exprs(self, exprs_list, df_input):
         lf = df_input.lazy() if isinstance(df_input, pl.DataFrame) else df_input
 
         tool = ExprTool()
@@ -373,15 +431,24 @@ class GPDeapGenerator(object):
                             date='DATE', asset='ASSET', over_null=None,
                             skip_simplify=True)
 
-        cnt = len(exprs_list)
         globals_ = {**CUSTOM_OPERATORS}
         exec(codes, globals_)
 
+        df_output = globals_['main'](lf, ge_date_idx=0).collect()
+
+        return df_output
+
+    def batched_exprs(self, batch_id, exprs_list, gen, split_date, df_input):
+        """每代种群分批计算，包含详细性能日志及平均用时"""
+        if len(exprs_list) == 0:
+            return {}
+
         # --- 阶段 A: 因子值计算 ---
+        cnt = len(exprs_list)
         logger.info("第{}代-第{}批：开始计算因子值 (共 {} 条)", gen, batch_id, cnt)
         tic_calc = time.perf_counter()
 
-        df_output = globals_['main'](lf, ge_date_idx=0).collect()
+        df_output = self._calc_exprs(exprs_list,df_input)
 
         toc_calc = time.perf_counter()
         calc_duration = toc_calc - tic_calc
@@ -391,8 +458,6 @@ class GPDeapGenerator(object):
             "第{}代-第{}批：计算完成。总耗时: {:.3f}s | 速度: {:.2f} 条/s | 平均: {:.4f}s/条",
             gen, batch_id, calc_duration, cnt / calc_duration, calc_duration / cnt
         )
-
-
 
         # --- 阶段 B: 适应度计算 ---
         logger.info("第{}代-第{}批：开始聚合计算 IC/RET 适应度指标", gen, batch_id)
@@ -423,34 +488,8 @@ class GPDeapGenerator(object):
             new_results[expr_str] = row
 
         if "independence" in self.opt_names:
-            # 这里的 exprs_list 包含了 (因子名, 表达式对象, 复杂度)
-            indep_map = self.dep_manager.evaluate_independence(df_output, exprs_list,new_results)
-            for expr_str, indep_score in indep_map.items():
-                if expr_str in new_results:
-                    new_results[expr_str]['independence'] = indep_score
-
-        # if "independence" in self.opt_names:
-        #     indep_map = self.dep_manager.evaluate_independence(df_output, exprs_list, new_results)
-        #
-        #     # 获取 new_results 的所有 Key 类型，确保比对是有效的
-        #     # 如果 new_results 的 key 是对象，建议先统一转为 str
-        #     for expr_str, indep_score in indep_map.items():
-        #         if expr_str in new_results:
-        #             new_results[expr_str]['independence'] = indep_score
-        #         else:
-        #             # --- 增加调试日志 ---
-        #             logger.warning(f"⚠️ 独立性分数合并失败！Key 不匹配: {expr_str}")
-        #             # 尝试模糊匹配或强制补齐
-        #             # 查找是否存在 str(k) == expr_str 的 key
-        #             match_found = False
-        #             for k in new_results.keys():
-        #                 if str(k) == expr_str:
-        #                     new_results[k]['independence'] = indep_score
-        #                     match_found = True
-        #                     break
-        #
-        #             if not match_found:
-        #                 logger.error(f"❌ 无法在 new_results 中找到对应因子，指标缺失风险！")
+            # 这里的 exprs_list 包含了 (因子名, 表达式对象, _)
+            self.dep_manager.register_fingerprints(df_output, exprs_list)
 
 
         # 4. 汇总
@@ -464,79 +503,74 @@ class GPDeapGenerator(object):
 
     def fill_fitness(self, individuals, exprs_old, fitness_results):
         """
-        根据惯例处理并返回 Fitness 元组列表。
-        同时原地更新个体的 stats 属性。
-
-        Args:
-            individuals: DEAP 个体列表 [ind1, ind2, ...]
-            exprs_old: 辅助信息 [(k, v, c), ...]，其中 v 是表达式对象或字符串
-            fitness_results: 计算结果字典 {str(v): {metrics_dict}}
-
-        Returns:
-            List[Tuple]: 对应每个个体的适应度元组列表，例如 [(ic, ir, comp), ...]
+        重构版：完全适配按位置评分的独立性接口
         """
-        # 0. 长度安全性检查
         if len(individuals) != len(exprs_old):
             raise ValueError(f"数据对齐失败: individuals({len(individuals)}) != exprs_old({len(exprs_old)})")
 
-        # 1. 预计算惩罚向量 (根据 opt_weights 符号确定惩罚方向)
-        # 若权重为正(求最大)，惩罚值为 0.0；若权重为负(求最小)，惩罚值为 999.0
+        # 1. 预计算惩罚向量
         penalty_values = tuple(0.0 if w > 0 else 999.0 for w in self.opt_weights)
+
+        # 2. 挂载 expr_str 并收集全量表达式
+        all_expr_strs = []
+        for ind, (_, v, _) in zip(individuals, exprs_old):
+            search_key = str(v)
+            ind.expr_str = search_key  # 方便后续 update_and_prune 识别
+            all_expr_strs.append(search_key)
+
+        # 3. 【核心修改】获取按位置对应的独立性分数列表
+        # 现在的 indep_scores_list 是一个 List[float]，长度与 individuals 一致
+        indep_scores_list = self.dep_manager.calculate_contextual_independence(
+            all_expr_strs,
+            fitness_results
+        )
 
         fit_tuples_list = []
 
-        # 2. 遍历个体与对应的表达式描述
-        # v 表示因子表达式字符串
-        for ind, (_, v, _) in zip(individuals, exprs_old):
-            # 统一使用字符串键匹配结果字典
-            search_key = str(v)
-            ind.expr_str = search_key  # 原地挂载表达式字符串，便于后续查询
+        # 4. 遍历填充：利用 zip(individuals, all_expr_strs, indep_scores_list) 实现物理对齐
+        for ind, search_key, current_indep_score in zip(individuals, all_expr_strs, indep_scores_list):
             score_dict = fitness_results.get(search_key)
 
-            # 情况 A: 匹配失败 (该因子因非法、重复被过滤，或计算模块报错)
-            if score_dict is None:
+            # 情况 A: 匹配失败或触发惩罚
+            if score_dict is None or self.is_penalty(score_dict):
                 fit_tuples_list.append(penalty_values)
-                ind.stats = None  # 清空或初始化 stats
+                ind.stats = None
                 continue
 
-            if self.is_penalty(score_dict):
-                fit_tuples_list.append(penalty_values)
-                ind.stats = None  # 清空或初始化 stats
-                continue
-
-            # 情况 B: 匹配成功，根据 self.opt_names 提取指标
+            # 情况 B: 正常评估
             try:
                 current_fit = []
                 for i, name in enumerate(self.opt_names):
+                    # 逻辑分支 1: 复杂度 (静态)
                     if name == "complexity":
-                        # 直接获取 DEAP 树的节点数作为复杂度
                         val = float(len(ind))
-                    else:
-                        # 从结果字典提取指标，若 Key 不存在则直接触发 KeyError (配置错误)
-                        try:
-                            raw_val = score_dict[name]
 
-                            # 核心防御：处理计算结果中的 NaN 或 Inf，防止 Logbook 崩溃
-                            if raw_val is None or not np.isfinite(raw_val):
-                                val = penalty_values[i]
-                            else:
-                                val = float(raw_val)
-                        except KeyError:
-                            logger.error(f"❌ 指标配置错误: '{name}' 不在计算结果中!")
-                            logger.error(f"当前可用指标: {list(score_dict.keys())}")
-                            raise KeyError(f"Metric '{name}' missing in fitness_results.")
+                    # 逻辑分支 2: 独立性 (使用 DM 实时计算的、基于位置的分数)
+                    elif name == "independence":
+                        # 【关键点】这里不再查表，直接用 current_indep_score
+                        val = float(current_indep_score)
+
+                    # 逻辑分支 3: 其他绩效指标
+                    else:
+                        raw_val = score_dict.get(name)
+                        if raw_val is None or not np.isfinite(raw_val):
+                            val = penalty_values[i]
+                        else:
+                            val = float(raw_val)
 
                     current_fit.append(val)
 
-                # 转换为元组并存入结果列表
                 fit_tuple = tuple(current_fit)
                 fit_tuples_list.append(fit_tuple)
 
-                # 原地挂载全量指标字典，方便后验分析
-                ind.stats = score_dict
+                # 更新 stats，确保 stats 里的独立性也是“这个个体”专属的实时分数
+                final_stats = score_dict.copy()
+                if "independence" in self.opt_names:
+                    final_stats["independence"] = current_indep_score
+                ind.stats = final_stats
 
             except Exception as e:
-                logger.error(f"处理个体适应度异常: {e} | 表达式: {search_key}")
+                logger.error(f"处理适应度异常: {e} | {search_key}")
                 fit_tuples_list.append(penalty_values)
                 ind.stats = None
 
@@ -550,7 +584,7 @@ class GPDeapGenerator(object):
                 return True
         return False
 
-    def export_hof_to_csv(self, hof, globals_, filename="best_factors.csv"):
+    def export_hof_to_csv(self, hof, globals_, filename="gp_best_factors.csv"):
         """
         将名人堂内容导出到 CSV
 

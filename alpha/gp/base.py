@@ -242,7 +242,7 @@ def strings_to_sympy(population, globals_):
     if len(population) == 0:
         return {}
     sources = [f'GP_{i:04d}={expr}' for i, expr in enumerate(population)]
-    raw, exprs_list = sources_to_exprs(globals_, '\n'.join(sources), convert_xor=False,function_mapping={})
+    raw, exprs_list = sources_to_exprs(globals_, '\n'.join(sources), convert_xor=False)
     exprs_list = [(k, convert_inverse_sympy(v), c) for k, v, c in exprs_list]
     return exprs_list
 

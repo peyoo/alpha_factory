@@ -19,7 +19,7 @@ def eaMuPlusLambda_NSGA2(population, toolbox, mu, lambda_, cxpb, mutpb, ngen,
         ind.fitness.values = fit
 
     if halloffame is not None:
-        halloffame.update(population)
+        halloffame.update(invalid_ind)
 
     record = stats.compile(population) if stats is not None else {}
     logbook.record(gen=0, nevals=len(invalid_ind), **record)
@@ -29,6 +29,10 @@ def eaMuPlusLambda_NSGA2(population, toolbox, mu, lambda_, cxpb, mutpb, ngen,
 
     # 2. 进化主循环
     for gen in range(1, ngen + 1):
+        if generator and "independence" in generator.opt_names:
+            # 传入最新的 HOF 对象，内部自动提取表达式并清理寄存站
+            generator.dep_manager.update_and_prune(halloffame)
+
         # 变异与交叉
         offspring = algorithms.varOr(population, toolbox, lambda_, cxpb, mutpb)
 
@@ -43,14 +47,11 @@ def eaMuPlusLambda_NSGA2(population, toolbox, mu, lambda_, cxpb, mutpb, ngen,
 
         if halloffame is not None:
             halloffame.update(offspring)
-            if generator and "independence" in generator.opt_names:
-                # 传入最新的 HOF 对象，内部自动提取表达式并清理寄存站
-                generator.dep_manager.update_and_prune(halloffame)
+
             # 日志输出排在前5位的个体，及其表达式
-            logger.debug("Hall of Fame Top 5 Individuals:")
-            for i, ind in enumerate(halloffame.items[:5]):
+            logger.debug("Hall of Fame Top 10 Individuals:")
+            for i, ind in enumerate(halloffame.items[:10]):
                 logger.debug(f"Rank {i+1}: {ind} with fitness {ind.fitness.values}")
-                logger.debug(f"Expression: {str(ind)}")
 
 
         # 统计

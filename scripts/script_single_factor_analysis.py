@@ -3,7 +3,7 @@ from loguru import logger
 from alpha.data_provider import DataProvider
 
 from alpha.data_provider.pool import main_small_pool
-from alpha.evaluation.batch_return import batch_quantile_returns
+from alpha.evaluation.batch.returns import batch_quantile_returns
 from alpha.evaluation.single import single_factor_alpha_analysis
 from alpha.gp.extra_terminal import add_extra_terminals
 from alpha.gp.label import label_OO_for_tradable

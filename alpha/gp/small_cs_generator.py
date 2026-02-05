@@ -4,7 +4,7 @@ from typing import Dict, Any
 from deap import gp
 
 from alpha.data_provider.pool import main_small_pool
-from alpha.evaluation.batch_return import batch_quantile_returns
+from alpha.evaluation.batch.returns import batch_quantile_returns
 from alpha.gp.base import Expr, dummy
 from alpha.gp.extra_terminal import add_extra_terminals
 from alpha.gp.generator import GPDeapGenerator
@@ -23,6 +23,10 @@ class SmallCSGenerator(GPDeapGenerator):
     def __init__(self, config: Dict[str, Any] = {}) -> None:
         super().__init__(config)
         self.top_n = config.get('top_n', 1000)
+        self.cxpb = config.get("cxpb", 0.3)  # 交叉概率
+        self.mutpb = config.get("mutpb", 0.6)  # 变异概率
+        self.cluster_threshold = config.get('cluster_threshold', 0.7)  # 因子独立性聚类阈值
+        self.penalty_factor = config.get('penalty_factor', -1.0)  # 因子独立性惩罚因子
         self.pool_func = config.get("pool_func", main_small_pool)  # 小微盘股票池函数
         self.label_funcs = config.get("label_funcs", [label_OO_for_IC,label_OO_for_tradable])
         self.random_window_func = config.get("random_window_func", _random_window_int)  # 随机窗口函数
@@ -31,7 +35,9 @@ class SmallCSGenerator(GPDeapGenerator):
 
         self.fitness_population_func = config.get("fitness_population_func", batch_quantile_returns)
         self.opt_names = config.get("opt_names", ("ann_ret", "independence"))  #
-        self.opt_weights = config.get("opt_weights", (5, 1.0))  # 多目标优化权重
+        self.opt_weights = config.get("opt_weights", (1.0, 1.0))  # 多目标优化权重
+
+        self.hof_size = config.get("hof_size", 100)  # 名人堂大小
 
     def _build_pset(self) -> gp.PrimitiveSetTyped:
         """
@@ -50,8 +56,8 @@ class SmallCSGenerator(GPDeapGenerator):
         pset.addEphemeralConstant("rand_int", _random_window_int, int)
 
         # 3. 基础算术算子 (线性模型 ElasticNet 无法自学除法和乘法交互)
-        # for name in ['add', 'sub', 'mul', 'div']:
-        #     pset.addPrimitive(dummy, [Expr, Expr], Expr, name=f'oo_{name}')
+        for name in ['add', 'sub', 'mul', 'div']:
+            pset.addPrimitive(dummy, [Expr, Expr], Expr, name=f'oo_{name}')
 
         # 4. 时序统计算子 (LightGBM 的盲区：无法跨行感知历史)
         # ts_mean:最基础的趋势中枢（均线）。它提供了价格的“锚点”。
