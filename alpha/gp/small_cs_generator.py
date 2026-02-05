@@ -23,10 +23,10 @@ class SmallCSGenerator(GPDeapGenerator):
     def __init__(self, config: Dict[str, Any] = {}) -> None:
         super().__init__(config)
         self.top_n = config.get('top_n', 1000)
-        self.cxpb = config.get("cxpb", 0.3)  # 交叉概率
-        self.mutpb = config.get("mutpb", 0.6)  # 变异概率
-        self.cluster_threshold = config.get('cluster_threshold', 0.7)  # 因子独立性聚类阈值
-        self.penalty_factor = config.get('penalty_factor', -1.0)  # 因子独立性惩罚因子
+        self.max_height = config.get("max_height", 4) # 最大树高限制
+        self.cxpb = config.get("cxpb", 0.5)  # 交叉概率
+        self.mutpb = config.get("mutpb", 0.3)  # 变异概率
+
         self.pool_func = config.get("pool_func", main_small_pool)  # 小微盘股票池函数
         self.label_funcs = config.get("label_funcs", [label_OO_for_IC,label_OO_for_tradable])
         self.random_window_func = config.get("random_window_func", _random_window_int)  # 随机窗口函数
@@ -34,10 +34,12 @@ class SmallCSGenerator(GPDeapGenerator):
         self.terminals = config.get('terminals', ['OPEN', 'HIGH','LOW','CLOSE','TURNOVER_RATE','VWAP','RET','VWAP_RET'])
 
         self.fitness_population_func = config.get("fitness_population_func", batch_quantile_returns)
-        self.opt_names = config.get("opt_names", ("ann_ret", "independence"))  #
-        self.opt_weights = config.get("opt_weights", (1.0, 1.0))  # 多目标优化权重
+        self.opt_names = config.get("opt_names", ("ann_ret",))  #
+        self.opt_weights = config.get("opt_weights", (1.0,))  # 多目标优化权重
 
         self.hof_size = config.get("hof_size", 100)  # 名人堂大小
+        self.cluster_threshold = config.get('cluster_threshold', 0.7)  # 因子独立性聚类阈值
+        self.penalty_factor = config.get('penalty_factor', -1.0)  # 因子独立性惩罚因子
 
     def _build_pset(self) -> gp.PrimitiveSetTyped:
         """

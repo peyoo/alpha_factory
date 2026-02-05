@@ -101,11 +101,14 @@ class GPDeapGenerator(object):
         # 分割日期，训练集与验证集的分割日期，默认None
         self.split_date = config.get("split_date", None)
         # 多目标优化名称及权重
-        # 这里的名称和权重要和fitness_population_func 输出指标保持一致
+        # 这里的名称要和fitness_population_func 输出指标保持一致(要包含对应的列)
         # complexity，表示因子复杂度，可以不包含在fitness_population_func输出指标中
         # independence，表示因子独立性分数，可以不包含在fitness_population_func输出指标中
-        self.opt_names = config.get("opt_names",("ic_mean_abs", "ic_ir_abs",'complexity','independence'))  #
-        self.opt_weights = config.get("opt_weights",(1.0, 1.0,-0.01,1.0))  # 多目标优化权重
+        # 多目标示例
+        # self.opt_names = config.get("opt_names",("ic_mean_abs", "ic_ir_abs",'complexity','independence'))  #
+        # self.opt_weights = config.get("opt_weights",(1.0, 1.0,-0.01,1.0))  # 多目标优化权重
+        self.opt_names = config.get("opt_names",("ic_mean_abs",))  #
+        self.opt_weights = config.get("opt_weights",(1.0,))
         # 整体种群fitness函数,
         # 输入参数为:df,factors（所有的因子列名）,split_date(可以没有，训练集与验证集的分割日期),其它参数采用默认值
         # 输出数据格式为: pl.DataFrame，必须包含列factor,以及opt_names所包含的列
@@ -127,7 +130,7 @@ class GPDeapGenerator(object):
         self.mutpb = config.get("mutpb", 0.5)  # 变异概率
         self.hof_size = config.get("hof_size", 100) # 名人堂大小
         self.batch_size = config.get("batch_size", 200) # 批处理大小
-        self.max_height = config.get("max_height", 3) # 最大树高限制
+        self.max_height = config.get("max_height", 4) # 最大树高限制
         # 路径设置
         self._save_dir = None
         self.dep_manager = None  # 因子独立性管理器，稍后初始化
@@ -194,7 +197,7 @@ class GPDeapGenerator(object):
             toolbox.register("select", tools.selNSGA2)  # 多目标优化选择
 
         toolbox.register("mate", gp.cxOnePoint)
-        toolbox.register("expr_mut", gp.genFull, min_=1, max_=2)
+        toolbox.register("expr_mut", gp.genHalfAndHalf, min_=0, max_=3)
         toolbox.register("mutate", gp.mutUniform, expr=toolbox.expr_mut, pset=self.pset)
 
         # 限制树高，防止膨胀 (Bloat)

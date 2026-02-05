@@ -1,128 +1,121 @@
-"""
-大批量因子评估相关计算函数集
-
-"""
-
-from typing import List
-
+import numpy as np
 import polars as pl
+import polars.selectors as cs
+from typing import Union, List, Literal
+
+from alpha.utils.schema import F
 
 
-def batch_calc_factor_full_metrics(
-        df: pl.DataFrame,
-        factor_pattern: List[str],
-        ret_col: str,
-        date_col: str = "DATE",
-        asset_col: str = "ASSET",
-        max_lag: int = 10
+def batch_full_metrics(
+        df: Union[pl.DataFrame, pl.LazyFrame],
+        factors: Union[str, List[str]] = r"^factor_.*",
+        label_ic_col: str = F.LABEL_FOR_RET,
+        label_ret_col: str = F.LABEL_FOR_RET,
+        date_col: str = F.DATE,
+        asset_col: str = F.ASSET,  # 确保传入 asset 列名
+        pool_mask_col: str = F.POOL_MASK,
+        n_bins: int = 10,
+        mode: Literal['long_only', 'long_short', 'active'] = 'long_only',
+        annual_days: int = 252,
+        fee: float = 0.0015  # 单边交易费用
 ) -> pl.DataFrame:
     """
-    【合并版】一次性计算基础 IC 指标 + IC/IR 衰减图谱
-    大批量计算因子 IC 衰减图谱及基础统计指标
-    结果返回每个因子在不同滞后期的 IC Mean、IR 以及基础指标（t-stat、win rate）
-    计算逻辑：
-    1. 构造滞后收益率列并 Rank
-    2. 长表化处理所有因子，方便统一计算
-    3. 按日期和因子分组，计算各滞后期的 IC 序列
-    4. 最终统计各因子在不同滞后期的 IC Mean、IR 以及基础指标
-    说明：
-    这种方法避免了多次循环计算，极大提升了效率。
-    适用于大规模因子评估场景。
+    全维度因子评估：集成 IC、净值收益、以及基于自相关性估算的换手成本。
     """
+    lf = df.lazy() if isinstance(df, pl.DataFrame) else df
 
-    # 1. 统一选取因子列名
-    # 如果传入的是字符串，则视为正则匹配；如果已经是 List，则直接使用
-    if isinstance(factor_pattern, str):
-        factor_cols = df.select(pl.col(factor_pattern)).columns
-    else:
-        factor_cols = factor_pattern
+    # 1. 预过滤股票池
+    if pool_mask_col in lf.collect_schema().names():
+        lf = lf.filter(pl.col(pool_mask_col))
 
-    # 2. 构造滞后收益率并 Rank
-    target_lags = [f"target_lag_{i}" for i in range(max_lag)]
-    q = df.lazy().with_columns([
-        pl.col(ret_col).shift(-i).over(asset_col).rank().over(date_col).alias(f"target_lag_{i}")
-        for i in range(max_lag)
-    ])
+    # 选择因子列
+    factor_cols = lf.select(
+        cs.matches(factors) if isinstance(factors, str) else cs.by_name(factors)
+    ).collect_schema().names()
 
-    # 2. 长表化处理
-    q_long = q.unpivot(
-        index=[date_col, asset_col] + target_lags,
-        on=factor_cols,
-        variable_name="factor",
-        value_name="factor_value"
-    ).with_columns(
-        pl.col("factor_value").rank().over([date_col, "factor"])
+    if not factor_cols:
+        return pl.DataFrame()
+
+    # 2. 计算因子自相关性表达式 (用于换手成本估算)
+    # 修复：确保使用传入的 asset_col 进行分组计算位移相关性
+    autocorr_exprs = [
+        pl.corr(f, pl.col(f).shift(1), method="spearman")
+        .over(asset_col)
+        .alias(f"{f}_stab")
+        for f in factor_cols
+    ]
+
+    # 3. 截面聚合计算 (IC + Bin Returns + Stability)
+    daily_raw = (
+        lf.with_columns(autocorr_exprs)
+        .group_by(date_col)
+        .agg([
+            pl.col(label_ret_col).mean().alias("market_avg"),
+            # 计算截面 IC
+            *[pl.corr(f, label_ic_col, method="spearman").alias(f"{f}_ic") for f in factor_cols],
+            # 修正：移除多余的逗号，确保聚合逻辑正确
+            *[pl.col(f"{f}_stab").mean().alias(f"{f}_stab_avg") for f in factor_cols],
+            # 分桶收益 (修正：btm 增加 method="random" 保持一致)
+            *[pl.col(label_ret_col).filter(
+                pl.col(f).rank(descending=True, method="random") <= (pl.count() / n_bins)
+            ).mean().alias(f"{f}_top") for f in factor_cols],
+            *[pl.col(label_ret_col).filter(
+                pl.col(f).rank(descending=False, method="random") <= (pl.count() / n_bins)
+            ).mean().alias(f"{f}_btm") for f in factor_cols]
+        ])
+        .collect()
     )
 
-    # 3. 核心聚合：计算各 Lag 的每日 IC 序列
-    ic_series = q_long.group_by([date_col, "factor"]).agg([
-        pl.corr("factor_value", pl.col(f"target_lag_{i}"), method="pearson").alias(f"lag_{i}")
-        for i in range(max_lag)
-    ])
+    results = []
+    total_days = daily_raw.height
+    mkt_avg = daily_raw.get_column("market_avg").to_numpy()
 
-    # 4. 终极聚合：合并衰减与基础指标
-    # 我们以 lag_0 作为基础 IC (即传统的 IC 统计)
-    full_stats = ic_series.group_by("factor").agg([
-        # --- 衰减部分 ---
-        *[pl.col(f"lag_{i}").mean().alias(f"IC_Mean_Lag_{i}") for i in range(max_lag)],
-        *[(pl.col(f"lag_{i}").mean() / pl.col(f"lag_{i}").std()).alias(f"IR_Lag_{i}") for i in range(max_lag)],
+    for f in factor_cols:
+        # --- 维度 1: 统计学指标 ---
+        ic_series = daily_raw.get_column(f"{f}_ic")
+        ic_mean = ic_series.mean() or 0.0
+        ic_ir = ic_mean / (ic_series.std() + 1e-9)
+        direction = 1 if ic_mean >= 0 else -1
 
-        # --- 基础指标补全 (基于 lag_0) ---
-        (pl.col("lag_0").mean() / pl.col("lag_0").std() * pl.count().sqrt()).alias("t_stat"),
-        (pl.col("lag_0").filter(pl.col("lag_0") > 0).count() / pl.count()).alias("win_rate")
-    ]).collect()
+        # --- 维度 2: 换手成本估算 ---
+        # 换手率 ≈ 1 - 因子自相关性
+        # 使用你设定的阈值 0.8 [cite: 2026-02-04] 作为参考
+        avg_stab = daily_raw.get_column(f"{f}_stab_avg").mean() or 0.0
+        est_turnover = max(0.0, 1.0 - avg_stab)
+        daily_fee_deduction = est_turnover * fee * 2  # 双边扣费
 
-    return full_stats
+        # --- 维度 3: 收益逻辑 ---
+        top_ret = daily_raw.get_column(f"{f}_top").to_numpy()
+        btm_ret = daily_raw.get_column(f"{f}_btm").to_numpy()
 
+        if mode == 'long_only':
+            raw_ret = top_ret if direction == 1 else btm_ret
+        elif mode == 'long_short':
+            raw_ret = (top_ret - btm_ret) * direction
+        else:  # active
+            target_ret = top_ret if direction == 1 else btm_ret
+            raw_ret = target_ret - mkt_avg
 
-#
-# def batch_factor_alpha_lens(
-#         df: pl.DataFrame,
-#         factors: str = r"^factor_.*",
-#         label_for_ret: str = "target_ret",
-#         date_col: str = "DATE",
-#         asset_col: str = "ASSET",
-#         n_bins: int = 5,
-#         max_lag: int = 5
-# ) -> pl.DataFrame:
-#     """
-#     【终极全能版】大批量因子体检引擎：IC/IR + 衰减 + 换手 + 分层收益
-#     """
-#     # lf = df.lazy() if isinstance(df, pl.DataFrame) else df
-#
-#     factor_cols = df.select(pl.col(factors)).columns
-#
-#     # --- 第一部分：基础指标与衰减 (IC/IR/t-stat/WinRate) ---
-#     full_metrics = batch_calc_factor_full_metrics(
-#         df, factor_cols, label_for_ret, date_col, asset_col, max_lag
-#     )
-#
-#     # --- 第二部分：稳定性指标 (Turnover/Autocorr) ---
-#     turnover_stats = batch_calc_factor_turnover(
-#         df, factors, date_col, asset_col
-#     )
-#
-#     # --- 第三部分：实战收益指标 (Quantile Returns) ---
-#     # 我们从中提取多空年化收益和多空夏普
-#     q_rets = batch_calc_quantile_returns(
-#         df, factors, label_for_ret, date_col, n_bins
-#     )
-#
-#     ls_metrics = (
-#         q_rets.pivot(index=[date_col, "factor"], on="quantile", values="daily_ret")
-#         .with_columns((pl.col("Q1") - pl.col(f"Q{n_bins}")).alias("ls_ret"))
-#         .group_by("factor")
-#         .agg([
-#             (pl.col("ls_ret").mean() * 242).alias("annual_ls_ret"),
-#             (pl.col("ls_ret").mean() / pl.col("ls_ret").std() * (242 ** 0.5)).alias("ls_sharpe")
-#         ])
-#     )
-#
-#     # --- 最终合并所有维度 ---
-#     master_table = (
-#         full_metrics
-#         .join(turnover_stats, on="factor")
-#         .join(ls_metrics, on="factor")
-#     )
-#
-#     return master_table
+        # 计算扣费后的净收益
+        net_daily_ret = np.nan_to_num(raw_ret, nan=0.0) - daily_fee_deduction
+
+        # --- 指标汇总 ---
+        # 使用 (1 + r) 计算复利 NAV
+        nav = np.cumprod(1.0 + net_daily_ret)
+        total_ret = nav[-1] - 1 if len(nav) > 0 else 0.0
+        # 年化收益计算
+        ann_ret = (1 + total_ret) ** (annual_days / total_days) - 1 if total_days > 0 else 0.0
+        ann_vol = np.std(net_daily_ret) * np.sqrt(annual_days)
+        sharpe = ann_ret / (ann_vol + 1e-9)
+
+        results.append({
+            "factor": f,
+            "ic_mean": ic_mean,
+            "ic_ir": ic_ir,
+            "ann_ret": ann_ret,
+            "sharpe": sharpe,
+            "turnover_est": est_turnover,
+            "direction": direction
+        })
+
+    return pl.DataFrame(results)

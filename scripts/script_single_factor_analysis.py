@@ -4,7 +4,7 @@ from alpha.data_provider import DataProvider
 
 from alpha.data_provider.pool import main_small_pool
 from alpha.evaluation.batch.returns import batch_quantile_returns
-from alpha.evaluation.single import single_factor_alpha_analysis
+from alpha.evaluation.single.single import single_factor_alpha_analysis
 from alpha.gp.extra_terminal import add_extra_terminals
 from alpha.gp.label import label_OO_for_tradable
 from alpha.utils.schema import F
@@ -12,7 +12,7 @@ from alpha.utils.schema import F
 # expr = 'ts_corr(cs_rank_mask(CLOSE), cs_rank_mask(VOLUME), 20)'
 # 中性120日换手率因子表达式
 expr = "ts_mean(TURNOVER_RATE, 60)"
-expr = 'cs_mad_zscore_mask(ts_corr(cs_rank_mask(HIGH), ts_std_dev(OPEN, 80), 10))'
+expr = 'VWAP'
 logger.info(f"使用因子表达式: {expr}")
 lf = DataProvider().load_data(
     start_date="20190101",

@@ -9,7 +9,7 @@ import numpy as np
 import polars as pl
 from loguru import logger
 
-from alpha.evaluation.batch import batch_get_ic_summary
+from alpha.evaluation.batch.ic_summary import batch_ic_summary
 from alpha.utils.schema import F
 
 
@@ -263,6 +263,8 @@ def single_calc_decay_turnover(
         "est_daily_turnover": est_daily_turnover
     }
 
+
+
 def single_factor_alpha_analysis(
         df: Union[pl.DataFrame, pl.LazyFrame],
         factor_col: str,
@@ -292,7 +294,7 @@ def single_factor_alpha_analysis(
 
     logger.info("🔍 正在计算因子预测效力指标 (IC Summary)...")
     # 2. 基础 IC 统计 (预测效力)
-    ic_summary = batch_get_ic_summary(
+    ic_summary = batch_ic_summary(
         df,
         factors=f"^{factor_col}$",
         label_for_ic=ret_col,
