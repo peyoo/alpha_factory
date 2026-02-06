@@ -17,27 +17,30 @@ def batch_full_metrics(
         annual_days: int = 252,
         fee: float = 0.0025
 ) -> pl.DataFrame:
-    # 1. 落地并排序
-    df = (df.collect() if isinstance(df, pl.LazyFrame) else df).sort([asset_col, date_col])
+    # ✅ 1. 保持 LazyFrame（不立即 collect），直到 group_by 前
+    lf = df.lazy() if isinstance(df, pl.DataFrame) else df
+    lf = lf.sort([asset_col, date_col])
 
+    # ✅ 2. 获取因子列（用 collect_schema 无需物化）
     f_selector = cs.matches(factors) if isinstance(factors, str) else cs.by_name(factors)
-    factor_cols = df.select(f_selector).columns
+    factor_cols = lf.select(f_selector).collect_schema().names()
     if not factor_cols:
         return pl.DataFrame()
 
-    # 2. 预计算 Rank 并标记 Top/Btm 状态
-    df_scored = df.with_columns([
+    # ✅ 3. 在 LazyFrame 中构建完整查询链（无内存开销）
+    # 预计算 Rank 并标记 Top/Btm 状态
+    lf = lf.with_columns([
         pl.col(f).rank().over(date_col).alias(f"{f}_rank") for f in factor_cols
     ]).with_columns([
-        (pl.col(f"{f}_rank") > (pl.count().over(date_col) * (n_bins - 1) / n_bins)).alias(f"{f}_is_top")
+        (pl.col(f"{f}_rank") > (pl.len().over(date_col) * (n_bins - 1) / n_bins)).alias(f"{f}_is_top")
         for f in factor_cols
     ] + [
-        (pl.col(f"{f}_rank") <= (pl.count().over(date_col) / n_bins)).alias(f"{f}_is_btm")
+        (pl.col(f"{f}_rank") <= (pl.len().over(date_col) / n_bins)).alias(f"{f}_is_btm")
         for f in factor_cols
     ])
 
-    # 3. 生成下移信号与换手检测
-    df_scored = df_scored.with_columns([
+    # 生成下移信号与换手检测
+    lf = lf.with_columns([
         pl.col(f"{f}_is_top").shift(1).over(asset_col).fill_null(False).alias(f"{f}_sig_top")
         for f in factor_cols
     ] + [
@@ -51,18 +54,26 @@ def batch_full_metrics(
         for f in factor_cols
     ])
 
-    # 4. 过滤股票池并聚合指标
-    if pool_mask_col in df_scored.columns:
-        df_scored = df_scored.filter(pl.col(pool_mask_col))
+    # ✅ 4. 检查 schema（无需 collect）
+    schema_names = lf.collect_schema().names()
+    if pool_mask_col in schema_names:
+        lf = lf.filter(pl.col(pool_mask_col))
 
-    daily_stats = df_scored.group_by(date_col).agg([
-        pl.col(label_ret_col).mean().alias("market_avg"),
-        *[pl.corr(f, label_ic_col, method="spearman").alias(f"{f}_ic") for f in factor_cols],
-        *[pl.col(label_ret_col).filter(pl.col(f"{f}_sig_top")).mean().alias(f"{f}_top_ret") for f in factor_cols],
-        *[pl.col(label_ret_col).filter(pl.col(f"{f}_sig_btm")).mean().alias(f"{f}_btm_ret") for f in factor_cols],
-        *[(pl.col(f"{f}_buy_top").sum() / (pl.count() / n_bins)).alias(f"{f}_to_top") for f in factor_cols],
-        *[(pl.col(f"{f}_buy_btm").sum() / (pl.count() / n_bins)).alias(f"{f}_to_btm") for f in factor_cols],
-    ]).sort(date_col)
+    # ✅ 5. 在 group_by 时执行 collect（最后才物化）
+    # 此时 Polars 已经优化了整个查询计划
+    daily_stats = (
+        lf.group_by(date_col)
+        .agg([
+            pl.col(label_ret_col).mean().alias("market_avg"),
+            *[pl.corr(f, label_ic_col, method="spearman").alias(f"{f}_ic") for f in factor_cols],
+            *[pl.col(label_ret_col).filter(pl.col(f"{f}_sig_top")).mean().alias(f"{f}_top_ret") for f in factor_cols],
+            *[pl.col(label_ret_col).filter(pl.col(f"{f}_sig_btm")).mean().alias(f"{f}_btm_ret") for f in factor_cols],
+            *[(pl.col(f"{f}_buy_top").sum() / (pl.len() / n_bins)).alias(f"{f}_to_top") for f in factor_cols],
+            *[(pl.col(f"{f}_buy_btm").sum() / (pl.len() / n_bins)).alias(f"{f}_to_btm") for f in factor_cols],
+        ])
+        .sort(date_col)
+        .collect()  # ← 只在这里 collect
+    )
 
     # 5. 汇总
     final_results = []

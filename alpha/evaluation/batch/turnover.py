@@ -460,3 +460,140 @@ def batch_calc_factor_turnover_single_agg(
     except Exception as e:
         logger.exception(f"❌ 计算因子换手率时崩溃: {e}")
         return pl.DataFrame()
+
+
+def batch_calc_factor_turnover_by_autocorr(
+        df: Union[pl.DataFrame, pl.LazyFrame],
+        factors: Union[str, List[str]] = r"^factor_.*",
+        date_col: str = F.DATE,
+        asset_col: str = F.ASSET,
+        lag: int = 1,
+        method: str = "spearman"
+) -> pl.DataFrame:
+    """
+    基于截面自相关法计算因子换手率（轻量级版本）。
+
+    **原理**：因子的截面自相关性反映其排序的稳定性。
+    - 自相关性越高 → 排序越稳定 → 换手率越低
+    - 自相关性越低 → 排序变化越大 → 换手率越高
+
+    换手率估算公式：**estimated_turnover ≈ 1 - autocorr(Factor_T, Factor_{T-lag})**
+
+    **优势**：
+    1. 无需分桶，计算简单快速
+    2. 无需指定 n_bins 参数
+    3. 对因子的排序稳定性有直观理解
+    4. 性能最优（仅需日度相关系数计算）
+
+    **局限性**：
+    1. 这是换手率的代理指标，不是精确值
+    2. 需要足够的交叉截面样本（至少 20+ 只资产）
+    3. 假设线性关系
+
+    Args:
+        df: 输入数据，包含因子列
+        factors: 因子列名正则表达式或列表
+        date_col: 日期列名
+        asset_col: 资产列名
+        lag: 滞后期数（计算相关性时的间隔），默认 1
+        method: 相关性方法，'spearman' 或 'pearson'，默认 'spearman'
+
+    Returns:
+        pl.DataFrame: 因子自相关性统计表
+        | 列名 | 类型 | 说明 |
+        | :--- | :--- | :--- |
+        | factor | String | 因子名称 |
+        | avg_autocorr | Float64 | 平均自相关性 (-1 ~ 1) |
+        | autocorr_std | Float64 | 自相关性标准差 |
+        | estimated_turnover | Float64 | 估计换手率 (1 - avg_autocorr) |
+
+    Example:
+        >>> df = pl.DataFrame({
+        ...     "DATE": [20240101, 20240102, 20240103],
+        ...     "ASSET": ["A", "B", "A"],
+        ...     "factor_1": [0.5, 0.7, 0.6]
+        ... })
+        >>> batch_calc_factor_turnover_by_autocorr(df)
+        # 输出:
+        # factor   | avg_autocorr | autocorr_std | estimated_turnover
+        # factor_1 | 0.85         | 0.12         | 0.15
+    """
+    start_time = time.perf_counter()
+    lf = df.lazy() if isinstance(df, pl.DataFrame) else df
+
+    # --- 1. 自动获取因子列 ---
+    f_selector = cs.matches(factors) if isinstance(factors, str) else cs.by_name(factors)
+    try:
+        factor_cols = lf.select(f_selector).collect_schema().names()
+    except Exception as e:
+        logger.error(f"❌ 因子选择器匹配失败: {e}")
+        return pl.DataFrame()
+
+    if not factor_cols:
+        logger.warning(f"⚠️ 无法匹配到任何因子 (模式: {factors})，返回空结果。")
+        return pl.DataFrame()
+
+    logger.info(f"🔄 开始计算 {len(factor_cols)} 个因子的自相关性 (截面法, lag={lag}, method={method})")
+
+    try:
+        # --- 2. 计算截面自相关性 ---
+        # 核心思想：对每个因子，计算 T 期与 T-lag 期的截面排序相关性
+        lf_autocorr = (
+            lf.select([date_col, asset_col] + factor_cols)
+            .sort([asset_col, date_col])
+            .with_columns([
+                # 计算滞后值（同一资产的 lag 期前的值）
+                pl.col(f).shift(lag).over(asset_col).alias(f"{f}_lag")
+                for f in factor_cols
+            ])
+            .group_by(date_col)
+            .agg([
+                # 计算截面相关性（同一日期内，不同资产之间的相关性）
+                pl.corr(f, f"{f}_lag", method=method).alias(f"{f}_autocorr")
+                for f in factor_cols
+            ])
+            .collect()
+        )
+
+        logger.debug("自相关性计算完成，结果摘要:")
+        for f in factor_cols:
+            col = lf_autocorr.get_column(f"{f}_autocorr")
+            valid_count = col.is_not_null().sum()
+            avg_val = col.drop_nulls().mean() if valid_count > 0 else 0.0
+            logger.debug(f"  {f}: valid={valid_count}, avg_autocorr={avg_val:.6f}")
+
+        # --- 3. 聚合统计 ---
+        results = []
+        for f in factor_cols:
+            autocorr_series = lf_autocorr.get_column(f"{f}_autocorr").drop_nulls()
+
+            # 过滤有限值（排除 NaN/Inf）
+            autocorr_finite = autocorr_series.filter(autocorr_series.is_finite())
+
+            if autocorr_finite.len() > 0:
+                avg_autocorr = autocorr_finite.mean()
+                autocorr_std = autocorr_finite.std() or 0.0
+            else:
+                logger.warning(f"⚠️ {f} 的自相关性全部为 NaN/Inf，使用默认值 0.0")
+                avg_autocorr = 0.0
+                autocorr_std = 0.0
+
+            # 估计换手率：高自相关 → 低换手，低自相关 → 高换手
+            estimated_turnover = max(0.0, 1.0 - avg_autocorr)
+
+            results.append({
+                "factor": f,
+                "avg_autocorr": avg_autocorr,
+                "autocorr_std": autocorr_std,
+                "estimated_turnover": estimated_turnover,
+            })
+
+        result_df = pl.DataFrame(results).sort("estimated_turnover")
+
+        duration = time.perf_counter() - start_time
+        logger.success(f"✅ 因子自相关性计算完成 | 耗时: {duration:.4f}s | 因子数: {len(factor_cols)}")
+        return result_df
+
+    except Exception as e:
+        logger.exception(f"❌ 计算因子自相关性时崩溃: {e}")
+        return pl.DataFrame()
