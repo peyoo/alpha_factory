@@ -11,6 +11,7 @@ def batch_calc_factor_turnover(
         factors: Union[str, List[str]] = r"^factor_.*",
         date_col: str = F.DATE,
         asset_col: str = F.ASSET,
+        label_col=F.LABEL_FOR_RET,
         n_bins: int = 10,
         lag: int = 1,
         descending = False
@@ -323,6 +324,137 @@ def batch_calc_factor_turnover_with_direction(
 
         duration = time.perf_counter() - start_time
         logger.success(f"✅ 因子换手率（含方向判断）计算完成 | 耗时: {duration:.2f}s | 因子数: {len(factor_cols)}")
+        return result_df
+
+    except Exception as e:
+        logger.exception(f"❌ 计算因子换手率时崩溃: {e}")
+        return pl.DataFrame()
+
+
+def batch_calc_factor_turnover_single_agg(
+        df: Union[pl.DataFrame, pl.LazyFrame],
+        factors: Union[str, List[str]] = r"^factor_.*",
+        date_col: str = F.DATE,
+        asset_col: str = F.ASSET,
+        label_col=F.LABEL_FOR_RET,
+        n_bins: int = 10,
+        lag: int = 1
+) -> pl.DataFrame:
+    """
+    单行聚合方式计算因子换手率（高效版）。
+
+    **优势**：在一个聚合步骤中计算所有统计量，减少中间步骤，性能更优。
+
+    计算逻辑同 batch_calc_factor_turnover()，但使用单行 agg() 实现：
+    1. 计算 Rank 并标记 Top 桶
+    2. 计算滞后信号
+    3. 按日期聚合并计算换手率统计
+
+    Args:
+        df: 输入数据，包含因子列
+        factors: 因子列名正则表达式或列表
+        date_col: 日期列名
+        asset_col: 资产列名
+        n_bins: 分桶数量，Top 桶为前 1/n_bins
+        lag: 滞后期数，默认 1
+
+    Returns:
+        pl.DataFrame: 因子换手率统计表（与 batch_calc_factor_turnover() 相同格式）
+        | 列名 | 类型 | 说明 |
+        | :--- | :--- | :--- |
+        | factor | String | 因子名称 |
+        | avg_turnover | Float64 | 平均换手率 |
+        | turnover_std | Float64 | 换手率标准差 |
+
+    Example:
+        >>> df = pl.DataFrame({
+        ...     "DATE": [20240101, 20240101, 20240102],
+        ...     "ASSET": ["A", "B", "A"],
+        ...     "factor_1": [0.5, 0.7, 0.6],
+        ...     "factor_2": [0.3, 0.8, 0.4]
+        ... })
+        >>> batch_calc_factor_turnover_single_agg(df, n_bins=2)
+    """
+    start_time = time.perf_counter()
+    lf = df.lazy() if isinstance(df, pl.DataFrame) else df
+
+    # --- 1. 自动获取因子列 ---
+    f_selector = cs.matches(factors) if isinstance(factors, str) else cs.by_name(factors)
+    try:
+        factor_cols = lf.select(f_selector).collect_schema().names()
+    except Exception as e:
+        logger.error(f"❌ 因子选择器匹配失败: {e}")
+        return pl.DataFrame()
+
+    if not factor_cols:
+        logger.warning(f"⚠️ 无法匹配到任何因子 (模式: {factors})，返回空结果。")
+        return pl.DataFrame()
+
+    logger.info(f"🔄 开始计算 {len(factor_cols)} 个因子的换手率 (单行聚合, n_bins={n_bins}, lag={lag})")
+
+    try:
+        # --- 2. 数据预处理：计算 Rank + 滞后信号 ---
+        lf_prep = (
+            lf.select([date_col, asset_col] + factor_cols)
+            .sort([asset_col, date_col])
+            .with_columns(
+                pl.len().over(date_col).alias("_daily_count_")
+            )
+            .with_columns([
+                # 当前是否在 Top 桶
+                (pl.col(f).rank(descending=True).over(date_col)
+                 <= (pl.col("_daily_count_") / n_bins)).alias(f"{f}_is_top")
+                for f in factor_cols
+            ])
+            .with_columns([
+                # 昨日是否在 Top 桶（滞后 lag 期）
+                pl.col(f"{f}_is_top").shift(lag).over(asset_col)
+                .fill_null(False).alias(f"{f}_was_top")
+                for f in factor_cols
+            ])
+        )
+
+        # --- 3. 单行聚合：一次性计算所有换手率统计 ---
+        daily_stats = (
+            lf_prep
+            .group_by(date_col)
+            .agg([
+                # 对每个因子，计算 Top 桶大小、新进入数量和换手率
+                *[
+                    (
+                        (pl.col(f"{f}_is_top") & ~pl.col(f"{f}_was_top")).sum()
+                        / pl.col(f"{f}_is_top").sum()
+                    ).fill_null(0.0).alias(f"{f}_turnover")
+                    for f in factor_cols
+                ]
+            ])
+            .collect()
+        )
+
+        # --- 4. 转为长表并最终聚合 ---
+        turnover_cols = [f"{f}_turnover" for f in factor_cols]
+        result_df = (
+            daily_stats
+            .select([date_col] + turnover_cols)
+            .unpivot(
+                index=date_col,
+                on=turnover_cols,
+                variable_name="factor_raw",
+                value_name="turnover"
+            )
+            .with_columns(
+                pl.col("factor_raw").str.replace("_turnover$", "").alias("factor")
+            )
+            .group_by("factor")
+            .agg([
+                pl.col("turnover").filter(pl.col("turnover").is_finite()).mean().alias("avg_turnover"),
+                pl.col("turnover").filter(pl.col("turnover").is_finite()).std().alias("turnover_std"),
+            ])
+            .sort("avg_turnover")
+        )
+
+        duration = time.perf_counter() - start_time
+        logger.success(f"✅ 因子换手率（单行聚合）计算完成 | 耗时: {duration:.2f}s | 因子数: {len(factor_cols)}")
         return result_df
 
     except Exception as e:
