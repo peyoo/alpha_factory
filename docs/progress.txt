@@ -150,6 +150,46 @@
 - [ ] 机器学习 (`alpha/ml`)：LightGBM 集成
 - [ ] 回测框架 (`alpha/backtest`)：投资组合回测与风险评估
 
+## 最新完成 (2026-02-06)
+
+### 11. 换手率计算模块 - ✅ 完成于 2026-02-06
+- [√] 实现 `batch_calc_factor_turnover()` 方法 (仅计算 Top 桶换手率)
+  - [√] Rank 变化比例法：计算新进入 Top 的数量 / Top 总数
+  - [√] 信号滞后处理：避免未来数据泄露
+  - [√] 支持批量因子计算
+  - [√] 完整的错误处理和日志
+- [√] 实现 `batch_calc_factor_turnover_with_direction()` 方法 (智能方向选择)
+  - [√] 计算因子 IC（Spearman 相关系数）
+  - [√] 根据 IC 自动选择 Top/Btm 桶
+  - [√] 返回实际持仓的换手率
+  - [√] 包含方向指示和 IC 统计
+- [√] 诊断和优化
+  - [√] 识别并修复数据泄露问题
+  - [√] 明确两个版本的职责分工
+  - [√] 创建诊断测试脚本
+- [Test] turnover 计算 - ✓✓ Pass
+  - batch_calc_factor_turnover: 2/2 ✓ (Top 桶换手率计算)
+  - batch_calc_factor_turnover_with_direction: 2/2 ✓ (IC 方向判断 + 双桶选择)
+
+**使用场景:**
+```python
+# 快速筛选（仅 Top 桶）
+result = batch_calc_factor_turnover(df, factors=r"^factor_.*", n_bins=10)
+
+# 精确评估（根据 IC 选择 Top/Btm）
+result = batch_calc_factor_turnover_with_direction(
+    df, factors=r"^factor_.*", label_col="label_1d_ret", n_bins=10
+)
+```
+
+**关键改进:**
+- 💡 解决了之前不同版本换手率不一致的问题
+- 📊 支持 Rank 变化比例法（更准确）
+- 🔍 自动 IC 判断因子方向
+- ✅ 完整的类型提示和文档
+
+---
+
 ## 最新完成 (2026-01-26)
 
 ### 10. AlphaInspect 因子生成与分析模块 - ✅ 完成于 2026-01-26

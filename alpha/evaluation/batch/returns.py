@@ -16,6 +16,8 @@ def batch_quantile_returns(
 ) -> pl.DataFrame:
     """
     支持多模式(Long-Only, Long-Short, Active)的 GP 适应度评估函数
+    没有考虑交易成本与滑点，仅用于快速评估因子收益能力。
+    对于高频换手率因子误差较大，建议结合 batch_full_metrics 进行综合评估。
     """
     lf = df.lazy() if isinstance(df, pl.DataFrame) else df
     if pool_mask_col in lf.collect_schema().names():

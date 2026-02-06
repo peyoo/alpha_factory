@@ -1,11 +1,8 @@
 from typing import Union, List, Literal
-
 import numpy as np
 import polars as pl
 import polars.selectors as cs
-
 from alpha.utils.schema import F
-
 
 def batch_full_metrics(
         df: Union[pl.DataFrame, pl.LazyFrame],
@@ -18,7 +15,7 @@ def batch_full_metrics(
         n_bins: int = 10,
         mode: Literal['long_only', 'long_short', 'active'] = 'long_only',
         annual_days: int = 252,
-        fee: float = 0.0015
+        fee: float = 0.0025
 ) -> pl.DataFrame:
     # 1. 落地并排序
     df = (df.collect() if isinstance(df, pl.LazyFrame) else df).sort([asset_col, date_col])
@@ -29,38 +26,30 @@ def batch_full_metrics(
         return pl.DataFrame()
 
     # 2. 预计算 Rank 并标记 Top/Btm 状态
-    # 注意：这里在全量数据（未过滤 Pool）上操作，保证 shift 连续性
     df_scored = df.with_columns([
         pl.col(f).rank().over(date_col).alias(f"{f}_rank") for f in factor_cols
     ]).with_columns([
-                        # 核心：计算分桶布尔值
-                        (pl.col(f"{f}_rank") > (pl.count().over(date_col) * (n_bins - 1) / n_bins)).alias(f"{f}_is_top")
-                        for f in factor_cols
-                    ] + [
-                        (pl.col(f"{f}_rank") <= (pl.count().over(date_col) / n_bins)).alias(f"{f}_is_btm")
-                        for f in factor_cols
-                    ])
+        (pl.col(f"{f}_rank") > (pl.count().over(date_col) * (n_bins - 1) / n_bins)).alias(f"{f}_is_top")
+        for f in factor_cols
+    ] + [
+        (pl.col(f"{f}_rank") <= (pl.count().over(date_col) / n_bins)).alias(f"{f}_is_btm")
+        for f in factor_cols
+    ])
 
-    # 3. 将信号下移一行 (昨日信号对标今日收益)
-    # 并且处理换手动作 (diff == 1)
+    # 3. 生成下移信号与换手检测
     df_scored = df_scored.with_columns([
-                                           pl.col(f"{f}_is_top").shift(1).over(asset_col).fill_null(False).alias(
-                                               f"{f}_sig_top")
-                                           for f in factor_cols
-                                       ] + [
-                                           pl.col(f"{f}_is_btm").shift(1).over(asset_col).fill_null(False).alias(
-                                               f"{f}_sig_btm")
-                                           for f in factor_cols
-                                       ] + [
-                                           # 买入动作检测：状态从 0 变 1
-                                           (pl.col(f"{f}_is_top").cast(pl.Int8).diff().over(asset_col) == 1).fill_null(
-                                               False).alias(f"{f}_buy_top")
-                                           for f in factor_cols
-                                       ] + [
-                                           (pl.col(f"{f}_is_btm").cast(pl.Int8).diff().over(asset_col) == 1).fill_null(
-                                               False).alias(f"{f}_buy_btm")
-                                           for f in factor_cols
-                                       ])
+        pl.col(f"{f}_is_top").shift(1).over(asset_col).fill_null(False).alias(f"{f}_sig_top")
+        for f in factor_cols
+    ] + [
+        pl.col(f"{f}_is_btm").shift(1).over(asset_col).fill_null(False).alias(f"{f}_sig_btm")
+        for f in factor_cols
+    ] + [
+        (pl.col(f"{f}_is_top").cast(pl.Int8).diff().over(asset_col) == 1).fill_null(False).alias(f"{f}_buy_top")
+        for f in factor_cols
+    ] + [
+        (pl.col(f"{f}_is_btm").cast(pl.Int8).diff().over(asset_col) == 1).fill_null(False).alias(f"{f}_buy_btm")
+        for f in factor_cols
+    ])
 
     # 4. 过滤股票池并聚合指标
     if pool_mask_col in df_scored.columns:
@@ -69,11 +58,8 @@ def batch_full_metrics(
     daily_stats = df_scored.group_by(date_col).agg([
         pl.col(label_ret_col).mean().alias("market_avg"),
         *[pl.corr(f, label_ic_col, method="spearman").alias(f"{f}_ic") for f in factor_cols],
-        # 收益聚合
         *[pl.col(label_ret_col).filter(pl.col(f"{f}_sig_top")).mean().alias(f"{f}_top_ret") for f in factor_cols],
         *[pl.col(label_ret_col).filter(pl.col(f"{f}_sig_btm")).mean().alias(f"{f}_btm_ret") for f in factor_cols],
-        # 换手聚合 (买入数 / 预期持仓数)
-        # 桶大小近似为：当前 Pool 总数 / n_bins
         *[(pl.col(f"{f}_buy_top").sum() / (pl.count() / n_bins)).alias(f"{f}_to_top") for f in factor_cols],
         *[(pl.col(f"{f}_buy_btm").sum() / (pl.count() / n_bins)).alias(f"{f}_to_btm") for f in factor_cols],
     ]).sort(date_col)
@@ -83,10 +69,13 @@ def batch_full_metrics(
     total_days = daily_stats.height
 
     for f in factor_cols:
-        ic_col = daily_stats.get_column(f"{f}_ic")
-        ic_mean = ic_col.mean() or 0.0
+        ic_series = daily_stats.get_column(f"{f}_ic")
+        # 直接计算 ic_mean
+        ic_mean = ic_series.mean() or 0.0
+        ic_std = ic_series.std() or 1e-9
         direction = 1 if ic_mean >= 0 else -1
 
+        # 选桶逻辑
         if direction == 1:
             raw_ret = daily_stats.get_column(f"{f}_top_ret").fill_null(0.0).to_numpy()
             turnover_val = daily_stats.get_column(f"{f}_to_top").mean() or 0.0
@@ -108,7 +97,8 @@ def batch_full_metrics(
 
         final_results.append({
             "factor": f,
-            "ic_ir": ic_mean / (ic_col.std() + 1e-9) if ic_col.std() is not None else 0.0,
+            "ic_mean": ic_mean,  # 新增
+            "ic_ir": ic_mean / ic_std,
             "ann_ret": ann_ret,
             "sharpe": sharpe,
             "turnover_est": turnover_val,
