@@ -1,14 +1,9 @@
-import pandas as pd
 import polars as pl
 import numpy as np
-from typing import Dict, Any, List, Callable
+from typing import List, Callable
 from loguru import logger
-import webbrowser
-import os
-import quantstats as qs
 
 from alpha.data_provider import DataProvider
-from alpha.utils.config import settings
 from alpha.utils.schema import F
 
 
@@ -26,7 +21,7 @@ def backtest_top_n(
         factor_col: str,
         ascending: bool = False,
         funcs: List[Callable[[pl.LazyFrame],pl.LazyFrame]] = None,
-        n_buy: int = 10,
+        n_buy: int = 10,  # 持仓总数，当前也是最大买入rank排名
         n_sell: int = 30,
         cost_rate: float = 0.002,
         price_col: str = F.CLOSE,
@@ -36,7 +31,7 @@ def backtest_top_n(
         not_buyable_col: str = F.NOT_BUYABLE,
         not_sellable_col: str = F.NOT_SELLABLE,
         annual_days: int = 252
-) -> Dict[str, Any]:
+) -> pl.DataFrame:
     # 1. 数据准备
     factor_col_is_expr = ("=" in factor_col)
     lf = DataProvider().load_data(start, end, funcs=funcs,
@@ -88,7 +83,6 @@ def backtest_top_n(
         nb = active_day_df.get_column(not_buyable_col).to_numpy()
         ns = active_day_df.get_column(not_sellable_col).to_numpy()
         rets = active_day_df.get_column("next_ret").to_numpy()
-
         # 构造字典：{Asset: (rank, not_buyable, not_sellable, next_ret)}
         day_info = dict(zip(assets, zip(ranks, nb, ns, rets)))
 
@@ -131,7 +125,7 @@ def backtest_top_n(
         # C. 计算当日表现
         if current_holdings:
             day_rets = [day_info[a][3] for a in current_holdings if a in day_info]
-            raw_ret = np.mean(day_rets) if day_rets else 0.0
+            raw_ret = np.sum(day_rets) / n_buy
         else:
             raw_ret = 0.0
 
@@ -146,59 +140,8 @@ def backtest_top_n(
 
     # --- 3. 结果汇总与指标计算 ---
     res_df = pl.DataFrame(records).with_columns([
-        (pl.col("raw_ret") - pl.col("turnover") * cost_rate * 2).alias("net_ret"),
+        (pl.col("raw_ret") - pl.col("turnover") * cost_rate * 2).alias("NET_RET"),
         pl.col("DATE").cast(pl.String).str.slice(0, 4).alias("Year")
     ]).with_columns((pl.col("net_ret") + 1).cum_prod().alias("nav"))
 
-    return _generate_metrics(res_df, annual_days)
-
-
-def _generate_metrics(res_df: pl.DataFrame, annual_days: int) -> Dict[str, Any]:
-    nav = res_df["nav"].to_numpy()
-    net_rets = res_df["net_ret"].to_numpy()
-    total_ret = nav[-1] - 1
-    ann_ret = (1 + total_ret) ** (annual_days / len(res_df)) - 1
-    ann_vol = np.std(net_rets) * np.sqrt(annual_days)
-    sharpe = (ann_ret - 0.02) / (ann_vol + 1e-9)
-    peak = np.maximum.accumulate(nav)
-    mdd = np.min((nav - peak) / peak)
-
-    yearly_stats = res_df.group_by("Year").agg([
-        ((pl.col("net_ret") + 1).product() - 1).alias("Return"),
-        (pl.col("net_ret").std() * np.sqrt(annual_days)).alias("Vol"),
-        pl.col("turnover").sum().alias("Total_Turnover")
-    ]).sort("Year")
-
-    return {
-        "series": res_df,
-        "yearly_summary": yearly_stats,
-        "metrics": {
-            "Total Return": f"{total_ret:.2%}",
-            "Annual Return": f"{ann_ret:.2%}",
-            "Max Drawdown": f"{mdd:.2%}",
-            "Sharpe Ratio": f"{sharpe:.2f}",
-            "Annual Volatility": f"{ann_vol:.2%}",
-            "Avg Daily Turnover": f"{res_df.get_column('turnover').mean():.2%}"
-        }
-    }
-
-
-def show_report(result: Dict[str, Any], factor_name: str):
-    """集成 QuantStats 报告并在浏览器打开"""
-    df = result['series'].to_pandas()
-    returns = df.set_index('DATE')['net_ret']
-    returns.index = pd.to_datetime(returns.index)
-    dir = settings.OUTPUT_DIR/'html_reports'
-    dir.mkdir(parents=True, exist_ok=True)
-    output_path = dir/f"Report_{factor_name}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.html"
-    qs.reports.html(returns, title=f"Factor: {factor_name}", output=output_path)
-
-    logger.info(f"📊 报告已生成: {output_path}")
-    webbrowser.open(f"file://{os.path.abspath(output_path)}")
-
-
-# --- 执行示例 ---
-if __name__ == "__main__":
-    res = backtest_top_n(start="20190101", end="20251231", factor_col="CIRC_MV", ascending=True)
-    print(res['metrics'])
-    show_report(res, "Small_Cap")
+    return res_df

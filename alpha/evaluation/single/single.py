@@ -268,7 +268,7 @@ def single_calc_decay_turnover(
 def single_factor_alpha_analysis(
         df: Union[pl.DataFrame, pl.LazyFrame],
         factor_col: str,
-        ret_col: str,
+        ret_col: str = F.LABEL_FOR_RET,
         date_col: str = F.DATE,
         asset_col: str = F.ASSET,
         pool_mask_col: str = F.POOL_MASK,

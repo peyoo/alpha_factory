@@ -14,30 +14,37 @@ class F(StrEnum):
     ASSET = "ASSET"
 
     # 行情
-    OPEN = "OPEN"
-    HIGH = "HIGH"
-    LOW = "LOW"
-    CLOSE = "CLOSE"
-    VOLUME = "VOLUME"
-    TOTAL_MV = "TOTAL_MV"
+    OPEN = "OPEN" #后复权开盘价
+    HIGH = "HIGH" #后复权最高价
+    LOW = "LOW" #后复权最低价
+    CLOSE = "CLOSE" #后复权收盘价
+    VOLUME = "VOLUME" #成交量
+    VWAP = "VWAP"  # 后复权成交均价
+    AMOUNT = "AMOUNT" #成交额
+    TOTAL_MV = "TOTAL_MV" #总市值
+
+    CLOSE_RAW = "CLOSE_RAW" #未复权收盘价
+    VWAP_RAW = "VWAP_RAW"   #未复权成交均价
+
+
 
     # 交易限制 (容易拼错的)
-    UP_LIMIT = "UP_LIMIT"
-    DOWN_LIMIT = "DOWN_LIMIT"
-    IS_ST = "IS_ST"
-    IS_SUSPENDED = "IS_SUSPENDED"
+    UP_LIMIT = "UP_LIMIT" #涨停价
+    DOWN_LIMIT = "DOWN_LIMIT" #跌停价
+    IS_ST = "IS_ST" #是否ST股
+    IS_SUSPENDED = "IS_SUSPENDED" #是否停牌
 
     POOL_MASK = "POOL_MASK"    # 股票池掩码
 
 
     # 内部衍生列
-    LIST_DAYS = "LIST_DAYS"
-    IS_UP_LIMIT = "IS_UP_LIMIT"
-    IS_DOWN_LIMIT = "IS_DOWN_LIMIT"
+    LIST_DAYS = "LIST_DAYS"  #上市天数
+    IS_UP_LIMIT = "IS_UP_LIMIT" #涨停
+    IS_DOWN_LIMIT = "IS_DOWN_LIMIT" #跌停
 
-    INDUSTRY = "INDUSTRY"
+    INDUSTRY = "INDUSTRY" #行业
 
-    EXCHANGE = "EXCHANGE"
+    EXCHANGE = "EXCHANGE" #交易所
 
     NOT_BUYABLE = "not_buyable"
     NOT_SELLABLE = "not_sellable"
