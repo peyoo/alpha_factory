@@ -7,6 +7,8 @@ from enum import StrEnum
 class F(StrEnum):
     """
     Field Constants: 强类型字段库
+    这些绝大部分都是data_provider输出数据框架中的标准列名。
+    使用枚举类的方式定义字段名称，避免字符串拼写错误。
     好处：1. IDE 自动补全 2. 修改一处，全域生效 3. 静态检查报错
     """
     # 基础标识
@@ -22,9 +24,19 @@ class F(StrEnum):
     VWAP = "VWAP"  # 后复权成交均价
     AMOUNT = "AMOUNT" #成交额
     TOTAL_MV = "TOTAL_MV" #总市值
+    CIRC_MV = "CIRC_MV" #流通市值
+    ADJ_FACTOR = "ADJ_FACTOR" #后复权因子
 
     CLOSE_RAW = "CLOSE_RAW" #未复权收盘价
+    OPEN_RAW = "OPEN_RAW" #未复权开盘价
+    HIGH_RAW = "HIGH_RAW" #未复权最高价
+    LOW_RAW = "LOW_RAW" #未复权最低价
     VWAP_RAW = "VWAP_RAW"   #未复权成交均价
+
+    PE = "PE" #市盈率
+    PB = "PB" #市净率
+    PS = "PS" #市销率
+    TURNOVER_RATE = "TURNOVER_RATE" #换手率(基于总市值)
 
 
 
@@ -38,13 +50,14 @@ class F(StrEnum):
 
 
     # 内部衍生列
-    LIST_DAYS = "LIST_DAYS"  #上市天数
+    LIST_DAYS = "LIST_DAYS"  #上市天数（不是交易天数）
     IS_UP_LIMIT = "IS_UP_LIMIT" #涨停
     IS_DOWN_LIMIT = "IS_DOWN_LIMIT" #跌停
 
-    INDUSTRY = "INDUSTRY" #行业
+    # INDUSTRY = "INDUSTRY" #行业
 
     EXCHANGE = "EXCHANGE" #交易所
+    MARKET_TYPE = "MARKET_TYPE" #市场类型
 
     NOT_BUYABLE = "not_buyable"
     NOT_SELLABLE = "not_sellable"

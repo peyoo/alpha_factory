@@ -167,8 +167,8 @@ class UnifiedFactorBuilder:
         """防火墙：剔除名录外代码并强制转换 Enum"""
         valid_codes = self.assets_mgr.get_all_codes()
         return (
-            lf.filter(pl.col("ASSET").is_in(valid_codes))
-            .with_columns(pl.col("ASSET").cast(self.assets_mgr.stock_type))
+            lf.filter(pl.col(F.ASSET).is_in(valid_codes))
+            .with_columns(pl.col(F.ASSET).cast(self.assets_mgr.stock_type))
         )
 
     def _op_clean_daily(self, trading_dates: List[date]) -> pl.LazyFrame:
@@ -183,17 +183,17 @@ class UnifiedFactorBuilder:
         .select([
             pl.col(F.DATE),
             pl.col(F.ASSET).cast(self.assets_mgr.stock_type),  # 保留为字符串而非 Enum
-            pl.col("open").cast(pl.Float32).alias("OPEN_RAW"),
-            pl.col("high").cast(pl.Float32).alias("HIGH_RAW"),
-            pl.col("low").cast(pl.Float32).alias("LOW_RAW"),
-            pl.col("close").cast(pl.Float32).alias("CLOSE_RAW"),
-            (pl.col("vol") * 100).cast(pl.Float32).alias("VOLUME"),  # 手 -> 股
-            (pl.col("amount") * 1000).cast(pl.Float32).alias("AMOUNT"),  # 千元 -> 元
+            pl.col("open").cast(pl.Float32).alias(F.OPEN_RAW),
+            pl.col("high").cast(pl.Float32).alias(F.HIGH_RAW),
+            pl.col("low").cast(pl.Float32).alias(F.LOW_RAW),
+            pl.col("close").cast(pl.Float32).alias(F.CLOSE_RAW),
+            (pl.col("vol") * 100).cast(pl.Float32).alias(F.VOLUME),  # 手 -> 股
+            (pl.col("amount") * 1000).cast(pl.Float32).alias(F.AMOUNT),  # 千元 -> 元
             # 💡 成交量加权平均价：AMOUNT / VOLUME（停牌日为 None，前向填充）
             pl.when(pl.col("vol") > 0)
                 .then((pl.col("amount") * 1000 / (pl.col("vol") * 100)).cast(pl.Float32))
                 .otherwise(None)
-                .alias("VWAP"),
+                .alias(F.VWAP_RAW),
         ]))
 
     def _op_clean_adj(self, trading_dates: List[date]) -> pl.LazyFrame:
@@ -224,13 +224,13 @@ class UnifiedFactorBuilder:
         return self._ensure_valid_assets(df_pl.lazy()).select([
             pl.col(F.DATE),
             pl.col(F.ASSET),  # 已经在 load_as_polars 重命名过，且在 _ensure_valid_assets 转了 Enum
-            pl.col("pe").cast(pl.Float32).alias("PE"),
-            pl.col("pb").cast(pl.Float32).alias("PB"),
-            pl.col("ps").cast(pl.Float32).alias("PS"),
-            pl.col("turnover_rate").cast(pl.Float32).alias("TURNOVER_RATE"),
+            pl.col("pe").cast(pl.Float32).alias(F.PE),
+            pl.col("pb").cast(pl.Float32).alias(F.PB),
+            pl.col("ps").cast(pl.Float32).alias(F.PS),
+            pl.col("turnover_rate").cast(pl.Float32).alias(F.TURNOVER_RATE),
             # 💡 这里一定要补齐 circ_mv，且金额换算为"元"
-            (pl.col("total_mv") * 10000).cast(pl.Float64).alias("TOTAL_MV"),
-            (pl.col("circ_mv") * 10000).cast(pl.Float64).alias("CIRC_MV"),
+            (pl.col("total_mv") * 10000).cast(pl.Float64).alias(F.TOTAL_MV),
+            (pl.col("circ_mv") * 10000).cast(pl.Float64).alias(F.CIRC_MV),
         ])
 
     def _op_clean_limit(self, trading_dates: List[date]) -> pl.LazyFrame:
@@ -240,8 +240,8 @@ class UnifiedFactorBuilder:
         return self._ensure_valid_assets(df_pl.lazy()).select([
             pl.col(F.DATE),
             pl.col(F.ASSET).cast(self.assets_mgr.stock_type),
-            pl.col("up_limit").cast(pl.Float32).alias("UP_LIMIT"),
-            pl.col("down_limit").cast(pl.Float32).alias("DOWN_LIMIT"),
+            pl.col("up_limit").cast(pl.Float32).alias(F.UP_LIMIT),
+            pl.col("down_limit").cast(pl.Float32).alias(F.DOWN_LIMIT),
         ])
 
     def _op_clean_suspend(self, trading_dates: List[date]) -> pl.LazyFrame:
@@ -277,40 +277,43 @@ class UnifiedFactorBuilder:
         return self._ensure_valid_assets(df_pl.lazy()).select([
             pl.col(F.DATE),
             pl.col(F.ASSET).cast(self.assets_mgr.stock_type),
-            pl.lit(True).alias("IS_ST")
+            pl.lit(True).alias(F.IS_ST)
         ])
 
     def _op_process_indicators(self, lf: pl.LazyFrame) -> pl.LazyFrame:
         """核心业务逻辑：填充、状态判定、复权计算"""
-        ffill_cols = ["CLOSE_RAW", "ADJ_FACTOR", "TOTAL_MV", "CIRC_MV", "PE", "PB", "PS", "TURNOVER_RATE", "VWAP", "UP_LIMIT", "DOWN_LIMIT"]
+        ffill_cols = [F.CLOSE_RAW, F.ADJ_FACTOR, F.TOTAL_MV, F.CIRC_MV, F.PE, F.PB, F.PS,
+                      F.TURNOVER_RATE, F.VWAP_RAW, F.UP_LIMIT, F.DOWN_LIMIT]
 
         return (
             lf.sort([F.ASSET, F.DATE])
             .with_columns([
                 # 1. 综合停牌判定：显式标记 OR 价格缺失
                 (
-                        pl.col("_TMP_SUSPEND_").fill_null(False) | pl.col("CLOSE_RAW").is_null()
-                ).alias("IS_SUSPENDED"),
+                        pl.col("_TMP_SUSPEND_").fill_null(False) | pl.col(F.CLOSE_RAW).is_null()
+                ).alias(F.IS_SUSPENDED),
 
                 # ST 状态填充
-                pl.col("IS_ST").fill_null(False).forward_fill().over(F.ASSET),
+                pl.col(F.IS_ST).fill_null(False).forward_fill().over(F.ASSET),
 
                 # 时序填充
                 pl.col(ffill_cols).forward_fill().over(F.ASSET),
-                pl.col(["VOLUME", "AMOUNT"]).fill_null(0.0),
+                pl.col([F.VOLUME, F.AMOUNT]).fill_null(0.0),
             ])
             .with_columns([
                 # 2. 停牌日价格补全
-                pl.col("OPEN_RAW").fill_null(pl.col("CLOSE_RAW")),
-                pl.col("HIGH_RAW").fill_null(pl.col("CLOSE_RAW")),
-                pl.col("LOW_RAW").fill_null(pl.col("CLOSE_RAW")),
+                pl.col(F.OPEN_RAW).fill_null(pl.col(F.CLOSE_RAW)),
+                pl.col(F.HIGH_RAW).fill_null(pl.col(F.CLOSE_RAW)),
+                pl.col(F.LOW_RAW).fill_null(pl.col(F.CLOSE_RAW)),
+                pl.col(F.VWAP_RAW).fill_null(pl.col(F.VWAP_RAW)),
             ])
             .with_columns([
                 # 3. 复权计算
-                (pl.col("OPEN_RAW") * pl.col("ADJ_FACTOR")).cast(pl.Float32).alias("OPEN"),
-                (pl.col("HIGH_RAW") * pl.col("ADJ_FACTOR")).cast(pl.Float32).alias("HIGH"),
-                (pl.col("LOW_RAW") * pl.col("ADJ_FACTOR")).cast(pl.Float32).alias("LOW"),
-                (pl.col("CLOSE_RAW") * pl.col("ADJ_FACTOR")).cast(pl.Float32).alias("CLOSE"),
+                (pl.col(F.OPEN_RAW) * pl.col(F.ADJ_FACTOR)).cast(pl.Float32).alias(F.OPEN),
+                (pl.col(F.HIGH_RAW) * pl.col(F.ADJ_FACTOR)).cast(pl.Float32).alias(F.HIGH),
+                (pl.col(F.LOW_RAW) * pl.col(F.ADJ_FACTOR)).cast(pl.Float32).alias(F.LOW),
+                (pl.col(F.CLOSE_RAW) * pl.col(F.ADJ_FACTOR)).cast(pl.Float32).alias(F.CLOSE),
+                (pl.col(F.VWAP_RAW) * pl.col(F.ADJ_FACTOR)).cast(pl.Float32).alias(F.VWAP),
             ])
             # 💡 4. 仅删除临时列，保留 _RAW 原始价格列和 ADJ_FACTOR 供后续分析使用
             .drop([
