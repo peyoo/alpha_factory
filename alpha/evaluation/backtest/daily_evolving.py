@@ -7,9 +7,9 @@ from alpha.utils.schema import F
 def backtest_daily_evolving(
         df_input: Union[pl.DataFrame, pl.LazyFrame],
         factor_col: str,
-        n_buy: int = 100,
-        sell_rank: int = 120,
-        cost_rate: float = 0.0025,
+        n_buy: int = 10,
+        sell_rank: int = 30,
+        cost_rate: float = 0.003,
         exec_price: str = F.OPEN,
         ascending: bool = False
 ) -> Dict[str, pl.DataFrame]:
