@@ -26,7 +26,7 @@ def backtest_daily_evolving(
 
     # 预计算排名 (T日收盘产生信号)
     lf = lf.with_columns([
-        pl.when(pl.col(F.POOL_MASK) == 1)
+        pl.when(pl.col(F.POOL_MASK))
         .then(pl.col(factor_col))
         .otherwise(None)
         .rank(descending=not ascending, method="random")

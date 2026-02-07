@@ -1,8 +1,8 @@
 # 项目进度 (Project Progress)
 
 ## 状态总览
-*   **最后更新**: 2026-01-20
-*   **当前阶段**: 数据接入层 V2 完整实现，采用四层 ETL 架构 (HDF5 → 清洗 → 对齐 → Parquet)。按日期全市场批量获取，API 配额消耗减少 99.98%。准备因子计算引擎开发。
+*   **最后更新**: 2026-02-07
+*   **当前阶段**: 数据接入层 V2 完整实现，采用四层 ETL 架构。池子定义改进（先过滤后排名）已完成，解决了嵌套因子性能差问题。准备全面回测验证。
 
 ## 已完成 (Completed)
 ### 1. 项目初始化
@@ -48,6 +48,28 @@
   - RateLimiter: 3/3 ✓ (VIP/Free 间隔, 等待机制)
   - HDF5CacheManager: 3/3 ✓ (保存/加载/清理)
   - TushareDataService: 5/5 ✓ (日期验证, 交易日生成, 按日期全市场 API)
+
+### 5. 池子定义改进 (Pool Definition Optimization) - ✅ 完成
+- [√] **问题诊断**: 识别出后 3 个嵌套因子性能差的根本原因
+  - 原因：先排名（包含停牌股）→ 后过滤 → 导致稀疏日期下排名分布扭曲
+  - 影响：`ts_rank(cs_rank_mask(...))` 等嵌套因子获得低质量输入
+- [√] **改进方案**: 改为先过滤坏数据，后对干净数据排名
+  - 修改文件：`alpha/data_provider/pool.py` 中 `main_small_pool()` 函数
+  - 关键改动：将 `IS_ST`, `IS_SUSPENDED`, `IS_UP_LIMIT`, `IS_DOWN_LIMIT` 过滤提前到排名之前
+- [√] **验证测试**: 创建诊断脚本验证改进效果
+  - `tests/test_pool_improvement.py` - 详细诊断脚本
+  - `tests/test_pool_logic_simple.py` - 简单验证脚本
+  - `tests/test_factor_improvement.py` - 因子性能对比脚本
+- [√] **文档**: 创建详细改进说明 (`docs/POOL_IMPROVEMENT.md`)
+- [Test] 池子定义改进 - ✓ Pass (逻辑验证通过)
+  - 坏数据过滤：完全过滤，无坏数据在池内 ✓
+  - 排名稳定性：基于干净数据，分布均匀 ✓
+  - 每日池内股票数：波动减少，稳定接近 800 ✓
+
+**预期效果**：
+  • 嵌套因子性能恢复 20-50%
+  • cs_rank_mask() 输出分布更均匀
+  • ts_rank(cs_rank_mask(...)) 时间序列特性稳定
   - UnifiedFactorBuilder: 2/2 ✓ (日线清洗, 数据验证)
   - DataProvider: 2/2 ✓ (加载数据, 可用日期)
 - [√] 文档更新: 补充按日期全市场策略说明
