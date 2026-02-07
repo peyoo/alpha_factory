@@ -5,7 +5,7 @@ from loguru import logger
 import time
 from alpha.utils.schema import F
 
-def batch_calc_factor_decay_stats(
+def batch_calc_factor_ic_decay(
         df: Union[pl.DataFrame, pl.LazyFrame],
         factors: Union[str, List[str]] = r"^factor_.*",
         label_for_ret: str = F.LABEL_FOR_RET,
@@ -35,14 +35,10 @@ def batch_calc_factor_decay_stats(
 
     # --- 1. 因子列名提取 ---
     f_selector = cs.matches(factors) if isinstance(factors, str) else cs.by_name(factors)
-    try:
-        factor_cols = lf.select(f_selector).collect_schema().names()
-    except Exception as e:
-        logger.error(f"❌ 因子选择器匹配失败: {e}")
-        return pl.DataFrame()
+    factor_cols = lf.select(f_selector).collect_schema().names()
 
     if not factor_cols:
-        logger.warning(f"⚠️ 无法匹配到任何因子 (模式: {factors})，返回空结果。")
+        logger.error(f"⚠️ 无法匹配到任何因子 (模式: {factors})，返回空结果。")
         return pl.DataFrame()
 
     logger.info(f"🧬 开始计算 {len(factor_cols)} 个因子的衰减图谱 | 最大滞后: {max_lag} 天")
@@ -75,16 +71,12 @@ def batch_calc_factor_decay_stats(
     ])
 
     # --- 5. 统计 Mean 和 IR ---
-    try:
-        decay_stats = ic_series.group_by("factor").agg([
-            *[pl.col(f"lag_{i}").mean().alias(f"IC_Mean_Lag_{i}") for i in range(max_lag)],
-            *[(pl.col(f"lag_{i}").mean() / pl.col(f"lag_{i}").std().fill_nan(1e-9)).alias(f"IR_Lag_{i}") for i in range(max_lag)]
-        ]).collect()
+    decay_stats = ic_series.group_by("factor").agg([
+        *[pl.col(f"lag_{i}").mean().alias(f"IC_Mean_Lag_{i}") for i in range(max_lag)],
+        *[(pl.col(f"lag_{i}").mean() / pl.col(f"lag_{i}").std().fill_nan(1e-9)).alias(f"IR_Lag_{i}") for i in
+          range(max_lag)]
+    ]).collect()
 
-        duration = time.perf_counter() - start_time
-        logger.success(f"✅ 衰减图谱计算完成 | 耗时: {duration:.2f}s | 生成数据: {decay_stats.height} 行")
-        return decay_stats
-
-    except Exception as e:
-        logger.exception(f"❌ 衰减统计失败: {e}")
-        return pl.DataFrame()
+    duration = time.perf_counter() - start_time
+    logger.success(f"✅ 衰减图谱计算完成 | 耗时: {duration:.2f}s | 生成数据: {decay_stats.height} 行")
+    return decay_stats

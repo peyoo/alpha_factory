@@ -13,7 +13,7 @@ def batch_full_metrics(
         label_ret_col: str = F.LABEL_FOR_RET,
         date_col: str = F.DATE,
         asset_col: str = F.ASSET,
-        pool_mask_col: str = F.POOL_MASK,  # ← 小微盘动态掩码
+        pool_mask_col: str = F.POOL_MASK,
         n_bins: int = 10,
         mode: Literal['long_only', 'long_short', 'active'] = 'long_only',
         annual_days: int = 252,
@@ -23,9 +23,37 @@ def batch_full_metrics(
     批量因子评估（基于目标股票池）
 
     Args:
+        df: 输入数据框，包含因子列、标签列及股票池掩码列
         pool_mask_col: 动态股票池掩码列（True = 在池内）
             示例：_POOL_MASK_（包含流通市值过滤 + 停牌过滤）
             每日动态变化，反映实际可投资范围
+        factors: 因子列选择器（正则表达式或名称列表）
+        label_ic_col: 用于计算 IC 的标签列
+        label_ret_col: 用于计算收益率的标签列
+        date_col: 日期列名称
+        asset_col: 资产列名称
+        n_bins: 分桶数量（用于多分位信号生成）
+        mode: 评估模式
+            - 'long_only': 仅多头头寸
+            - 'long_short': 多空头寸
+            - 'active': 相对于市场平均收益
+        annual_days: 年化交易日天数（用于年化收益计算）
+        fee: 单边交易费用率（用于换手成本估计）
+    Returns:
+        pl.DataFrame: 因子评估结果，Schema 如下：
+        | 列名 | 类型 | 说明 |
+        | :--- | :--- | :--- |
+        | factor | String | 因子名称 (e.g., 'factor_0')
+        | ic_mean | Float64 | 每日 IC 的算术平均值 |
+        | ic_mean_abs | Float64 | IC 均值的绝对值 (常用于进化目标) |
+        | ic_ir | Float64 | IC 信息比率 (ic_mean / ic_std) |
+        | ic_ir_abs | Float64 | IC IR 的绝对
+        | ann_ret | Float64 | 年化收益率 |
+        | sharpe | Float64 | 夏普比率 |
+        | turnover_est | Float64 | 换手率估计 |
+        | direction | Int32 | 因子方向 (1=正向, -1=反向) |
+    说明：
+    该函数实现了基于目标股票池的批量因子评估，确保评估结果真实反映因子在可交易范围内的表现。
 
 
     关键改动：
@@ -50,41 +78,30 @@ def batch_full_metrics(
     if not factor_cols:
         return pl.DataFrame()
 
-    # ✅ Step 3: 在【池内股票】上计算 Rank（核心改动）
-    #           现在 Rank 范围是 1-N（N = 池内股票数），不是 1-5797
     lf = lf.with_columns([
         pl.col(f).rank().over(date_col).alias(f"{f}_rank")
-        for f in factor_cols# ↑ 重要：rank() 现在基于过滤后的池内股票
-        #        如果池内有 200 只，rank 范围是 1-200
-        #        不再是全市场的 1-5797
+        for f in factor_cols
     ]).with_columns([
         (pl.col(f"{f}_rank") > (pl.len().over(date_col) * (n_bins - 1) / n_bins))
-        .alias(f"{f}_is_top")
-        for f in factor_cols# ↑ Top 10% 现在基于池内分位数
-        #   如果池内 200 只，Top 10% = rank > 180（20 只）
+        .alias(f"{f}_is_top") for f in factor_cols
     ] + [
         (pl.col(f"{f}_rank") <= (pl.len().over(date_col) / n_bins))
-        .alias(f"{f}_is_btm")
-        for f in factor_cols
+        .alias(f"{f}_is_btm") for f in factor_cols
     ])
 
     # Step 4: 生成信号（shift、换手检测）
     lf = lf.with_columns([
         pl.col(f"{f}_is_top").shift(1).over(asset_col).fill_null(False)
-        .alias(f"{f}_sig_top")
-        for f in factor_cols
+        .alias(f"{f}_sig_top") for f in factor_cols
     ] + [
         pl.col(f"{f}_is_btm").shift(1).over(asset_col).fill_null(False)
-        .alias(f"{f}_sig_btm")
-        for f in factor_cols
+        .alias(f"{f}_sig_btm") for f in factor_cols
+    ]).with_columns([
+        (pl.col(f"{f}_is_top") & ~pl.col(f"{f}_sig_top"))
+        .alias(f"{f}_buy_top") for f in factor_cols
     ] + [
-        (pl.col(f"{f}_is_top").cast(pl.Int8).diff().over(asset_col) == 1)
-        .fill_null(False).alias(f"{f}_buy_top")
-        for f in factor_cols
-    ] + [
-        (pl.col(f"{f}_is_btm").cast(pl.Int8).diff().over(asset_col) == 1)
-        .fill_null(False).alias(f"{f}_buy_btm")
-        for f in factor_cols
+        (pl.col(f"{f}_is_btm") & ~pl.col(f"{f}_sig_btm"))
+        .alias(f"{f}_buy_btm") for f in factor_cols
     ])
 
     # Step 5: 日度聚合
@@ -92,16 +109,16 @@ def batch_full_metrics(
         lf.group_by(date_col)
         .agg([
             pl.col(label_ret_col).mean().alias("market_avg"),
-            *[pl.corr(f, label_ic_col, method="spearman")
-              .alias(f"{f}_ic") for f in factor_cols],
-            *[pl.col(label_ret_col).filter(pl.col(f"{f}_sig_top"))
-              .mean().alias(f"{f}_top_ret") for f in factor_cols],
-            *[pl.col(label_ret_col).filter(pl.col(f"{f}_sig_btm"))
-              .mean().alias(f"{f}_btm_ret") for f in factor_cols],
-            *[(pl.col(f"{f}_buy_top").sum() / (pl.len() / n_bins))
-              .alias(f"{f}_to_top") for f in factor_cols],
-            *[(pl.col(f"{f}_buy_btm").sum() / (pl.len() / n_bins))
-              .alias(f"{f}_to_btm") for f in factor_cols],
+
+            *[pl.corr(f, label_ic_col, method="spearman").alias(f"{f}_ic") for f in factor_cols],
+
+            *[pl.col(label_ret_col).filter(pl.col(f"{f}_sig_top")).mean().alias(f"{f}_top_ret") for f in factor_cols],
+
+            *[pl.col(label_ret_col).filter(pl.col(f"{f}_sig_btm")).mean().alias(f"{f}_btm_ret") for f in factor_cols],
+
+            *[(pl.col(f"{f}_buy_top").sum() / (pl.len() / n_bins)).alias(f"{f}_to_top") for f in factor_cols],
+
+            *[(pl.col(f"{f}_buy_btm").sum() / (pl.len() / n_bins)).alias(f"{f}_to_btm") for f in factor_cols],
         ])
         .sort(date_col)
         .collect()
@@ -114,6 +131,7 @@ def batch_full_metrics(
     for f in factor_cols:
         ic_series = daily_stats.get_column(f"{f}_ic")
         ic_mean = ic_series.mean() or 0.0
+        ic_mean_abs = abs(ic_mean)
         ic_std = ic_series.std() or 1e-9
         direction = 1 if ic_mean >= 0 else -1
 
@@ -138,7 +156,9 @@ def batch_full_metrics(
         final_results.append({
             "factor": f,
             "ic_mean": ic_mean,
+            'ic_mean_abs': ic_mean_abs,
             "ic_ir": ic_mean / ic_std,
+            "ic_ir_abs": ic_mean_abs / ic_std,
             "ann_ret": ann_ret,
             "sharpe": sharpe,
             "turnover_est": turnover_val,

@@ -3,7 +3,6 @@ from loguru import logger
 from alpha.data_provider import DataProvider
 
 from alpha.data_provider.pool import main_small_pool
-from alpha.evaluation.batch.returns import batch_quantile_returns
 from alpha.evaluation.single.single import single_factor_alpha_analysis
 from alpha.gp.extra_terminal import add_extra_terminals
 from alpha.gp.label import label_OO_for_tradable, label_OO_for_IC
@@ -26,7 +25,3 @@ lf = DataProvider().load_data(
 single_factor_alpha_analysis(lf, "factor_1", F.LABEL_FOR_RET,
                              period=1,n_bins=5,mode='long_only',
                              )
-
-logger.info("使用 batch_quantile_returns 进行多因子评估")
-df = batch_quantile_returns(lf, "factor_1",label_ret_col=F.LABEL_FOR_RET)
-print(df)

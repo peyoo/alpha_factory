@@ -72,7 +72,7 @@ class SmallCSGenerator(GPDeapGenerator):
         # 可选：ts_sum, ts_kurtosis,ts_delay,ts_arg_max,ts_arg_min
         ts_ops = [
             'ts_mean', 'ts_std_dev', 'ts_max', 'ts_min',
-            'ts_delta', 'ts_returns', 'ts_rank', 'ts_skewness',
+            'ts_delta', 'ts_returns','ts_skewness',
             'ts_decay_linear','ts_BIAS'
         ]
         for op in ts_ops:
