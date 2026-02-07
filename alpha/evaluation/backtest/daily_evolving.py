@@ -15,8 +15,6 @@ def backtest_daily_evolving(
 ) -> Dict[str, pl.DataFrame]:
     """
     逐日演进回测框架 (精准收益捕捉版)
-
-    修正点：
     1. 收益闭环：捕捉了买入当天 (Exec -> Close) 和 卖出当天 (Prev_Close -> Exec) 的收益。
     2. 信号对齐：确保 T 日信号在 T+1 日准时执行。
     """

@@ -10,6 +10,8 @@ from typing import Optional, List, Union, Callable, Literal
 from datetime import datetime, timedelta
 
 from expr_codegen import codegen_exec
+
+from alpha.data_provider import TushareDataService
 from alpha.data_provider.stock_assets_manager import StockAssetsManager
 from alpha.utils.config import settings
 from alpha.utils.schema import F
@@ -30,6 +32,7 @@ class DataProvider:
         self.warehouse_dir = Path(settings.WAREHOUSE_DIR)
         self.factor_dir = self.warehouse_dir / "unified_factors"
         self.asset_manager = asset_manager or StockAssetsManager()
+        self.tushare_service = TushareDataService()
 
         # 预加载静态元数据 LazyFrame
         # 提示：确保 asset 列在管理器中已设为 Categorical 或 Enum
@@ -39,7 +42,7 @@ class DataProvider:
     def load_data(
             self,
             start_date: str,
-            end_date: str,
+            end_date: Optional[str] = None,
             column_blocks: Optional[List] = None,
             column_exprs: Optional[List[str]] = None,
             funcs: Optional[List[Callable[[pl.LazyFrame], pl.LazyFrame]]] = None,
@@ -127,6 +130,8 @@ class DataProvider:
                     # 转换成float64，避免后续计算中类型不匹配的问题
                     pl.col(pl.NUMERIC_DTYPES).cast(pl.Float64)
                 )
+
+        end_date = self.tushare_service.get_latest_date_from_warehouse() if end_date is None else end_date.strip()
 
         # 2. 🏗️ 执行完整计算流水线 (如果缓存未命中或未设置)
         logger.info(f"⚙️ 缓存未命中或未设置，开始计算数据 [{start_date} -> {end_date}]...")

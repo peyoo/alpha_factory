@@ -4,7 +4,7 @@ from typing import Dict, Any
 from deap import gp
 
 from alpha.data_provider.pool import main_small_pool
-from alpha.evaluation.batch.returns import batch_quantile_returns
+from alpha.evaluation.batch.full_metrics import batch_full_metrics
 from alpha.gp.base import Expr, dummy
 from alpha.gp.extra_terminal import add_extra_terminals
 from alpha.gp.generator import GPDeapGenerator
@@ -33,8 +33,8 @@ class SmallCSGenerator(GPDeapGenerator):
         self.extra_terminal_func = config.get("extra_terminal_func", add_extra_terminals)  # 额外终端因子计算函数
         self.terminals = config.get('terminals', ['OPEN', 'HIGH','LOW','CLOSE','TURNOVER_RATE','VWAP','RET','VWAP_RET'])
 
-        self.fitness_population_func = config.get("fitness_population_func", batch_quantile_returns)
-        self.opt_names = config.get("opt_names", ("ann_ret",))  #
+        self.fitness_population_func = config.get("fitness_population_func", batch_full_metrics)
+        self.opt_names = config.get("opt_names", ("ann_ret",))  #多目标优化因子名称
         self.opt_weights = config.get("opt_weights", (1.0,))  # 多目标优化权重
 
         self.hof_size = config.get("hof_size", 100)  # 名人堂大小

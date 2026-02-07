@@ -226,7 +226,7 @@ class TushareDataService:
         trade_days_back = self.calendar.get_trade_days(lookback_start, today)
 
         if not trade_days_back:
-            logger.warning(f"⚠️ 无法获取交易日历，返回今天: {today.strftime('%Y%m%d')}")
+            logger.error(f"⚠️ 无法获取交易日历，返回今天: {today.strftime('%Y%m%d')}")
             return today.strftime("%Y%m%d")
 
         # 反向遍历（从最近往前），最多查找 lookback_days 个
@@ -266,7 +266,7 @@ class TushareDataService:
     def daily_update(self) -> None:
         """日频自动增量同步"""
         # 从 L2 仓库探测最新日期
-        _, last_date_str = self._get_latest_date_from_warehouse()
+        last_date_str = self.get_latest_date_from_warehouse()
         if not last_date_str:
             logger.error("无法获取仓库日期，请先进行全量同步")
             return
@@ -280,7 +280,7 @@ class TushareDataService:
 
         self.sync_data(next_date.strftime("%Y%m%d"), end_date=None)
 
-    def _get_latest_date_from_warehouse(self) -> tuple[Optional[int], Optional[str]]:
+    def get_latest_date_from_warehouse(self) -> Optional[str]:
         """利用 Polars 快速探测 Parquet 仓库的最大日期"""
         path = self.factor_builder.warehouse_dir / "unified_factors/*.parquet"
         try:
@@ -290,7 +290,7 @@ class TushareDataService:
             if max_date:
                 if isinstance(max_date, pl.Date):
                     max_date = max_date.as_py()
-                return None, max_date.strftime("%Y%m%d")
+                return max_date.strftime("%Y%m%d")
         except Exception as e:
-            logger.debug(f"获取仓库最大日期失败: {e}")
-        return None, None
+            logger.error(f"获取仓库最大日期失败: {e}")
+        return None
