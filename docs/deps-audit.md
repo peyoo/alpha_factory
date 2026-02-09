@@ -1,107 +1,98 @@
-# 依赖审计报告 (初版)
+# 依赖迁移与审计报告 (uv) — Migration Audit
 
-- 生成时间: 2026-02-09
-- 目标 Python 版本: 3.11
-- 目标平台: linux-64, osx-64, osx-arm64
+日期: 2026-02-09
 
-> 说明：本报告为 Step 1 的初步静态审计结果，基于仓库根 `requirements.txt` 与对 `alpha/` 下源码的静态 import 扫描得到的候选依赖清单。原计划通过在隔离 venv 与 Conda 环境中逐项做 `pip --no-cache-dir` 与 `conda-forge` 安装探测（并记录日志），但在当前运行代理环境下部分自动化探测未能完成或日志不完整。请把本文件作为迁移的“起点”，我已在 `output/` 下预置了探测脚本与日志位置建议，下一步建议在本地运行完整探测（或允许我在你的工作区继续执行完整探测）。
+概述
+----
+本次迁移将项目从原先的 (Conda + Poetry) 混合依赖管理，迁移到 `uv`（使用 PyPI wheels + `uv` 的 lock/sync），并对部分二进制/复杂编译包保留审慎处理策略（将 `ta-lib` 视为需由 Conda/系统包特殊安装）。本报告记录了决策依据、跨平台锁摘要、验证步骤与 PyCharm 使用建议。
 
----
+1) 断/舍/离 决策（为什么移除 `ta-lib`）
+-------------------------------------
+- 原因：`ta-lib` 在 PyPI 上多依赖系统 C 库（TA-Lib C），在不同平台上构建耗时且易失败；对于可在 pip 上安装的项目，若依赖库可用 wheel（无编译）则迁移顺利，否则会导致 `uv sync` 构建失败或强制本地编译。
+- 决策：将 `ta-lib` 从 `pyproject.toml` 移除，保留 `environment.yml`（放入 `backup/migrate-to-uv/`）作为历史与“若需 Conda 安装”参考。推荐的安装策略为：对需要系统包的二进制依赖（如 ta-lib、某些 LAPACK/MKL 绑定）在生产/CI 环境使用 Conda/系统包管理安装，而开发者本地可选择 apt/brew 或 Conda 场景安装。
 
-## 工具与版本（运行代理时记录）
+如何缓解 `quantstats` 中的 `cvxpy` 编译压力
+------------------------------------------
+- 现象：`quantstats` 可能间接依赖或与 `cvxpy` 一起使用，`cvxpy` 曾因含有可选的本地求解器或 C 扩展（如 OSQP、SCS）而导致编译/链接问题。
+- 措施：
+  1. 在 `pyproject.toml` 中显式添加 `cvxpy` 作为依赖，并在 `uv.lock` 中允许解析为已有 wheel 的稳定版本（本次解析得到 `cvxpy==1.7.5`），优先使用 PyPI 上的 wheel（macOS universal2 / manylinux aarch64 / x86_64）以避免源码编译。 uv 在解算时已为 `cvxpy` 选取 pre-built wheels（参见 `uv.lock`）。
+  2. 对于仍需系统库支持的求解器（比如某些 BLAS、MKL 或 ta-lib），建议在 CI/部署时用 Conda 提供系统级二进制依赖；uv 管理纯 Python 轮子和大多数预构建 binary wheel，减少编译需求。
 
+2) 多平台锁（B）核心摘要
+-------------------------
+- 目标平台：
+  - x86_64-unknown-linux-gnu (Linux x86_64)
+  - x86_64-apple-darwin (macOS Intel)
+  - aarch64-apple-darwin (macOS Apple Silicon)
+
+- 结果摘要（来自仓库根 `uv.lock`，已解析）：
+  - `quantstats` resolved version: 0.0.81 — wheel: universal py3 (pure python) (works on all platforms)
+  - `cvxpy` resolved version: 1.7.5 — available wheels included:
+    - macOS universal2 wheel (e.g. `cvxpy-1.7.5-cp311-cp311-macosx_10_9_universal2.whl`)
+    - macOS x86_64 wheel (e.g. `cvxpy-1.7.5-cp311-cp311-macosx_10_9_x86_64.whl`)
+    - manylinux aarch64 wheel (e.g. `cvxpy-1.7.5-cp311-cp311-manylinux_2_24_aarch64.whl`)
+    - manylinux x86_64 wheel (e.g. `cvxpy-1.7.5-cp311-cp311-manylinux_2_24_x86_64.whl`)
+  - 结论：`uv.lock` 已包含跨平台的预构建 wheel（macOS universal / linux manylinux），能覆盖目标三平台。实测 `uv sync` 在 macOS (Intel) 创建 `.venv` 并成功安装 `cvxpy==1.7.5` 与 `quantstats==0.0.81`（见 `output/uv-sync.log` 与 `output/import-test.log`）。
+
+兼容性注意事项与风险
+- 虽然 `uv.lock` 列出了跨平台 wheel，但实际在不同平台上仍可能遇到特殊系统库缺失（例如 `cvxpy` 的可选求解器或底层 BLAS/OSQP 的系统依赖）。因此建议在目标部署环境执行一次 `uv sync` 以验证完整安装。若某平台上缺少 wheel，uv 将回退为源码构建，可能失败。
+
+3) 操作步骤（如何在三平台生成/验证锁）
+--------------------------------------
+- macOS (本机 Intel) — 已完成：
+  - python -m uv lock  -> 生成 `uv.lock`（含多平台 wheel 列表）
+  - python -m uv sync  -> 在 `.venv` 成功安装并测试 import（quantstats, cvxpy）
+- macOS (Apple Silicon) — 验证建议：
+  - 在 Apple Silicon 机器上运行同样命令（uv lock 或 uv sync）以确认本地解析/安装。macOS universal2 wheel 通常支持两类 Mac CPU。若无本机可用，可在 CI 上跑 arm64 runner。
+- Linux x86_64 — 验证建议（CI / Docker）：
+  - 在 linux x86_64 runner 或 Docker 镜像中运行 `python -m uv lock` 或 `uv sync` 来验证 manylinux wheel 可用性。
+
+示例（复现）命令
+```bash
+# 在 repo 根
+python -m uv lock       # update uv.lock (reads pyproject.toml / [project])
+python -m uv sync       # create/update .venv and install
+.venv/bin/python -c "import quantstats,cvxpy; print(quantstats.__version__, cvxpy.__version__)"
 ```
-(注：以下为探测时收集的工具信息，若为空请在本地重新执行探测脚本以获得完整日志)
-```
 
-从 `output/tool-versions.txt`（若存在）摘录示例：
+4) 架构对比（旧: Conda+Poetry vs 新: uv）
+-----------------------------------------
+- 安装速度
+  - Conda: 初次创建环境（含二进制包）通常较快，因为 Conda 提供了预编译的二进制包，但对某些包（非 Conda 仓库）仍需构建。
+  - Poetry+pip: 取决于 PyPI wheel 是否可用，源码构建会慢很多。Poetry solver 通常较慢于 uv（取决于版本）。
+  - uv: 通过解析 PyPI wheel 并尽可能使用 pre-built wheels，通常在解析/锁定速度上比纯 Poetry 快（本次 uv lock/resolution 在本机为数秒，uv sync 完成安装约 27s）
 
-```
-Python 3.11.13
-/Users/yongpeng/opt/anaconda3/envs/alpha_py311/bin/python
-pip 25.3 (python 3.11)
-conda 4.14.0
-mamba: 未检测到（如本机有 mamba 建议优先使用）
-poetry: 未检测到（请在本地安装）
-conda-lock: 未检测到（若需要生成 conda-lock.yml 请安装）
-```
+- 磁盘占用
+  - Conda: 可能更大（Conda 本身、conda envs、共享库、MKL/BLAS 等）。
+  - uv/pip: 更轻量，但依赖系统级库（如 OpenBLAS/MKL）在不同环境中可能需要手工安装。
 
----
+- 开发流与 CI
+  - 旧流 (Conda+Poetry): 适合重度二进制依赖与科学计算栈（numpy/scipy/ta-lib）统一管理，便于在服务器上维持一致性。Conda 在多平台上有更稳定的二进制保障。
+  - 新流 (uv): 适合以 PyPI wheel 为主的项目，简化 lock/sync（无额外 Conda 安装），并能快速在开发者机器上复现。对于少数系统级依赖，建议在 CI 或部署时用 Conda/OS-level install 补充。
 
-## 说明和判定规则（简要）
+- 结论性建议
+  - 对于纯 Python 或提供 universal/manylinux wheel 的依赖，`uv` 是简洁且快速的选择；
+  - 对于强依赖本机 C 库（ta-lib、某些 MKL-linked packages），继续在生产部署或 CI 使用 Conda/system package 来提供这些库（混合方案）。
 
-- verdict: poetry = 建议交给 Poetry (pyproject.toml) 管理；conda = 建议由 Conda 提供（写入 environment.yml）；conda-forced = 明确强制为 Conda（如 TA-Lib、cvxpy）；manual-check = 需手工复核/平台测试（可能存在导入名差异或仅在特定平台有 wheel）。
-- 我在审计中特别关注二进制依赖（例如 TA-Lib、cvxpy、某些 SciPy/BLAS 相关包、pytorch/cuda 生态），并将它们 preferentially 标为 Conda。
-- 本报告未包含真实的 pip/conda 探测日志（若需完整探测请在本地运行 `scripts` 下的探测脚本或允许我继续本地执行）。
+5) PyCharm 配置指南（如何绑定 `.venv`）
+---------------------------------------
+1. 打开 PyCharm，选择 Preferences / Settings -> Project -> Python Interpreter。
+2. 点击齿轮 -> Add... -> Existing environment。
+3. 指向仓库下的 `.venv/bin/python`（macOS/Linux）或 `.venv\Scripts\python.exe`（Windows）。
+4. 确认后 PyCharm 会索引依赖；若你切换到不同分支并重建 `.venv`，在 PyCharm 中需要重新指向该解释器或刷新索引。
 
----
+6) 后续建议与 TODO
+-------------------
+- 在 CI（github actions / GitLab runners）上配置矩阵 runner：
+  - ubuntu-latest (x86_64) 执行 `python -m uv lock` / `uv sync` 验证 Linux manylinux wheels
+  - macos-latest (x86_64) 与 macos-arm64 验证 Mac-specific wheels
+- 把 `environment.yml` 放入 `backup/migrate-to-uv/` 作为 Conda 安装参考，并在 README.md 或 docs 中给出“若需要 Conda 安装”的一键命令示例。
 
-## 汇总表（来自 `requirements.txt` 与静态导入）
-
-| package | version_spec (requirements.txt) | detected_from | verdict | notes | suggested_channel |
-|---|---:|---|---|---|---|
-| polars | >=0.20.0 | requirements.txt | poetry | Polars 在 pip/conda 均有分发，建议由 Poetry 管理 | pypi / conda-forge (optional) |
-| pydantic-settings | >=2.0.0 | requirements.txt | poetry | 纯 Python 包，Poetry 管理 | pypi |
-| loguru | >=0.7.0 | requirements.txt | poetry | 纯 Python，Poetry 管理 | pypi |
-| polars-ta | >=0.1.0 | requirements.txt | poetry | 基于 Polars 的扩展库 | pypi |
-| numpy | >=1.24.0 | requirements.txt | manual-check | NumPy 与 BLAS/MKL 有平台依赖；pip wheel 在多数平台可用，但若需要特定 BLAS 建议用 Conda | pypi / conda-forge |
-| pandas | >=2.0.0 | requirements.txt | poetry | pip wheel 可用 | pypi |
-| tushare | >=1.2.89 | requirements.txt | poetry | 纯 Python 与网络接口 | pypi |
-| pyarrow | >=14.0.0 | requirements.txt | manual-check | pyarrow 常依赖平台二进制，conda-forge 提供稳定二进制包；建议对目标平台验证 | conda-forge (recommended) |
-| deap | >=1.4.0 | requirements.txt | poetry | 纯 Python，多为源代码 | pypi |
-| lightgbm | >=4.0.0 | requirements.txt | manual-check | lightgbm 可能需要编译或使用 conda 提供的二进制，建议验证 | conda-forge |
-| scikit-learn | >=1.3.0 | requirements.txt | manual-check | 含二进制依赖，pip wheels 通常可用，若需针对特定 BLAS/MKL 使用 Conda | pypi / conda-forge |
-| pytest | >=7.0.0 | requirements.txt | poetry | dev dependency | pypi |
-| alphainspect | (no spec) | requirements.txt | manual-check | 未在 PyPI 普遍可见，需确认来源 | manual-check |
-| pre-commit | >=3.5.0 | requirements.txt | poetry | dev tooling | pypi |
-| ruff | >=0.1.0 | requirements.txt | poetry | dev tooling (format/lint)；注意 ruff 版本与 pre-commit 配置的兼容性 | pypi |
-| sympy | ~=1.14.0 | requirements.txt | poetry | 纯 Python | pypi |
-| more-itertools | ~=10.8.0 | requirements.txt | poetry | 纯 Python | pypi |
-| fastcluster | ~=1.3.0 | requirements.txt | manual-check | C 扩展包，pip 有时提供 wheel，但部分平台可能需要 conda | conda-forge (verify) |
-| scipy | ~=1.17.0 | requirements.txt | manual-check | 含 Fortran/C/BLAS 绑定，推荐通过 conda-forge 安装以获得稳定二进制 | conda-forge (recommended) |
-| tensorboardx | ~=2.6.4 | requirements.txt | poetry | 纯 Python 封装 | pypi |
-| pydantic | ~=2.11.7 | requirements.txt | poetry | 纯 Python | pypi |
-| quantstats | ~=0.0.81 | requirements.txt | manual-check | 依赖 pandas/scipy 等，需验证 | pypi / conda-forge |
+附录：本地可查的关键文件
+- `uv.lock` (repo root)
+- `output/uv-sync.log`
+- `output/import-test.log`
+- `backup/migrate-to-uv/environment.yml`
 
 
-## 静态扫描到的常见 imports（样例）
-
-（注：只列出 alpha/ 下出现频率较高或与本仓库直接相关的 top-level imports）
-
-- polars
-- numpy
-- pandas
-- scipy
-- fastcluster
-- loguru
-- deap
-- lightgbm
-- tensorboardX
-
----
-
-## 强制保留在 Conda 列表的包（用户特别要求）
-
-- TA-Lib (talib)：需依赖 C 库 `ta-lib`，强烈建议通过 `conda-forge` 安装并列入 `environment.yml`。
-- cvxpy：含复杂的 C/C++/BLAS 绑定与编译步骤，建议使用 `conda-forge` 的二进制分发。
-
-> 建议：在 `environment.yml` 中把上述包列为 Conda 依赖（channel: conda-forge），并在 Poetry 的 `pyproject.toml` 中不列出它们，或在 `[tool.poetry.extras]` 中单独说明。
-
----
-
-## 后续建议（Step 2 列表）
-
-1. 在你本机（或我继续本地 Mode B 完整运行）按原计划运行探测脚本（`pip --no-cache-dir` 与 `conda-forge` 安装尝试），以产出真实的 `output/pip-audit.json` 与 `output/conda-audit.json`。这些文件将写入 `output/` 供审阅。
-2. 依据探测结果生成 `pyproject.toml`（Poetry）与 `environment.yml`（Conda），并确保 `python = "3.11"` 在两个文件中对齐。
-3. 运行 `conda-lock` 生成 `conda-lock.yml`（目标平台：linux-64, osx-64, osx-arm64）。
-4. 更新 CI（GitHub Actions）：先用 `mamba`/`conda` 安装 `environment.yml`，再在同一环境内运行 `poetry install`（`poetry config virtualenvs.create false --local`），最后运行 `pre-commit` 与 `pytest`。
-
----
-
-## 附录：本地自动探测脚本（建议在本地执行以获得完整日志）
-
-我已在审计计划中准备好用于探测的脚本片段（会在 `output/` 生成 `pip-audit.json` 与 `conda-audit.json`），示例脚本位于 PRD 列表/聊天记录中。如需我继续在本地完整运行探测并提交 `poetry`/`environment.yml` 生成补丁，请授权我在 Mode B 下继续执行 Step 2（我会在本地创建分支并提交但不 push）。
-
----
-
-报告结束
+报告结束。

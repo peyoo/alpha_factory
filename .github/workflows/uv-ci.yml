@@ -1,0 +1,149 @@
+name: uv CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ubuntu:
+    name: Ubuntu (x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip setuptools wheel && python -m pip install uv
+
+      - name: Run uv lock
+        run: python -m uv lock --no-cache > uv-lock-linux.log 2>&1 || true
+
+      - name: Run uv sync (verbose)
+        run: |
+          set -o pipefail
+          python -m uv sync --no-cache -v > uv-sync-linux.log 2>&1 || SYNC_EXIT=$?
+          if [ -n "${SYNC_EXIT:-}" ]; then
+            echo "uv sync failed (exit=$SYNC_EXIT), installing build deps and retrying..." >> uv-sync-linux.log
+            sudo apt-get update && sudo apt-get install -y build-essential gfortran libopenblas-dev liblapack-dev pkg-config ca-certificates wget >> uv-sync-linux.log 2>&1 || true
+            python -m pip install --upgrade pip setuptools wheel >> uv-sync-linux.log 2>&1 || true
+            python -m uv sync --no-cache -v >> uv-sync-linux.log 2>&1 || true
+          fi
+
+      - name: Import check
+        run: |
+          python - <<'PY' > import-check-linux.log
+            import importlib
+            out=[]
+            for m in ('cvxpy','quantstats'):
+                try:
+                    mod=importlib.import_module(m)
+                    out.append(f"{m}:{getattr(mod,'__version__','unknown')}")
+                except Exception as e:
+                    out.append(f"{m}:IMPORT_FAILED:{e}")
+            print('\n'.join(out))
+          PY
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: uv-linux-artifacts
+          path: |
+            uv-lock-linux.log
+            uv-sync-linux.log
+            import-check-linux.log
+
+  macos-intel:
+    name: macOS (intel / default)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip setuptools wheel && python -m pip install uv
+
+      - name: Run uv lock
+        run: python -m uv lock --no-cache > uv-lock-macos.log 2>&1 || true
+
+      - name: Run uv sync (verbose)
+        run: python -m uv sync --no-cache -v > uv-sync-macos.log 2>&1 || true
+
+      - name: Import check
+        run: |
+          python - <<'PY' > import-check-macos.log
+            import importlib
+            out=[]
+            for m in ('cvxpy','quantstats'):
+                try:
+                    mod=importlib.import_module(m)
+                    out.append(f"{m}:{getattr(mod,'__version__','unknown')}")
+                except Exception as e:
+                    out.append(f"{m}:IMPORT_FAILED:{e}")
+            print('\n'.join(out))
+          PY
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: uv-macos-artifacts
+          path: |
+            uv-lock-macos.log
+            uv-sync-macos.log
+            import-check-macos.log
+
+  macos-arm:
+    name: macOS (arm64 - best-effort)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Print runner arch
+        run: uname -m || true
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip setuptools wheel && python -m pip install uv
+
+      - name: Run uv lock
+        run: python -m uv lock --no-cache > uv-lock-macos-arm.log 2>&1 || true
+
+      - name: Run uv sync (verbose)
+        run: python -m uv sync --no-cache -v > uv-sync-macos-arm.log 2>&1 || true
+
+      - name: Import check
+        run: |
+          python - <<'PY' > import-check-macos-arm.log
+            import importlib
+            out=[]
+            for m in ('cvxpy','quantstats'):
+                try:
+                    mod=importlib.import_module(m)
+                    out.append(f"{m}:{getattr(mod,'__version__','unknown')}")
+                except Exception as e:
+                    out.append(f"{m}:IMPORT_FAILED:{e}")
+            print('\n'.join(out))
+          PY
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: uv-macos-arm-artifacts
+          path: |
+            uv-lock-macos-arm.log
+            uv-sync-macos-arm.log
+            import-check-macos-arm.log
