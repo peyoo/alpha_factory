@@ -1,3 +1,21 @@
+[project]
+name = "alpha_factory"
+version = "0.1.0"
+description = "Alpha Factory — quant research and factor engineering"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "polars>=0.20.0",
+  "loguru>=0.7.0",
+  "numpy==1.24.3",
+  "pandas==2.0.3",
+  "quantstats~=0.0.81",
+  "tushare>=1.2.89",
+  "deap>=1.4.0",
+  "lightgbm==4.0.0",
+  "tensorboardX~=2.6.4",
+]
+
 [tool.poetry]
 name = "alpha_factory"
 version = "0.1.0"
