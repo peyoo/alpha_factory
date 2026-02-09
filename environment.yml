@@ -7,18 +7,17 @@ dependencies:
   - python=3.11
   - pip
   # Conda-provisioned binary packages (moved here because pip probe failed or package is conda-only)
+  - numpy=1.24.3
+  - scipy=1.17.0
   - ta-lib
   - cvxpy
-  - pyarrow>=14.0
-  - scikit-learn>=1.3.0
-  - fastcluster~=1.3.0
-  - sympy~=1.14.0
-  - alphainspect
-  - pydantic~=2.11.7
-  - numpy>=1.24
-  - pandas>=2.0
-  - scipy~=1.17.0
-  - lightgbm>=4.0.0
+  - pyarrow=14.0.0
+  - scikit-learn=1.3.0
+  - fastcluster=1.3.0
+  - sympy=1.14.0
+  - pydantic=2.11.7
+  - pandas=2.0.3
+  - lightgbm=4.0.0
 
   # Use pip to install the rest inside the conda env
   - pip:
@@ -32,6 +31,7 @@ dependencies:
     - quantstats~=0.0.81
     - pre-commit>=3.5.0
     - ruff>=0.1.0
+    - alphainspect
 
 # Notes:
 # - After dynamic probe, we may move more packages from pip: to top-level conda deps if

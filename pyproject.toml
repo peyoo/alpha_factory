@@ -8,17 +8,16 @@ packages = [ { include = "alpha" } ]
 
 [tool.poetry.dependencies]
 python = "^3.11"
-# Keep packages that pip probe installed and imported successfully
+# Core Python deps (prefer Poetry-managed). Heavy binary deps (numpy, scipy, ta-lib, cvxpy)
+# are intentionally managed by Conda (see environment.yml).
 polars = ">=0.20.0"
 loguru = ">=0.7.0"
-numpy = ">=1.24.0"
-pandas = ">=2.0.0"
+# numpy and scipy moved to Conda
+pandas = "2.0.3"
 tushare = ">=1.2.89"
 deap = ">=1.4.0"
-lightgbm = ">=4.0.0"
+lightgbm = "4.0.0"
 # fastcluster and other C-extensions are installed via Conda in environment.yml
-# scipy present as lightweight dependency; heavy builds will be handled by Conda as needed
-scipy = "~1.17.0"
 tensorboardX = "~2.6.4"
 
 [tool.poetry.extras]
