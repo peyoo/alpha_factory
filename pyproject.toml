@@ -1,16 +1,20 @@
 [project]
 name = "alpha_factory"
 version = "0.1.0"
+description = "量化因子研发工厂"
+readme = "README.md"
+requires-python = ">=3.11"
 dependencies = [
-    "pandas",
-    "numpy",
+    "pandas>=2.0.3",
+    "numpy>=1.24.3",
     "quantstats",
     "cvxpy",
     "loguru",
+    "polars>=1.38.1",
 ]
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
     "ruff",
-    "pytest",
 ]
