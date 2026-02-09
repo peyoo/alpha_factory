@@ -14,18 +14,21 @@
 ✅ 主键唯一性保证
 """
 
-# ========== Step 1: 环境配置 ==========
-# 在 .env 中设置 TUSHARE_TOKEN
-# 例: TUSHARE_TOKEN=your_token_here
-
 import os
-os.environ["TUSHARE_TOKEN"] = "your_tushare_token"
-
-# ========== Step 2: 初始化服务 ==========
 from alpha_factory.data_provider import TushareDataService, DataProvider
 
-service = TushareDataService(is_vip=True)  # is_vip: 限流策略
-provider = DataProvider()
+# ========== Step 2: 初始化服务 ==========
+service = None
+provider = None
+
+def _init_services():
+    global service, provider
+    service = TushareDataService(is_vip=True)
+    provider = DataProvider()
+
+if __name__ == "__main__":
+    os.environ["TUSHARE_TOKEN"] = "your_tushare_token"
+    _init_services()
 
 # ========== Step 3: 全量初始化 (首次执行) ==========
 # 【关键】按日期全市场批量获取

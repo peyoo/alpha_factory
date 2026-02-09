@@ -21,7 +21,8 @@ def main():
 
     # 2. 提取表达式
     exprs = extract_expressions_from_csv(input_path)
-    if not exprs: return
+    if not exprs:
+        return
 
     factor_expr_map = {f"factor_{i + 1}": expr for i, expr in enumerate(exprs)}
     factor_names = list(factor_expr_map.keys())

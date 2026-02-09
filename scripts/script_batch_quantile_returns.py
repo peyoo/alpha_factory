@@ -4,6 +4,7 @@ import polars as pl
 
 from alpha_factory.data_provider import DataProvider
 from alpha_factory.data_provider.pool import main_small_pool
+from alpha_factory.evaluation.batch.returns import batch_quantile_returns
 from alpha_factory.gp.extra_terminal import add_extra_terminals
 from alpha_factory.gp.label import label_OO_for_tradable, label_OO_for_IC
 from alpha_factory.utils.schema import F

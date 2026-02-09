@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 # shim: compatibility layer for src/alpha_factory
 # Keep this minimal and temporary. Exports the alpha_factory package
 from importlib import import_module
