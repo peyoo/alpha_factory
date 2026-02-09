@@ -1,0 +1,41 @@
+# 1. 敏感信息
+.env
+*.pem
+*.key
+secrets/
+
+# 2. 大规模量化数据 (核心建议)
+# 防止 Copilot 尝试去理解几百兆的 Parquet 或 CSV
+data/raw/
+data/warehouse/
+*.parquet
+*.csv
+*.hdf5
+*.h5
+
+# 3. 运行日志与临时文件
+logs/
+*.log
+tmp/
+.cache/
+*.local
+output/
+output/**
+
+# 4. Python 环境与编译产物
+__pycache__/
+*.pyc
+.venv/
+env/
+build/
+dist/
+*.so
+
+# 5. 单元测试覆盖率报告
+htmlcov/
+.coverage
+.pytest_cache/
+
+# 6. IDE 配置文件 (可选)
+.idea/
+.vscode/

@@ -1,11 +1,60 @@
-.venv/
+# Python
 __pycache__/
-.python-version
-*.pyc
-.DS_Store
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-output/
-data/
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
 
+scripts/logs/
+scripts/runs/
+
+# Environment
 .env
+.venv/
+venv/
+ENV/
+config/*.toml
+
+# IDE settings
 .idea/
+.vscode/
+*.swp
+*.swo
+
+# Project Specific
+data/
+output/
+!data/.gitkeep
+!output/.gitkeep
+# Also ignore common alternate output dirs
+output_*/
+tmp_output/
+
+# Temporary Assets (临时性资产管理)
+# 快速原型和实验代码不提交
+scratch/
+*.tmp
+*.experiment
+
+# Mac
+.DS_Store

@@ -1,4 +1,4 @@
-name: UV CI
+name: uv CI
 
 on:
   push:
@@ -8,7 +8,11 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    name: ${{ matrix.os }} (python 3.11)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -16,14 +20,24 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
-          enable-cache: true # 开启缓存，下次运行只需几秒钟
+          enable-cache: true
 
       - name: Set up Python
-        run: uv python install
+        run: uv python install 3.11
 
       - name: Install dependencies
         run: uv sync --all-extras --dev
 
-      - name: Verify Environment
+      - name: Import check
         run: |
-          uv run python -c "import pandas, numpy, cvxpy, loguru; print('🚀 All Quant Stacks Loaded!')"
+          uv run python - <<'EOF'
+          import importlib
+          libs = ['cvxpy', 'quantstats', 'pandas', 'numpy']
+          for lib in libs:
+              try:
+                  mod = importlib.import_module(lib)
+                  print(f"✅ {lib} version: {getattr(mod, '__version__', 'unknown')}")
+              except Exception as e:
+                  print(f"❌ {lib} failed: {e}")
+                  exit(1)
+          EOF

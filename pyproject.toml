@@ -1,20 +1,61 @@
 [project]
 name = "alpha_factory"
 version = "0.1.0"
-description = "量化因子研发工厂"
+description = "Alpha Factory — quant research and factor engineering"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "pandas>=2.0.3",
-    "numpy>=1.24.3",
-    "quantstats",
-    "cvxpy",
-    "loguru",
-    "polars>=1.38.1",
+  "polars>=0.20.0",
+  "loguru>=0.7.0",
+  "numpy==1.24.3",
+  "pandas==2.0.3",
+  "quantstats~=0.0.81",
+  "tushare>=1.2.89",
+  "deap>=1.4.0",
+  "lightgbm==4.0.0",
+  "tensorboardX~=2.6.4",
+  "cvxpy",
 ]
 
-[dependency-groups]
-dev = [
-    "pytest>=7.0.0",
-    "ruff",
-]
+[tool.poetry]
+name = "alpha_factory"
+version = "0.1.0"
+description = "Alpha Factory — quant research and factor engineering"
+authors = ["you <you@example.com>"]
+readme = "README.md"
+packages = [ { include = "alpha" } ]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+polars = ">=0.20.0"
+loguru = ">=0.7.0"
+# Core numeric & analytics libs (migrated to uv)
+numpy = "1.24.3"
+pandas = "2.0.3"
+quantstats = "~0.0.81"
+tushare = ">=1.2.89"
+deap = ">=1.4.0"
+lightgbm = "4.0.0"
+cvxpy = "*"
+tensorboardX = "~2.6.4"
+
+[tool.poetry.extras]
+# Optional extras
+cuda = ["torch"]
+
+[tool.poetry.dev-dependencies]
+pytest = ">=7.0.0"
+pre-commit = ">=3.5.0"
+ruff = ">=0.1.0"
+black = "^23.1.0"
+
+[tool.poetry.scripts]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+# Notes:
+# - `ta-lib` removed from dependencies per migration to uv; heavy binary packages will be
+#   resolved by uv and, if necessary, built or provided as binary wheels.
+# - Keep core libs pinned to conservative versions to improve reproducibility.
