@@ -3,15 +3,15 @@ import polars as pl
 from loguru import logger
 from typing import Dict
 
-from alpha.data_provider import DataProvider
-from alpha.data_provider.pool import main_small_pool
-from alpha.data_provider.utils import extract_expressions_from_csv
-from alpha.evaluation.batch.cluster import batch_clustering
-from alpha.evaluation.batch.returns import batch_quantile_returns
-from alpha.gp.extra_terminal import add_extra_terminals
-from alpha.gp.label import label_OO_for_tradable
-from alpha.utils.config import settings
-from alpha.utils.schema import F
+from alpha_factory.data_provider import DataProvider
+from alpha_factory.data_provider.pool import main_small_pool
+from alpha_factory.data_provider.utils import extract_expressions_from_csv
+from alpha_factory.evaluation.batch.cluster import batch_clustering
+from alpha_factory.evaluation.batch.returns import batch_quantile_returns
+from alpha_factory.gp.extra_terminal import add_extra_terminals
+from alpha_factory.gp.label import label_OO_for_tradable
+from alpha_factory.utils.config import settings
+from alpha_factory.utils.schema import F
 
 
 def main():
