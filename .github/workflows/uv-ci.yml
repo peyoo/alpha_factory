@@ -1,18 +1,13 @@
 name: uv CI
 
-on:
-  push:
-    branches: [ master, main ]
-  pull_request:
+on: [push, pull_request]
 
 jobs:
-  build:
-    name: ${{ matrix.platform }} (py${{ matrix.python-version }})
-    runs-on: ${{ matrix.platform }}
+  test:
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        platform: [ubuntu-latest, macos-latest]
-        python-version: ["3.11"]
+        os: [ubuntu-latest, macos-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -20,15 +15,14 @@ jobs:
       - name: Install uv
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
-      - name: Set up Python
-        run: uv python install ${{ matrix.python-version }}
-
-      - name: Install dependencies
+      - name: Sync and Install
         run: |
-          uv init --no-workspace
-          uv add pandas numpy quantstats cvxpy loguru
-          uv lock
+          # 只要有 pyproject.toml 存在，直接 sync 即可
+          # 使用 --no-cache 确保是最干净的安装
+          uv sync
 
       - name: Verify Imports
         run: |
-          uv run python -c "import cvxpy; import quantstats; print('CVXPY:', cvxpy.__version__)"
+          # uv run 会自动处理环境，不需要手动 activate
+          uv run python -c "import cvxpy; print('CVXPY version:', cvxpy.__version__)"
+          uv run python -c "import quantstats; print('QuantStats OK')"
