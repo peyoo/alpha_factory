@@ -1,17 +1,13 @@
 from loguru import logger
 from typing import Dict
-import sys
 import polars as pl
 
-# 添加项目路径
-sys.path.insert(0, '/Users/yongpeng/Documents/github/alpha_factory')
-
-from alpha.data_provider import DataProvider
-from alpha.data_provider.pool import main_small_pool
-from alpha.evaluation.batch.turnover_decay import batch_calc_factor_turnover_by_autocorr
-from alpha.gp.extra_terminal import add_extra_terminals
-from alpha.gp.label import label_OO_for_tradable, label_OO_for_IC
-from alpha.utils.schema import F
+from alpha_factory.data_provider import DataProvider
+from alpha_factory.data_provider.pool import main_small_pool
+from alpha_factory.evaluation.batch.turnover_decay import batch_calc_factor_turnover_by_autocorr
+from alpha_factory.gp.extra_terminal import add_extra_terminals
+from alpha_factory.gp.label import label_OO_for_tradable, label_OO_for_IC
+from alpha_factory.utils.schema import F
 
 # ✓ 保留原始表达式与因子的映射
 exprs = [

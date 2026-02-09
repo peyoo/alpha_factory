@@ -2,20 +2,20 @@ from loguru import logger
 import importlib
 
 # 可用的替代/相关工具（确保这些模块在仓库中存在）
-from alpha.evaluation.backtest import daily_evolving as backtest_mod
-from alpha.evaluation.analysis.returns import show_report
-from alpha.data_provider.pool import main_small_pool
-from alpha.gp.extra_terminal import add_extra_terminals
+from alpha_factory.evaluation.backtest import daily_evolving as backtest_mod
+from alpha_factory.evaluation.analysis.returns import show_report
+from alpha_factory.data_provider.pool import main_small_pool
+from alpha_factory.gp.extra_terminal import add_extra_terminals
 
 # 尝试动态导入可能不存在的历史模块 top_n，避免在 import 时因 ImportError 中断
 backtest_top_n = None
 not_buyable_sellable = None
 try:
-    _mod = importlib.import_module("alpha.evaluation.backtest.top_n")
+    _mod = importlib.import_module("alpha_factory.evaluation.backtest.top_n")
     backtest_top_n = getattr(_mod, "backtest_top_n", None)
     not_buyable_sellable = getattr(_mod, "not_buyable_sellable", None)
 except Exception:
-    logger.debug("alpha.evaluation.backtest.top_n 模块在当前环境中不可用，已采用安全回退策略。")
+    logger.debug("alpha_factory.evaluation.backtest.top_n 模块在当前环境中不可用，已采用安全回退策略。")
 
 # 因子表达式：流动性加权动量减去波动率惩罚
 # 这里的逻辑是：值越大越好，所以 ascending=False
@@ -43,7 +43,7 @@ def main():
         # 若不存在历史 top_n 实现，则给出明确的提示并退出。
         # 在提示中引用 backtest_mod.__name__（daily_evolving）以展示可替代接口并避免静态检查警告
         raise RuntimeError(
-            "alpha.evaluation.backtest.top_n 模块不可用。\n"
+            "alpha_factory.evaluation.backtest.top_n 模块不可用。\n"
             f"请准备并传入 df_input（pl.DataFrame / pl.LazyFrame），然后调用 {backtest_mod.__name__}.backtest_daily_evolving(df_input, factor_col=..., ...) 。\n"
             "或者在你的环境中安装/提供 top_n 模块以恢复原先行为。"
         )
