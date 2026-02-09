@@ -1,28 +1,29 @@
-name: uv CI
+name: UV CI
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
 
 jobs:
-  test:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+  build:
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true # 开启缓存，下次运行只需几秒钟
 
-      - name: Sync and Install
-        run: |
-          # 只要有 pyproject.toml 存在，直接 sync 即可
-          # 使用 --no-cache 确保是最干净的安装
-          uv sync
+      - name: Set up Python
+        run: uv python install
 
-      - name: Verify Imports
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Verify Environment
         run: |
-          # uv run 会自动处理环境，不需要手动 activate
-          uv run python -c "import cvxpy; print('CVXPY version:', cvxpy.__version__)"
-          uv run python -c "import quantstats; print('QuantStats OK')"
+          uv run python -c "import pandas, numpy, cvxpy, loguru; print('🚀 All Quant Stacks Loaded!')"
