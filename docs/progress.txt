@@ -281,3 +281,4 @@ uv sync             # 同步并创建 .venv
 - 将 `uv.lock` 扩展到多平台锁（linux-64 / osx-64 / osx-arm64），并生成 `conda-lock.yml` 摘要（需 CI 或在对应平台上运行）；
 - 修复 backup 中脚本的 ruff 报错并将其纳回主树；
 - 生成一份正式的迁移报告 `docs/deps-audit.md`（更详细的依赖审计）。
+2026-02-09 22:16:38  refactor: start migration to src/ layout; branch=refactor/src-layout; shim alpha/__init__.py added; test=test_src_layout_smoke.py added

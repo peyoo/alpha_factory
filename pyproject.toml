@@ -23,7 +23,8 @@ version = "0.1.0"
 description = "Alpha Factory — quant research and factor engineering"
 authors = ["you <you@example.com>"]
 readme = "README.md"
-packages = [ { include = "alpha" } ]
+# Use src layout: source code is under src/alpha_factory
+packages = [ { include = "alpha_factory", from = "src" } ]
 
 [tool.poetry.dependencies]
 python = "^3.11"
