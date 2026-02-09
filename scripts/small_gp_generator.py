@@ -1,5 +1,5 @@
-from alpha.gp.small_cs_generator import SmallCSGenerator
+from alpha_factory.gp.small_cs_generator import SmallCSGenerator
 
 
 generator = SmallCSGenerator()
-generator.run(20,n_pop = 1000)
+generator.run(20, n_pop=1000)

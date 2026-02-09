@@ -3,12 +3,12 @@ from loguru import logger
 from typing import Dict
 
 # 添加项目路径
-from alpha.data_provider import DataProvider
-from alpha.data_provider.pool import main_small_pool
-from alpha.evaluation.batch.full_metrics import batch_full_metrics
-from alpha.gp.extra_terminal import add_extra_terminals
-from alpha.gp.label import label_OO_for_tradable, label_OO_for_IC
-from alpha.utils.schema import F
+from alpha_factory.data_provider import DataProvider
+from alpha_factory.data_provider.pool import main_small_pool
+from alpha_factory.evaluation.batch.full_metrics import batch_full_metrics
+from alpha_factory.gp.extra_terminal import add_extra_terminals
+from alpha_factory.gp.label import label_OO_for_tradable, label_OO_for_IC
+from alpha_factory.utils.schema import F
 
 
 def run_batch_factor_test():
