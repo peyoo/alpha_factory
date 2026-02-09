@@ -11,10 +11,10 @@ from datetime import datetime, timedelta
 
 from expr_codegen import codegen_exec
 
-from alpha.data_provider import TushareDataService
-from alpha.data_provider.stock_assets_manager import StockAssetsManager
-from alpha.utils.config import settings
-from alpha.utils.schema import F
+from alpha_factory.data_provider import TushareDataService
+from alpha_factory.data_provider.stock_assets_manager import StockAssetsManager
+from alpha_factory.utils.config import settings
+from alpha_factory.utils.schema import F
 
 
 class DataProvider:
