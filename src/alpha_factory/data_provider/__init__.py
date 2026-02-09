@@ -16,10 +16,10 @@
 from __future__ import annotations
 
 # 1. 基础服务与缓存管理 (L0/L1)
-from alpha.data_provider.tushare_service import TushareDataService
+from alpha_factory.data_provider.tushare_service import TushareDataService
 
 # 3. 统一读取接口 (L4)
-from alpha.data_provider.data_provider import DataProvider
+from alpha_factory.data_provider.data_provider import DataProvider
 
 # 显式暴露接口，方便 from alpha.data_provider import *
 __all__ = [
@@ -30,7 +30,7 @@ __all__ = [
 # --- 快速诊断信息 ---
 def info():
     """打印数据层核心状态简报"""
-    from alpha.utils.config import settings
+    from alpha_factory.utils.config import settings
     import polars as pl
 
     print("=" * 40)
