@@ -8,16 +8,15 @@ packages = [ { include = "alpha" } ]
 
 [tool.poetry.dependencies]
 python = "^3.11"
-# Core Python deps (prefer Poetry-managed). Heavy binary deps (numpy, scipy, ta-lib, cvxpy)
-# are intentionally managed by Conda (see environment.yml).
 polars = ">=0.20.0"
 loguru = ">=0.7.0"
-# numpy and scipy moved to Conda
+# Core numeric & analytics libs (migrated to uv)
+numpy = "1.24.3"
 pandas = "2.0.3"
+quantstats = "~0.0.81"
 tushare = ">=1.2.89"
 deap = ">=1.4.0"
 lightgbm = "4.0.0"
-# fastcluster and other C-extensions are installed via Conda in environment.yml
 tensorboardX = "~2.6.4"
 
 [tool.poetry.extras]
@@ -37,7 +36,6 @@ requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 # Notes:
-# - pyproject.toml keeps the packages that pip probe shows as installable/importable.
-# - Packages that failed pip install or were forced to Conda (e.g. ta-lib, cvxpy, pyarrow,
-#   scikit-learn variants, sympy in some cases) are placed into environment.yml's Conda deps.
-# - After conda audit we will reconcile and, if safe, move some back to Poetry-managed deps.
+# - `ta-lib` removed from dependencies per migration to uv; heavy binary packages will be
+#   resolved by uv and, if necessary, built or provided as binary wheels.
+# - Keep core libs pinned to conservative versions to improve reproducibility.
