@@ -3,7 +3,7 @@ from polars import when
 import polars_ols as pls
 from polars_ols.least_squares import OLSKwargs
 
-from alpha.utils.schema import F
+from alpha_factory.utils.schema import F
 
 # 配置 OLS 逻辑：丢弃空值（只在池内算），使用 SVD 增加数值稳定性
 _ols_kwargs = OLSKwargs(null_policy='drop', solve_method='svd')

@@ -4,7 +4,7 @@ import polars as pl
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from alpha.utils.schema import F
+from alpha_factory.utils.schema import F
 
 
 class Settings(BaseSettings):

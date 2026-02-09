@@ -3,7 +3,7 @@ from typing import Union, Dict
 import polars as pl
 from loguru import logger
 
-from alpha.utils.schema import F
+from alpha_factory.utils.schema import F
 
 
 def backtest_periodic_rebalance(

@@ -3,7 +3,7 @@ from typing import Union
 import numpy as np
 import polars as pl
 
-from alpha.utils.schema import F
+from alpha_factory.utils.schema import F
 
 
 def single_calc_decay_turnover(
