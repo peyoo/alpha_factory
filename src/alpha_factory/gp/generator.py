@@ -37,23 +37,23 @@ from expr_codegen.tool import ExprTool
 from loguru import logger
 import more_itertools
 
-from alpha.data_provider import DataProvider
+from alpha_factory.data_provider import DataProvider
 # 导入打过补丁的组件和基础工具
-from alpha.gp.base import population_to_exprs, filter_exprs, print_population, strings_to_sympy
-from alpha.gp.base import RET_TYPE, Expr
-from alpha.gp.dependence import DependenceManager
-from alpha.gp.ea import eaMuPlusLambda_NSGA2
-from alpha.gp.label import label_OO_for_IC, label_OO_for_tradable
-from alpha.patch.deap_patch import apply_deap_patches
-from alpha.patch.expr_codegen_patch import apply_expr_codegen_patches
-from alpha.polars.utils import CUSTOM_OPERATORS
-from alpha.utils.config import settings
+from alpha_factory.gp.base import population_to_exprs, filter_exprs, print_population, strings_to_sympy
+from alpha_factory.gp.base import RET_TYPE, Expr
+from alpha_factory.gp.dependence import DependenceManager
+from alpha_factory.gp.ea import eaMuPlusLambda_NSGA2
+from alpha_factory.gp.label import label_OO_for_IC, label_OO_for_tradable
+from alpha_factory.patch.deap_patch import apply_deap_patches
+from alpha_factory.patch.expr_codegen_patch import apply_expr_codegen_patches
+from alpha_factory.polars.utils import CUSTOM_OPERATORS
+from alpha_factory.utils.config import settings
+from alpha_factory.utils.schema import F
 
 from typing import TypeVar
 from polars import DataFrame as _pl_DataFrame
 from polars import LazyFrame as _pl_LazyFrame
 
-from alpha.utils.schema import F
 
 DataFrame = TypeVar("DataFrame", _pl_LazyFrame, _pl_DataFrame)
 

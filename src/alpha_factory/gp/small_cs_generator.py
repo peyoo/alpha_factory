@@ -3,8 +3,8 @@ from typing import Dict, Any
 
 from deap import gp
 
-from alpha.data_provider.pool import main_small_pool
-from alpha.evaluation.batch.full_metrics import batch_full_metrics
+from alpha_factory.data_provider.pool import main_small_pool
+from alpha_factory.evaluation.batch.full_metrics import batch_full_metrics
 from alpha.gp.base import Expr, dummy
 from alpha.gp.extra_terminal import add_extra_terminals
 from alpha.gp.generator import GPDeapGenerator

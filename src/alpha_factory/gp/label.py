@@ -6,7 +6,7 @@ from functools import partial
 import polars as pl
 from polars import when
 
-from alpha.utils.schema import F
+from alpha_factory.utils.schema import F
 
 
 def label_OO_for_IC(lf: pl.LazyFrame, label_window=1, mask_col=F.POOL_MASK) -> pl.LazyFrame:

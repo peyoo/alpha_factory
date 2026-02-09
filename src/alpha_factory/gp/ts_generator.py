@@ -2,10 +2,8 @@ import random
 
 from deap import gp
 
-from alpha.gp.base import Expr, dummy
-
-
-from alpha.gp.generator import GPDeapGenerator
+from alpha_factory.gp.base import Expr, dummy
+from alpha_factory.gp.generator import GPDeapGenerator
 
 
 def _random_window_int_timeseries() -> int:

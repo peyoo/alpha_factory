@@ -1,6 +1,6 @@
 import polars as pl
 
-from alpha.utils.schema import F
+from alpha_factory.utils.schema import F
 
 
 def add_extra_terminals(lf: pl.LazyFrame) -> pl.LazyFrame:

@@ -1,10 +1,10 @@
 from loguru import logger
 
-# 导入你的模块
-from alpha.data_provider import (
+# 导入你的模块 (已迁移到 src/alpha_factory)
+from alpha_factory.data_provider import (
     TushareDataService,
 )
-from alpha.utils.logger import setup_logger
+from alpha_factory.utils.logger import setup_logger
 
 setup_logger()
 

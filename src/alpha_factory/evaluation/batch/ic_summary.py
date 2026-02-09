@@ -3,7 +3,7 @@ from typing import List, Union
 import polars as pl
 from loguru import logger
 import time
-from alpha.utils.schema import F
+from alpha_factory.utils.schema import F
 
 
 def batch_ic_summary(

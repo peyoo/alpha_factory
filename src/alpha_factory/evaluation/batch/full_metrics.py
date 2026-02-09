@@ -4,7 +4,7 @@ import polars as pl
 import polars.selectors as cs
 from loguru import logger
 
-from alpha.utils.schema import F
+from alpha_factory.utils.schema import F
 
 def batch_full_metrics(
         df: Union[pl.DataFrame, pl.LazyFrame],

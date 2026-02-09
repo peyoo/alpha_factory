@@ -3,7 +3,7 @@ from typing import List, Union
 import polars as pl
 from loguru import logger
 import time
-from alpha.utils.schema import F
+from alpha_factory.utils.schema import F
 
 
 def batch_calc_factor_turnover(
@@ -559,41 +559,4 @@ def batch_calc_factor_turnover_by_autocorr(
         for f in factor_cols:
             col = lf_autocorr.get_column(f"{f}_autocorr")
             valid_count = col.is_not_null().sum()
-            avg_val = col.drop_nulls().mean() if valid_count > 0 else 0.0
-            logger.debug(f"  {f}: valid={valid_count}, avg_autocorr={avg_val:.6f}")
-
-        # --- 3. 聚合统计 ---
-        results = []
-        for f in factor_cols:
-            autocorr_series = lf_autocorr.get_column(f"{f}_autocorr").drop_nulls()
-
-            # 过滤有限值（排除 NaN/Inf）
-            autocorr_finite = autocorr_series.filter(autocorr_series.is_finite())
-
-            if autocorr_finite.len() > 0:
-                avg_autocorr = autocorr_finite.mean()
-                autocorr_std = autocorr_finite.std() or 0.0
-            else:
-                logger.warning(f"⚠️ {f} 的自相关性全部为 NaN/Inf，使用默认值 0.0")
-                avg_autocorr = 0.0
-                autocorr_std = 0.0
-
-            # 估计换手率：高自相关 → 低换手，低自相关 → 高换手
-            estimated_turnover = max(0.0, 1.0 - avg_autocorr)
-
-            results.append({
-                "factor": f,
-                "avg_autocorr": avg_autocorr,
-                "autocorr_std": autocorr_std,
-                "estimated_turnover": estimated_turnover,
-            })
-
-        result_df = pl.DataFrame(results).sort("estimated_turnover")
-
-        duration = time.perf_counter() - start_time
-        logger.success(f"✅ 因子自相关性计算完成 | 耗时: {duration:.4f}s | 因子数: {len(factor_cols)}")
-        return result_df
-
-    except Exception as e:
-        logger.exception(f"❌ 计算因子自相关性时崩溃: {e}")
-        return pl.DataFrame()
+            avg_val = col.drop_nulls().mean() if valid_count > 0

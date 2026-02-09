@@ -8,10 +8,10 @@ from typing import Literal, Union
 import polars as pl
 from loguru import logger
 
-from alpha.evaluation.batch.ic_summary import batch_ic_summary
-from alpha.evaluation.single.quantile_metric import single_calc_quantile_metrics
-from alpha.evaluation.single.turnover_decay import single_calc_decay_turnover
-from alpha.utils.schema import F
+from alpha_factory.evaluation.batch.ic_summary import batch_ic_summary
+from alpha_factory.evaluation.single.quantile_metric import single_calc_quantile_metrics
+from alpha_factory.evaluation.single.turnover_decay import single_calc_decay_turnover
+from alpha_factory.utils.schema import F
 
 
 def single_factor_alpha_analysis(

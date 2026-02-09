@@ -5,8 +5,8 @@ import pandas as pd
 import quantstats as qs
 from loguru import logger
 
-from alpha.utils.config import settings
-from alpha.utils.schema import F
+from alpha_factory.utils.config import settings
+from alpha_factory.utils.schema import F
 
 def show_report(df_daily: pl.DataFrame, factor = '',ret_col='NET_RET',show=True) -> dict:
     """

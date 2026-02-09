@@ -1,7 +1,8 @@
 import polars as pl
 from polars import when
 
-from alpha.utils.schema import F
+# Use new src layout package paths
+from alpha_factory.utils.schema import F
 
 
 def cs_mad_zscore_mask(x: pl.Expr, mask: pl.Expr = pl.col(F.POOL_MASK),fill_null=0.0) -> pl.Expr:

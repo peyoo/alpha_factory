@@ -3,7 +3,7 @@ from typing import List, Union
 import polars as pl
 from loguru import logger
 import time
-from alpha.utils.schema import F
+from alpha_factory.utils.schema import F
 
 def batch_calc_factor_ic_decay(
         df: Union[pl.DataFrame, pl.LazyFrame],
