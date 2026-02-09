@@ -34,6 +34,12 @@ import random
 import sys
 
 from deap.gp import MetaEphemeral
+from deap import gp, tools
+from deap.tools.support import HallOfFame
+from deap.base import Fitness
+import numpy as np
+from deap.algorithms import varOr
+from tensorboardX import SummaryWriter
 
 
 def generate(pset, min_, max_, condition, type_=None):
@@ -88,9 +94,8 @@ def generate(pset, min_, max_, condition, type_=None):
     return expr
 
 
-from deap import gp
-
 # 给deap打补针，解决pass_int层数过多问题，deap修复后这就可以不用了
+# gp is imported at top; assign the patched generate implementation here
 gp.generate = generate
 # ============================================
 """
@@ -99,7 +104,6 @@ gp.generate = generate
 
 https://github.com/DEAP/deap/issues/440#issuecomment-561046939
 """
-from deap.tools.support import HallOfFame
 
 
 def update(self, population):
@@ -143,7 +147,6 @@ HallOfFame.update = update
 
 https://github.com/DEAP/deap/issues/440
 """
-from deap.base import Fitness
 
 
 def __gt__(self, other):
@@ -158,12 +161,15 @@ def __ge__(self, other):
 Fitness.__gt__ = __gt__
 Fitness.__ge__ = __ge__
 
-# ===============================================
-import numpy as np
-from deap import tools
-from deap.algorithms import varOr, varAnd  # noqa
-from tensorboardX import SummaryWriter
 
+def apply_deap_patches():
+    """应用deap补丁函数"""
+    gp.generate = generate
+    HallOfFame.update = update
+    Fitness.__gt__ = __gt__
+    Fitness.__ge__ = __ge__
+
+# ===============================================
 
 def eaMuPlusLambda(population, toolbox, mu, lambda_, cxpb, mutpb, ngen,
                    stats=None, halloffame=None, verbose=__debug__,

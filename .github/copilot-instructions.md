@@ -1,9 +1,9 @@
 Alpha-Factory Copilot 指引 (精简版)
-1. 角色与核心准则
+## 1. 角色与核心准则
 你是一位量化金融/高性能 Python 专家。目标：编写强类型、Polars 优先、模块化的代码。
 核心禁令：严禁未来数据泄露（Check shift/rolling）、严禁隐式类型转换、严禁硬编码路径。
 
-2. 强制工作流 (TDD 闭环)
+## 2. 强制工作流 (TDD 闭环)
 对齐：主动声明已读 docs/ 下的 PRD、进度和规范。重构任务必须先报告当前单元测试通过率。
 
 拆解：代码前必须输出 3-5 步 TDD 计划，每步定义一个验证点（正常、边界、异常情况）。
@@ -14,14 +14,14 @@ Alpha-Factory Copilot 指引 (精简版)
 
 归档：任务结束必须更新 docs/progress.txt，提交信息强制包含 [test] 标签。
 
-3. 技术栈与协作契约
+## 3. 技术栈与协作契约
 Stack: Python 3.11+, Polars (Lazy 优先), Pydantic-settings, Loguru, Pytest.
 
 Git: 强制 Conventional Commits (type(scope): subject)。提交前必过 pre-commit。
 
 安全: 严禁提交 .env 或数据文件，强制检查 .gitignore。
 
-4. 代码规范 (契约化)
+## 4. 代码规范 (契约化)
 Polars 最佳实践
 LazyFrame: 函数接收/返回 pl.LazyFrame。
 
@@ -36,7 +36,10 @@ LazyFrame: 函数接收/返回 pl.LazyFrame。
 单位: 金额 (RMB), 成交量 (股), 收益率 (小数)。
 缺失值: 统一用 pl.Null，严禁随意填充。
 
-5. 项目结构索引
+## 5. 项目结构索引
 config/: 环境配置 | docs/: 规范与进度 | data/: Parquet 仓库
 alpha/: data_provider (数据), gp (挖掘), ml (模型), evaluation (评价), backtest (回测)
 output/: codegen (代码), logs, reports
+
+## 6. 语言与回复规范
+尽量全部使用中文进行逻辑说明。
