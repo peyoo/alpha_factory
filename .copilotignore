@@ -19,6 +19,8 @@ logs/
 tmp/
 .cache/
 *.local
+output/
+output/**
 
 # 4. Python 环境与编译产物
 __pycache__/

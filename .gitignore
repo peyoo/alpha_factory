@@ -46,6 +46,9 @@ data/
 output/
 !data/.gitkeep
 !output/.gitkeep
+# Also ignore common alternate output dirs
+output_*/
+tmp_output/
 
 # Temporary Assets (临时性资产管理)
 # 快速原型和实验代码不提交
