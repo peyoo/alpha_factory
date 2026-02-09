@@ -9,9 +9,9 @@ from expr_codegen.codes import sources_to_exprs
 from expr_codegen.tool import ExprTool
 from loguru import logger
 
-from alpha.polars.utils import CUSTOM_OPERATORS
-from alpha.utils.config import settings
-from alpha.utils.schema import F
+from alpha_factory.polars.utils import CUSTOM_OPERATORS
+from alpha_factory.utils.config import settings
+from alpha_factory.utils.schema import F
 
 
 def extract_expressions_from_csv(

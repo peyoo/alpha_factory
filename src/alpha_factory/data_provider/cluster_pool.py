@@ -6,7 +6,7 @@ import polars as pl
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 
-from alpha.utils.schema import F
+from alpha_factory.utils.schema import F
 
 
 def main_cluster_pool(lf: pl.LazyFrame, n_clusters: int = 5, target_cluster_idx: int = 0) -> pl.LazyFrame:

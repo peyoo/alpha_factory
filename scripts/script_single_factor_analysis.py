@@ -1,12 +1,12 @@
 from loguru import logger
 
-from alpha.data_provider import DataProvider
+from alpha_factory.data_provider import DataProvider
 
-from alpha.data_provider.pool import main_small_pool
-from alpha.evaluation.single.single import single_factor_alpha_analysis
-from alpha.gp.extra_terminal import add_extra_terminals
-from alpha.gp.label import label_OO_for_tradable, label_OO_for_IC
-from alpha.utils.schema import F
+from alpha_factory.data_provider.pool import main_small_pool
+from alpha_factory.evaluation.single.single import single_factor_alpha_analysis
+from alpha_factory.gp.extra_terminal import add_extra_terminals
+from alpha_factory.gp.label import label_OO_for_tradable, label_OO_for_IC
+from alpha_factory.utils.schema import F
 
 # expr = 'ts_corr(cs_rank_mask(CLOSE), cs_rank_mask(VOLUME), 20)'
 # 中性120日换手率因子表达式

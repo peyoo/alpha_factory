@@ -22,7 +22,7 @@ import os
 os.environ["TUSHARE_TOKEN"] = "your_tushare_token"
 
 # ========== Step 2: 初始化服务 ==========
-from alpha.data_provider import TushareDataService, DataProvider
+from alpha_factory.data_provider import TushareDataService, DataProvider
 
 service = TushareDataService(is_vip=True)  # is_vip: 限流策略
 provider = DataProvider()

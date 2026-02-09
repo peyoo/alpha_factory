@@ -30,9 +30,9 @@ from typing import Optional, Dict
 
 import polars as pl
 
-from alpha.utils.config import settings
-from alpha.utils.logger import logger
-from alpha.utils.schema import F
+from alpha_factory.utils.config import settings
+from alpha_factory.utils.logger import logger
+from alpha_factory.utils.schema import F
 
 
 class StockAssetsManager:
@@ -118,8 +118,8 @@ class StockAssetsManager:
             else:
                 # 1. 提取旧数据的 asset 和 __pos__
                 # 2. 将 snap 与旧数据合并。核心思路：
-                #    对于已有资产，我们要更新其属性，但保留旧位置。
-                #    所以我们先通过 join 拿到 snap 里的最新信息，关联到旧的位置上。
+                #    对于已有资产，我们要更新其属性，但保留舊位置。
+                #    所以我們先通過 join 拿到 snap 裡的最新信息，關聯到舊的位置上。
 
                 existing_base = self._df.select(F.ASSET).with_row_index("__pos__")
 

@@ -6,8 +6,8 @@ from typing import Optional, Union, List
 
 import polars as pl
 
-from alpha.utils.config import settings
-from alpha.utils.logger import logger
+from alpha_factory.utils.config import settings
+from alpha_factory.utils.logger import logger
 
 
 class TradeCalendarManager:

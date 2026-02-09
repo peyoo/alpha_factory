@@ -11,7 +11,7 @@
 
 import polars as pl
 
-from alpha.utils.schema import F
+from alpha_factory.utils.schema import F
 
 def main_small_pool(lf: pl.LazyFrame, small_num: int = 800, production=False) -> pl.LazyFrame:
     """

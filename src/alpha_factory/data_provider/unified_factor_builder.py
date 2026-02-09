@@ -8,11 +8,11 @@ import polars as pl
 import polars.selectors as cs
 from loguru import logger
 
-from alpha.utils.config import settings
-from alpha.data_provider.cache_manager import HDF5CacheManager
-from alpha.data_provider.stock_assets_manager import StockAssetsManager
-from alpha.data_provider.trade_calendar_manager import TradeCalendarManager
-from alpha.utils.schema import F
+from alpha_factory.utils.config import settings
+from alpha_factory.data_provider.cache_manager import HDF5CacheManager
+from alpha_factory.data_provider.stock_assets_manager import StockAssetsManager
+from alpha_factory.data_provider.trade_calendar_manager import TradeCalendarManager
+from alpha_factory.utils.schema import F
 
 
 class UnifiedFactorBuilder:

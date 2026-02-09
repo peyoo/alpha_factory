@@ -1,13 +1,13 @@
 from loguru import logger
 
-from alpha.data_provider import DataProvider
-from alpha.data_provider.pool import main_small_pool
-from alpha.evaluation.analysis.returns import show_report
-from alpha.evaluation.analysis.trades import analysis_trades
-from alpha.evaluation.backtest.daily_evolving import backtest_daily_evolving
-from alpha.gp.extra_terminal import add_extra_terminals
+from alpha_factory.data_provider import DataProvider
+from alpha_factory.data_provider.pool import main_small_pool
+from alpha_factory.evaluation.analysis.returns import show_report
+from alpha_factory.evaluation.analysis.trades import analysis_trades
+from alpha_factory.evaluation.backtest.daily_evolving import backtest_daily_evolving
+from alpha_factory.gp.extra_terminal import add_extra_terminals
 # 导入你的配置、字段库和回测函数
-from alpha.utils.schema import F
+from alpha_factory.utils.schema import F
 
 def run_factor_test():
     # --- 1. 数据加载 ---
