@@ -1,0 +1,16 @@
+[project]
+name = "alpha_factory"
+version = "0.1.0"
+dependencies = [
+    "pandas",
+    "numpy",
+    "quantstats",
+    "cvxpy",
+    "loguru",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "ruff",
+    "pytest",
+]
