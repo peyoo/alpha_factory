@@ -15,6 +15,7 @@ dependencies = [
   "lightgbm==4.0.0",
   "tensorboardX~=2.6.4",
   "cvxpy",
+  "fastcluster>=1.2.6",
 ]
 
 [tool.poetry]

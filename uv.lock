@@ -9,6 +9,7 @@ source = { editable = "." }
 dependencies = [
     { name = "cvxpy" },
     { name = "deap" },
+    { name = "fastcluster" },
     { name = "lightgbm" },
     { name = "loguru" },
     { name = "numpy" },
@@ -23,6 +24,7 @@ dependencies = [
 requires-dist = [
     { name = "cvxpy" },
     { name = "deap", specifier = ">=1.4.0" },
+    { name = "fastcluster", specifier = ">=1.2.6" },
     { name = "lightgbm", specifier = "==4.0.0" },
     { name = "loguru", specifier = ">=0.7.0" },
     { name = "numpy", specifier = "==1.24.3" },
@@ -372,6 +374,25 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c4/49/e5bc5231b0753b4b79df321f9a9013fad98066daf6bcc17ce5244b2cbd58/deap-1.4.3-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:8451c9856bf717dae31f8ef282f15f8230ecf8589fea2b1bc845ac178747645b", size = 135736, upload-time = "2025-05-04T12:30:40.042Z" },
     { url = "https://files.pythonhosted.org/packages/7d/fe/fc9d6426e268036de4740d046bb53430032fef58ea1a4affd07cf5eae642/deap-1.4.3-cp313-cp313-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:7b56cc88b7129332796489eb42f12f1a450ae6112722158a17b5a39c20d72ceb", size = 135908, upload-time = "2025-05-04T12:31:08.992Z" },
     { url = "https://files.pythonhosted.org/packages/9a/69/053e5e900a47280b4aaabed4af5fea522ed0c6badb854581050c614582d4/deap-1.4.3-cp313-cp313-win_amd64.whl", hash = "sha256:265fea2c4bc8b93871444721e4a4d96476ac2f5ff7a704140fa9be8112240d8d", size = 109791, upload-time = "2025-05-04T12:28:27.943Z" },
+]
+
+[[package]]
+name = "fastcluster"
+version = "1.2.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5d/b8/f143d907d93bd4a3dd51d07c4e79b37bedbfc2177f4949bfa0d6ba0af647/fastcluster-1.2.6.tar.gz", hash = "sha256:aab886efa7b6bba7ac124f4498153d053e5a08b822d2254926b7206cdf5a8aa6", size = 173773, upload-time = "2022-02-27T10:51:36.515Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7d/51/9a75a15df26f594112968f1de267762ccd3ac7da3492f2bb4df74ba9575e/fastcluster-1.2.6-cp311-cp311-macosx_10_9_universal2.whl", hash = "sha256:ce70c743490f6778b463524d1767a9ecccd31c8bd2dbb5739bb2174168c15d39", size = 69299, upload-time = "2023-03-05T12:52:33.892Z" },
+    { url = "https://files.pythonhosted.org/packages/27/47/ab525237529c7e6e39eb704700fd91db58bebeb6d5ca0076ef2fbaac5428/fastcluster-1.2.6-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:ac1b84d4b28456a379a71451d13995eb3242143452ce9c861f8913360de842a3", size = 38560, upload-time = "2023-03-05T12:52:37.184Z" },
+    { url = "https://files.pythonhosted.org/packages/5b/45/1c1a84efb8b6089b2318b4cbbf5a425a6a84b3d68549a4b5dd6d0eebd303/fastcluster-1.2.6-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:55b49f6033c45a28f93540847b495ed0f718b5c3f4fef446cf77e3726662e1d5", size = 40827, upload-time = "2023-03-05T12:52:40.032Z" },
+    { url = "https://files.pythonhosted.org/packages/69/e0/67a87022793dedfa4b38e9c6ad0ce2ee72668800d31544ea6eae11fa9b76/fastcluster-1.2.6-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:c1c776a4ec7594f47cd2e1e2da73a30134f1d402d7c93a81e3cb7c3d8e191173", size = 185205, upload-time = "2023-03-05T12:52:42.733Z" },
+    { url = "https://files.pythonhosted.org/packages/91/9f/4ed758b3607b6ce26d84b00c85fa59764a0f08199d9b18efaf9a58342cac/fastcluster-1.2.6-cp311-cp311-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:aca61d16435bb7aea3901939d7d7d7e36aff9bb538123e649166a3014b280054", size = 190720, upload-time = "2023-03-05T12:52:44.773Z" },
+    { url = "https://files.pythonhosted.org/packages/3d/e0/52fb1915461ee37498f84cf646ddbed92b2bf3e6f542cfccac1f6a813133/fastcluster-1.2.6-cp311-cp311-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:04ea4a68e0675072ca761bad33322a0e998cb43693fd41165bc420d7db40429a", size = 195001, upload-time = "2023-03-05T12:52:47.151Z" },
+    { url = "https://files.pythonhosted.org/packages/37/6e/96a4cee1ff1452edab1f8f5bf02a291d047761211be4b1c67296f6b01a4b/fastcluster-1.2.6-cp311-cp311-win32.whl", hash = "sha256:773043d5db2790e1ff2a4e1eae0b6a60afb2a93ad2c74897a56c80bc800db04f", size = 33169, upload-time = "2023-03-05T12:52:49.665Z" },
+    { url = "https://files.pythonhosted.org/packages/c5/2e/1406301a131605cd27cbdca56c81e59475433d5145fd05759f06cff5717c/fastcluster-1.2.6-cp311-cp311-win_amd64.whl", hash = "sha256:841d128daa6597d13781793eb482b0b566bbd58d2a9d1e2cf1b58838773beb14", size = 36305, upload-time = "2023-03-05T12:52:51.574Z" },
 ]
 
 [[package]]
