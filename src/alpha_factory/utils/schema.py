@@ -1,10 +1,10 @@
 from typing import Dict
 import polars as pl
 
-from enum import StrEnum
+from enum import Enum
 
 
-class F(StrEnum):
+class F(str, Enum):
     """
     Field Constants: 强类型字段库
     这些绝大部分都是data_provider输出数据框架中的标准列名。
