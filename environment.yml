@@ -31,7 +31,6 @@ dependencies:
     - quantstats~=0.0.81
     - pre-commit>=3.5.0
     - ruff>=0.1.0
-    - alphainspect
 
 # Notes:
 # - After dynamic probe, we may move more packages from pip: to top-level conda deps if
