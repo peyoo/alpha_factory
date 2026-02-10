@@ -64,7 +64,8 @@ class TushareDataService:
         if not self.token:
             raise ValueError("❌ TUSHARE_TOKEN 未设置，请在 settings 或环境变量中配置")
 
-        is_vip = settings.is_vip
+        # NOTE: 使用 Settings 中声明的 IS_VIP 字段（全大写）
+        is_vip = settings.IS_VIP
         self.rate_limiter = RateLimiter(is_vip)
         self.pro = self._init_tushare()
 
@@ -308,10 +309,41 @@ class TushareDataService:
             max_date = (
                 pl.scan_parquet(str(path)).select(pl.col(F.DATE).max()).collect().item()
             )
-            if max_date:
-                if isinstance(max_date, pl.Date):
-                    max_date = max_date.as_py()
+            # 兼容多种返回类型：None / datetime.date / datetime.datetime / str / pandas.Timestamp / numpy datetime
+            if max_date is None:
+                return None
+
+            # 优先处理 Python 原生 date
+            if isinstance(max_date, date):
                 return max_date.strftime("%Y%m%d")
+
+            # 处理 datetime.datetime
+            if isinstance(max_date, datetime):
+                return max_date.strftime("%Y%m%d")
+
+            # 处理字符串（可能为 'YYYY-MM-DD' 或 'YYYYMMDD'）
+            if isinstance(max_date, str):
+                try:
+                    if "-" in max_date:
+                        dt = datetime.fromisoformat(max_date)
+                    else:
+                        dt = datetime.strptime(max_date, "%Y%m%d")
+                    return dt.strftime("%Y%m%d")
+                except Exception:
+                    # 如果是长度为8的纯数字字符串，认为已是 YYYYMMDD
+                    if len(max_date) == 8 and max_date.isdigit():
+                        return max_date
+                    return None
+
+            # 兜底：尝试用 pandas.Timestamp 解析（适配 numpy.datetime64 等）
+            try:
+                import pandas as _pd
+
+                ts = _pd.Timestamp(max_date)
+                return ts.strftime("%Y%m%d")
+            except Exception:
+                return None
+
         except Exception as e:
             logger.error(f"获取仓库最大日期失败: {e}")
         return None
