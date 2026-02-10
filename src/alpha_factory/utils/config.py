@@ -1,135 +1,97 @@
+import os
 from pathlib import Path
-from typing import ClassVar, Dict, List, Any
+from typing import ClassVar, Dict
 import polars as pl
 
-try:
-    from pydantic import Field
-    from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from alpha_factory.utils.schema import F
 
-    from alpha_factory.utils.schema import F
 
-    class Settings(BaseSettings):
-        """
-        全功能 Settings，基于 pydantic-settings（当可用时使用）。
-        """
+def get_default_base() -> Path:
+    """动态定位项目根目录：环境变量 > 当前目录 > 安装目录"""
+    if env_base := os.getenv("QUANT_BASE_DIR"):
+        return Path(env_base).resolve()
 
-        BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
-        ENV_FILE: ClassVar[Path] = BASE_DIR / ".env"
+    cwd = Path.cwd()
+    if (cwd / "pyproject.toml").exists():
+        return cwd
 
-        DATA_DIR: Path = BASE_DIR / "data"
-        RAW_DATA_DIR: Path = DATA_DIR / "raw"
-        WAREHOUSE_DIR: Path = DATA_DIR / "warehouse"
+    # 适配 src/alpha_factory/core/ 布局，向上爬 4 层
+    return Path(__file__).resolve().parents[3]
 
-        OUTPUT_DIR: Path = BASE_DIR / "output"
-        LOG_DIR: Path = OUTPUT_DIR / "logs"
-        CODEGEN_DIR: Path = OUTPUT_DIR / "codegen"
-        GP_DEAP_DIR: Path = OUTPUT_DIR / "gp"
-        MODEL_DIR: Path = OUTPUT_DIR / "models"
-        REPORT_DIR: Path = OUTPUT_DIR / "reports"
 
-        TEMPLATE_PATH: Path = Path(__file__).resolve().parent / "custom_template.py.j2"
+class Settings(BaseSettings):
+    """
+    量化工厂核心配置中心 V1.0
+    """
 
-        SYSTEM_START_DATE: str = "20150101"
-        CALENDAR_FILENAME: str = "trade_calendar.parquet"
-        ASSETS_FILENAME: str = "stock_assets.parquet"
+    # --- 基础路径 ---
+    BASE_DIR: Path = Field(default_factory=get_default_base)
 
-        CALENDAR_SCHEMA: ClassVar[Dict] = {
-            "date": pl.Date,
-            "is_open": pl.Int8,
-            "exchange": pl.Utf8,
-        }
+    @property
+    def DATA_DIR(self) -> Path:
+        return self.BASE_DIR / "data"
 
-        ASSETS_SCHEMA: ClassVar[Dict] = {
-            F.ASSET: pl.Utf8,
-            "name": pl.Utf8,
-            "list_date": pl.Date,
-            "delist_date": pl.Date,
-            "exchange": pl.Utf8,
-            "market": pl.Utf8,
-        }
+    @property
+    def OUTPUT_DIR(self) -> Path:
+        return self.BASE_DIR / "output"
 
-        ASSETS_PATCHES: List[Dict[str, Any]] = []
+    # --- 数据子目录 ---
+    @property
+    def RAW_DATA_DIR(self) -> Path:
+        return self.DATA_DIR / "raw"
 
-        TUSHARE_TOKEN: str = Field(
-            default="YOUR_TOKEN_HERE", validation_alias="TUSHARE_TOKEN"
-        )
-        is_vip: bool = Field(default=True, validation_alias="IS_VIP")
+    @property
+    def WAREHOUSE_DIR(self) -> Path:
+        return self.DATA_DIR / "warehouse"
 
-        model_config = SettingsConfigDict(
-            env_file=ENV_FILE,
-            env_file_encoding="utf-8",
-            extra="ignore",
-            case_sensitive=False,
-        )
+    # --- 输出子目录 ---
+    @property
+    def LOG_DIR(self) -> Path:
+        return self.OUTPUT_DIR / "logs"
 
-        @property
-        def template_path_str(self) -> str:
-            return str(self.TEMPLATE_PATH)
+    # --- 业务常量 ---
+    SYSTEM_START_DATE: str = "20150101"
+    TUSHARE_TOKEN: str = Field(
+        default="YOUR_TOKEN_HERE", validation_alias="TUSHARE_TOKEN"
+    )
+    IS_VIP: bool = Field(default=True, validation_alias="IS_VIP")
 
-        def make_dirs(self):
-            for path in [
-                self.RAW_DATA_DIR,
-                self.WAREHOUSE_DIR,
-                self.LOG_DIR,
-                self.CODEGEN_DIR,
-                self.GP_DEAP_DIR,
-                self.MODEL_DIR,
-                self.REPORT_DIR,
-            ]:
-                path.mkdir(parents=True, exist_ok=True)
+    # --- Schema 定义 ---
+    CALENDAR_SCHEMA: ClassVar[Dict] = {
+        "date": pl.Date,
+        "is_open": pl.Int8,
+        "exchange": pl.Utf8,
+    }
 
-    settings = Settings()
-    settings.make_dirs()
+    ASSETS_SCHEMA: ClassVar[Dict] = {
+        F.ASSET: pl.Utf8,
+        "name": pl.Utf8,
+        "list_date": pl.Date,
+        "delist_date": pl.Date,
+        "exchange": pl.Utf8,
+        "market": pl.Utf8,
+    }
 
-except Exception:
-    # Fallback minimal settings when pydantic is not installed (used for lightweight tests)
-    from alpha_factory.utils.schema import F  # local import
+    # --- Pydantic 配置 ---
+    model_config = SettingsConfigDict(
+        env_prefix="QUANT_",
+        # 显式指向根目录下的 .env，防止跨目录调用时找不到
+        env_file=str(get_default_base() / ".env"),
+        extra="ignore",
+    )
 
-    class Settings:
-        BASE_DIR = Path(__file__).resolve().parent.parent.parent
-        DATA_DIR = BASE_DIR / "data"
-        RAW_DATA_DIR = DATA_DIR / "raw"
-        WAREHOUSE_DIR = DATA_DIR / "warehouse"
-        OUTPUT_DIR = BASE_DIR / "output"
-        LOG_DIR = OUTPUT_DIR / "logs"
-        CODEGEN_DIR = OUTPUT_DIR / "codegen"
-        GP_DEAP_DIR = OUTPUT_DIR / "gp"
-        MODEL_DIR = OUTPUT_DIR / "models"
-        REPORT_DIR = OUTPUT_DIR / "reports"
-        TEMPLATE_PATH = Path(__file__).resolve().parent / "custom_template.py.j2"
+    def make_dirs(self):
+        """初始化必要的物理目录"""
+        paths = [self.RAW_DATA_DIR, self.WAREHOUSE_DIR, self.LOG_DIR]
+        for path in paths:
+            path.mkdir(parents=True, exist_ok=True)
 
-        SYSTEM_START_DATE = "20150101"
-        CALENDAR_FILENAME = "trade_calendar.parquet"
-        ASSETS_FILENAME = "stock_assets.parquet"
 
-        CALENDAR_SCHEMA = {"date": pl.Date, "is_open": pl.Int8, "exchange": pl.Utf8}
-        ASSETS_SCHEMA = {
-            F.ASSET: pl.Utf8,
-            "name": pl.Utf8,
-            "list_date": pl.Date,
-            "delist_date": pl.Date,
-            "exchange": pl.Utf8,
-            "market": pl.Utf8,
-        }
+# 实例化单例
+settings = Settings()
+# 启动时自动创建目录（可选，也可以放在 CLI 的初始化逻辑里）
+settings.make_dirs()
 
-        ASSETS_PATCHES = []
-        TUSHARE_TOKEN = "YOUR_TOKEN_HERE"
-        is_vip = True
-
-        def template_path_str(self) -> str:
-            return str(self.TEMPLATE_PATH)
-
-        def make_dirs(self):
-            for path in [
-                self.RAW_DATA_DIR,
-                self.WAREHOUSE_DIR,
-                self.LOG_DIR,
-                self.CODEGEN_DIR,
-                self.GP_DEAP_DIR,
-                self.MODEL_DIR,
-                self.REPORT_DIR,
-            ]:
-                path.mkdir(parents=True, exist_ok=True)
-
-    settings = Settings()
-    settings.make_dirs()
+__all__ = ["settings"]
