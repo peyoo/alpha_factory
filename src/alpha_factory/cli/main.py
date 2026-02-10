@@ -1,10 +1,14 @@
 import typer
+from alpha_factory.cli.data import data_app
 
 # 创建 Typer 实例，这会让 AI 自动生成完美的 --help 文档
 app = typer.Typer(
     help="Alpha Factory: 厂长的量化核心指令集。请遵循宪法，通过此工具与内核交互。",
     rich_markup_mode="rich",
 )
+
+# 注册 data 子命令
+app.add_typer(data_app, name="data", help="数据子命令：包含数据同步/更新相关的命令。")
 
 
 @app.command()

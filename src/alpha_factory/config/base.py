@@ -53,6 +53,8 @@ class Settings(BaseSettings):
 
     # --- 业务常量 ---
     SYSTEM_START_DATE: str = "20150101"
+    CALENDAR_FILENAME: str = "trade_calendar.parquet"
+    ASSETS_FILENAME: str = "stock_assets.parquet"
     TUSHARE_TOKEN: str = Field(
         default="YOUR_TOKEN_HERE", validation_alias="TUSHARE_TOKEN"
     )
