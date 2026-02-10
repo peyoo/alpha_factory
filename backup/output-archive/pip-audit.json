@@ -1,0 +1,165 @@
+{
+  "alphainspect": {
+    "verdict": "pip-install-failed",
+    "note": "pip install failed",
+    "log": "output/pip-logs/alphainspect.log"
+  },
+  "cvxpy": {
+    "verdict": "conda-forced",
+    "note": "Forced to conda (TA-Lib/cvxpy rules)"
+  },
+  "deap": {
+    "verdict": "poetry",
+    "note": "installed and import ok",
+    "log": "output/pip-logs/deap.log"
+  },
+  "deap>=1.4.0": {
+    "verdict": "poetry",
+    "note": "installed and import ok",
+    "log": "output/pip-logs/deap>=1.4.0.log"
+  },
+  "fastcluster": {
+    "verdict": "poetry",
+    "note": "installed and import ok",
+    "log": "output/pip-logs/fastcluster.log"
+  },
+  "fastcluster~=1.3.0": {
+    "verdict": "pip-install-no-import",
+    "note": "installed but import failed",
+    "log": "output/pip-logs/fastcluster~=1.3.0.log"
+  },
+  "lightgbm": {
+    "verdict": "poetry",
+    "note": "installed and import ok",
+    "log": "output/pip-logs/lightgbm.log"
+  },
+  "lightgbm>=4.0.0": {
+    "verdict": "poetry",
+    "note": "installed and import ok",
+    "log": "output/pip-logs/lightgbm>=4.0.0.log"
+  },
+  "loguru": {
+    "verdict": "poetry",
+    "note": "installed and import ok",
+    "log": "output/pip-logs/loguru.log"
+  },
+  "loguru>=0.7.0": {
+    "verdict": "poetry",
+    "note": "installed and import ok",
+    "log": "output/pip-logs/loguru>=0.7.0.log"
+  },
+  "more-itertools~=10.8.0": {
+    "verdict": "pip-install-no-import",
+    "note": "installed but import failed",
+    "log": "output/pip-logs/more-itertools~=10.8.0.log"
+  },
+  "numpy": {
+    "verdict": "poetry",
+    "note": "installed and import ok",
+    "log": "output/pip-logs/numpy.log"
+  },
+  "numpy>=1.24.0": {
+    "verdict": "poetry",
+    "note": "installed and import ok",
+    "log": "output/pip-logs/numpy>=1.24.0.log"
+  },
+  "pandas": {
+    "verdict": "poetry",
+    "note": "installed and import ok",
+    "log": "output/pip-logs/pandas.log"
+  },
+  "pandas>=2.0.0": {
+    "verdict": "poetry",
+    "note": "installed and import ok",
+    "log": "output/pip-logs/pandas>=2.0.0.log"
+  },
+  "polars": {
+    "verdict": "poetry",
+    "note": "installed and import ok",
+    "log": "output/pip-logs/polars.log"
+  },
+  "polars-ta>=0.1.0": {
+    "verdict": "pip-install-failed",
+    "note": "pip install failed",
+    "log": "output/pip-logs/polars-ta>=0.1.0.log"
+  },
+  "polars>=0.20.0": {
+    "verdict": "poetry",
+    "note": "installed and import ok",
+    "log": "output/pip-logs/polars>=0.20.0.log"
+  },
+  "pre-commit>=3.5.0": {
+    "verdict": "pip-install-no-import",
+    "note": "installed but import failed",
+    "log": "output/pip-logs/pre-commit>=3.5.0.log"
+  },
+  "pyarrow>=14.0.0  # Required for Polars parquet support": {
+    "verdict": "pip-install-failed",
+    "note": "pip install failed",
+    "log": "output/pip-logs/pyarrow>=14.0.0  # Required for Polars parquet support.log"
+  },
+  "pydantic-settings>=2.0.0": {
+    "verdict": "pip-install-no-import",
+    "note": "installed but import failed",
+    "log": "output/pip-logs/pydantic-settings>=2.0.0.log"
+  },
+  "pydantic~=2.11.7": {
+    "verdict": "pip-install-no-import",
+    "note": "installed but import failed",
+    "log": "output/pip-logs/pydantic~=2.11.7.log"
+  },
+  "pytest>=7.0.0": {
+    "verdict": "poetry",
+    "note": "installed and import ok",
+    "log": "output/pip-logs/pytest>=7.0.0.log"
+  },
+  "quantstats~=0.0.81": {
+    "verdict": "pip-install-no-import",
+    "note": "installed but import failed",
+    "log": "output/pip-logs/quantstats~=0.0.81.log"
+  },
+  "ruff>=0.1.0": {
+    "verdict": "poetry",
+    "note": "installed and import ok",
+    "log": "output/pip-logs/ruff>=0.1.0.log"
+  },
+  "scikit-learn>=1.3.0  # Often needed for utils": {
+    "verdict": "pip-install-failed",
+    "note": "pip install failed",
+    "log": "output/pip-logs/scikit-learn>=1.3.0  # Often needed for utils.log"
+  },
+  "scipy": {
+    "verdict": "poetry",
+    "note": "installed and import ok",
+    "log": "output/pip-logs/scipy.log"
+  },
+  "scipy~=1.17.0": {
+    "verdict": "pip-install-no-import",
+    "note": "installed but import failed",
+    "log": "output/pip-logs/scipy~=1.17.0.log"
+  },
+  "sympy~=1.14.0": {
+    "verdict": "pip-install-no-import",
+    "note": "installed but import failed",
+    "log": "output/pip-logs/sympy~=1.14.0.log"
+  },
+  "talib": {
+    "verdict": "conda-forced",
+    "note": "Forced to conda (TA-Lib/cvxpy rules)"
+  },
+  "tensorboardX": {
+    "verdict": "poetry",
+    "note": "installed and import ok",
+    "log": "output/pip-logs/tensorboardX.log"
+  },
+  "tensorboardx~=2.6.4": {
+    "verdict": "pip-install-no-import",
+    "note": "installed but import failed",
+    "log": "output/pip-logs/tensorboardx~=2.6.4.log"
+  },
+  "tushare>=1.2.89": {
+    "verdict": "poetry",
+    "note": "installed and import ok",
+    "log": "output/pip-logs/tushare>=1.2.89.log"
+  }
+}
