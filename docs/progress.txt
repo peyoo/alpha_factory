@@ -1,8 +1,8 @@
 # 项目进度 (Project Progress)
 
 ## 状态总览
-*   **最后更新**: 2026-02-07
-*   **当前阶段**: 数据接入层 V2 完整实现，采用四层 ETL 架构。池子定义改进（先过滤后排名）已完成，解决了嵌套因子性能差问题。准备全面回测验证。
+*   **最后更新**: 2026-02-10
+*   **当前阶段**: 数据接入层 V2 完整实现，次要修复与 CLI 增强已合并。
 
 ## 已完成 (Completed)
 ### 1. 项目初始化
@@ -246,42 +246,17 @@ inspector.print_report(report)
 - `output/reports/ALPHAINSPECT_IMPLEMENTATION.md` - 实现细节
 - `output/reports/ALPHAINSPECT_FINAL_SUMMARY.md` - 最终总结
 
-### 迁移记录（uv） - 2026-02-09
-// 备份: docs/progress.txt 修改前已复制为 docs/progress.txt.bak
-// 修改说明: 将用户可见运行示例中所有 `poetry` 用法替换为 `uv`，并更新迁移记录措辞。[test]
+### 最近更新（2026-02-10）
+- [√] 修复 `TushareDataService` 中对 `settings` 的字段访问：统一使用 `TUSHARE_TOKEN` 和 `IS_VIP`（原先小写访问已修正）。
+- [√] 重构 Polars 日期兼容逻辑：在 `get_latest_date_from_warehouse` 中放弃 `pl.Date.as_py()`，改为使用标准库 `datetime.date`/`datetime` 检查和格式化，增加对 `str`、`pandas.Timestamp` 的兜底解析，解决类型检查警告并增强兼容性。
+- [√] 在 CLI 中新增 `data` 子命令（`src/alpha_factory/cli/data.py`），包含 `sync` 与 `update`，默认将异常直接抛给用户以便手动处理环境/依赖问题；并将 `data_app` 注册到主命令行（`cli/main.py`）。
+- [√] 优化依赖：`pyproject.toml` 添加/确认 `pyarrow>=14.0.0` 并将 HDF5 后端依赖指定为 `tables>=3.8.0`（便于本地/CI 环境安装）。
+- [√] 增加 CLI 工具辅助文件 `src/alpha_factory/cli/utils.py`（提供 `get_tushare_token` 与 Typer 日期回调 `validate_date_str`）。
+- [Test] 已在本地运行 smoke test：`uv run quant data sync 20240101 --end-date 20240105`，数据分片同步与 Parquet 因子构建顺利完成（短区间验证通过）。
 
-迁移记录（uv） - 2026-02-09
-- 迁移分支: `chore/migrate-to-uv`
-- 迁移目的: 从 Poetry/Conda 混合管理迁移到 `uv`（统一 pip wheel 管理）。
-- 备份位置: `backup/migrate-to-uv/`（包含 `environment.yml`, `pyproject.toml`, 原 `poetry.lock`（已归档），以及探测脚本 `scripts/probe_deps.sh`, `scripts/merge_probe_results.py` 等）。
 
-迁移流程要点与结果：
-- 步骤: 更新 `pyproject.toml`（移除 `ta-lib`，增加 `cvxpy` 到依赖），生成 `uv.lock`，运行 `uv sync`，并在 `uv` 创建的 `.venv` 中做导入验证。原 `poetry` 示例已替换为 `uv` 对应命令。
-- uv sync 耗时（wall-clock）: 26.914396 秒（见 `output/uv-sync.log`）。
-- `uv.lock` 中关键包版本:
-  - `quantstats`: 0.0.81
-  - `cvxpy`: 1.7.5
-- 导入验证（在 `.venv` 中运行）:
-  - quantstats: 0.0.81
-  - cvxpy: 1.7.5
-  - 结果保存至 `output/import-test.log`。
-
-注意与后续工作项：
-- 为顺利提交，我将原有的 Conda 探测脚本与一些脚本移动到 `backup/migrate-to-uv/scripts/`。这些文件在暂存/提交时触发了 pre-commit 的 ruff 检查；为避免阻塞迁移提交，针对这些备份文件使用了一次性跳过 pre-commit 的提交（`--no-verify`）。若你希望把这些脚本恢复到主树并修复 lint 错误，我可以把相关问题列成清单并逐一修复。
-- `environment.yml` 已保留在 `backup/migrate-to-uv/environment.yml` 作为历史参考，未做物理删除。
-
-复现说明（一键命令示例）：
-```bash
-# 假设你已安装 uv 并位于仓库根
-uv init             # 如果尚未初始化
-uv lock             # 生成/更新 uv.lock
-uv sync             # 同步并创建 .venv
-.venv/bin/python -c "import quantstats, cvxpy; print(quantstats.__version__, cvxpy.__version__)"
+```text
+Next steps:
+- 若需，创建 Pull Request 并在远端 CI 上跑完整构建与测试。
+- 在 README 或 docs 中补充关于安装 `tables`/`pyarrow` 在 macOS 上的注意事项（例如：优先使用 conda 或先安装 hdf5）。
 ```
-
-已完成：`uv.lock`、`output/uv-sync.log`、`output/import-test.log`、`backup/migrate-to-uv/`（备份）均已生成并提交到本地分支（未 push）。
-
-如需我继续：我可以（可选）
-- 将 `uv.lock` 扩展到多平台锁（linux-64 / osx-64 / osx-arm64），并生成 `conda-lock.yml` 摘要（需 CI 或在对应平台上运行）；
-- 修复 backup 中脚本的 ruff 报错并将其纳回主树；
-- 生成一份正式的迁移报告 `docs/deps-audit.md`（更详细的依赖审计）。
