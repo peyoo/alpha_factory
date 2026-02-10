@@ -22,6 +22,7 @@ StockAssetsManager
 
 实现依赖：polars, threading, pathlib, alpha.utils.config.settings
 """
+
 from __future__ import annotations
 import datetime
 import threading
@@ -87,9 +88,11 @@ class StockAssetsManager:
 
         # 3. 预处理 Exchange 为分类变量（节省空间并提升计算效率）
         # if "exchange" in self._df.columns:
-        self._df = self._df.with_columns([
-            pl.col("exchange").cast(pl.Categorical),
-            pl.col('market').cast(pl.Categorical)]
+        self._df = self._df.with_columns(
+            [
+                pl.col("exchange").cast(pl.Categorical),
+                pl.col("market").cast(pl.Categorical),
+            ]
         )
 
     def get_asset_mapping(self) -> Dict[str, int]:
@@ -124,11 +127,9 @@ class StockAssetsManager:
                 existing_base = self._df.select(F.ASSET).with_row_index("__pos__")
 
                 # 更新已有资产属性
-                updated_existing = (
-                    existing_base
-                    .join(snap, on=F.ASSET, how="left")  # 此时 snap 里的新属性被带入旧位置
-                    .cast(self.schema)
-                )
+                updated_existing = existing_base.join(
+                    snap, on=F.ASSET, how="left"
+                ).cast(self.schema)  # 此时 snap 里的新属性被带入旧位置
 
                 # 获取真正的新资产
                 new_assets = snap.join(existing_base, on=F.ASSET, how="anti")
@@ -145,11 +146,9 @@ class StockAssetsManager:
         # 写盘前必须将 Enum/Categorical 转回 Utf8 以保持 Parquet 的通用兼容性
         temp_path = self.path.with_suffix(".tmp")
         (
-            self._df.with_columns([
-                pl.col(F.ASSET).cast(pl.Utf8),
-                pl.col("exchange").cast(pl.Utf8)
-            ])
-            .write_parquet(temp_path, compression="snappy")
+            self._df.with_columns(
+                [pl.col(F.ASSET).cast(pl.Utf8), pl.col("exchange").cast(pl.Utf8)]
+            ).write_parquet(temp_path, compression="snappy")
         )
         temp_path.replace(self.path)  # 原子替换
 
@@ -165,21 +164,23 @@ class StockAssetsManager:
         # 2. 转换为 DataFrame 并格式化日期
         patch_df = (
             pl.DataFrame(patches_data)
-            .with_columns([
-                pl.col("list_date").str.to_date("%Y%m%d", strict=False),
-                pl.col("delist_date").str.to_date("%Y%m%d", strict=False)
-            ])
+            .with_columns(
+                [
+                    pl.col("list_date").str.to_date("%Y%m%d", strict=False),
+                    pl.col("delist_date").str.to_date("%Y%m%d", strict=False),
+                ]
+            )
             .cast(self.schema)  # 💡 确保补丁列类型与主表完全一致
         )
 
         # 3. 智能合并逻辑：
         # 使用 left_anti join 找出那些“名录里还没有”的补丁
-        new_patches = patch_df.join(
-            current_df.select(F.ASSET), on=F.ASSET, how="anti"
-        )
+        new_patches = patch_df.join(current_df.select(F.ASSET), on=F.ASSET, how="anti")
 
         if new_patches.height > 0:
-            logger.info(f"🩹 正在为名录打补丁，新增 {new_patches.height} 条缺失标的: {new_patches[F.ASSET].to_list()}")
+            logger.info(
+                f"🩹 正在为名录打补丁，新增 {new_patches.height} 条缺失标的: {new_patches[F.ASSET].to_list()}"
+            )
             # 合并新补丁并返回
             return pl.concat([current_df, new_patches])
 
@@ -196,6 +197,7 @@ class StockAssetsManager:
 
         try:
             import tushare as ts
+
             token = getattr(settings, "TUSHARE_TOKEN", None)
             if not token:
                 raise ValueError("TUSHARE_TOKEN 未配置")
@@ -206,7 +208,7 @@ class StockAssetsManager:
 
             # 分别获取上市、退市、暂停上市标的，消除生存者偏差
             parts = []
-            for status in ['L', 'D', 'P']:
+            for status in ["L", "D", "P"]:
                 df_pd = pro.stock_basic(list_status=status, fields=fields)
                 if df_pd is not None and not df_pd.empty:
                     parts.append(pl.from_pandas(df_pd))
@@ -217,14 +219,18 @@ class StockAssetsManager:
             # 合并并清理格式
             snapshot = (
                 pl.concat(parts)
-                .select([
-                    pl.col("ts_code").str.strip_chars().alias(F.ASSET),  # 2. 强力去除两端空格
-                    pl.col("name").str.strip_chars(),
-                    pl.col("list_date").str.to_date("%Y%m%d", strict=False),
-                    pl.col("delist_date").str.to_date("%Y%m%d", strict=False),
-                    pl.col("exchange"),
-                    pl.col("market"),
-                ])
+                .select(
+                    [
+                        pl.col("ts_code")
+                        .str.strip_chars()
+                        .alias(F.ASSET),  # 2. 强力去除两端空格
+                        pl.col("name").str.strip_chars(),
+                        pl.col("list_date").str.to_date("%Y%m%d", strict=False),
+                        pl.col("delist_date").str.to_date("%Y%m%d", strict=False),
+                        pl.col("exchange"),
+                        pl.col("market"),
+                    ]
+                )
                 .unique(subset=F.ASSET)
             )
 

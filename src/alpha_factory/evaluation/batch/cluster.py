@@ -9,11 +9,11 @@ from scipy.spatial.distance import squareform
 
 
 def batch_clustering(
-        df: Union[pl.DataFrame, pl.LazyFrame],
-        factors: Union[str, List[str]] = r"^factor_.*",
-        threshold: float = 0.8,
-        method: str = "average",
-        sample_n: Optional[int] = None
+    df: Union[pl.DataFrame, pl.LazyFrame],
+    factors: Union[str, List[str]] = r"^factor_.*",
+    threshold: float = 0.8,
+    method: str = "average",
+    sample_n: Optional[int] = None,
 ) -> dict[str, int] | dict[Any, Any] | tuple[dict[str, int], dict[int, list]]:
     """
     因子聚类分析核心函数：识别并归类逻辑冗余的因子。
@@ -51,26 +51,30 @@ def batch_clustering(
             factor_df = lf.select(selector).collect()
             actual_n = min(sample_n, factor_df.height)
             factor_df = factor_df.sample(n=actual_n, seed=42)
-            logger.info(f"📊 因子聚类采样：已从 {lf.select(pl.len()).collect().item()} 行中抽取 {actual_n} 行")
+            logger.info(
+                f"📊 因子聚类采样：已从 {lf.select(pl.len()).collect().item()} 行中抽取 {actual_n} 行"
+            )
         else:
             factor_df = lf.select(selector).collect()
             logger.info(f"📊 因子聚类全量计算：共计 {factor_df.height} 行数据")
     except Exception as e:
         logger.error(f"❌ 数据提取失败: {e}")
-        return {},{}
+        return {}, {}
 
     # 3. 边界条件检查
     if factor_df.width < 1:
         logger.warning("⚠️ 未匹配到任何因子列，请检查 selector 参数")
-        return {},{}
+        return {}, {}
 
     if factor_df.width == 1:
         logger.info("ℹ️ 仅有一个因子，跳过聚类")
-        return {factor_df.columns[0]: 1},{1: [factor_df.columns[0]]}
+        return {factor_df.columns[0]: 1}, {1: [factor_df.columns[0]]}
 
     # 4. 数据预处理：剔除方差过小的常数因子
     stats = factor_df.std()
-    valid_cols = [col for col in factor_df.columns if (stats.get_column(col)[0] or 0) > 1e-9]
+    valid_cols = [
+        col for col in factor_df.columns if (stats.get_column(col)[0] or 0) > 1e-9
+    ]
     invalid_count = factor_df.width - len(valid_cols)
     if invalid_count > 0:
         logger.warning(f"🚫 已剔除 {invalid_count} 个常数因子 (方差 ≈ 0)")
@@ -87,7 +91,9 @@ def batch_clustering(
     # 6. 计算斯皮尔曼秩相关性 (Spearman Rank Correlation)
     # 使用秩变换 (rank) 后计算皮尔逊相关系数，即为斯皮尔曼相关系数
     logger.debug(f"🔍 正在计算 {len(valid_cols)} 个因子的相关性矩阵...")
-    corr_matrix = cleaned_df.select([pl.col(c).rank() for c in valid_cols]).corr().to_numpy()
+    corr_matrix = (
+        cleaned_df.select([pl.col(c).rank() for c in valid_cols]).corr().to_numpy()
+    )
     corr_matrix = np.nan_to_num(corr_matrix, nan=0.0)
 
     # 7. 构建距离矩阵 (Distance Matrix)
@@ -107,7 +113,7 @@ def batch_clustering(
         Z = fastcluster.linkage(dist_vec, method=method)
 
         # 切割聚类树，得到标签。t = 1 - threshold 为切割高度
-        labels = fcluster(Z, t=1 - threshold, criterion='distance')
+        labels = fcluster(Z, t=1 - threshold, criterion="distance")
     except Exception as e:
         logger.error(f"❌ 层次聚类算法崩溃: {e}")
         return {col: i + 1 for i, col in enumerate(factor_df.columns)}

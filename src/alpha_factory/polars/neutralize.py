@@ -6,13 +6,15 @@ from polars_ols.least_squares import OLSKwargs
 from alpha_factory.utils.schema import F
 
 # 配置 OLS 逻辑：丢弃空值（只在池内算），使用 SVD 增加数值稳定性
-_ols_kwargs = OLSKwargs(null_policy='drop', solve_method='svd')
+_ols_kwargs = OLSKwargs(null_policy="drop", solve_method="svd")
 
 
-def cs_neutralize_mask(y: pl.Expr,
-                       industry: pl.Expr = pl.col(F.INDUSTRY),
-                       mask: pl.Expr = pl.col(F.POOL_MASK),
-                       fill_null: float = 0.0) -> pl.Expr:
+def cs_neutralize_mask(
+    y: pl.Expr,
+    industry: pl.Expr = pl.col(F.INDUSTRY),
+    mask: pl.Expr = pl.col(F.POOL_MASK),
+    fill_null: float = 0.0,
+) -> pl.Expr:
     """
     横截面行业中性化：回归取残差
     y: 因子Expr
@@ -31,10 +33,7 @@ def cs_neutralize_mask(y: pl.Expr,
     # 或者我们可以将其传入作为 one-hot (pls 处理多列 x)
     # 我们这里假设 industry 是分类特征，或者使用 pls.compute_least_squares 的多列模式
     res = pls.compute_least_squares(
-        y_in_pool,
-        industry,
-        mode='residuals',
-        ols_kwargs=_ols_kwargs
+        y_in_pool, industry, mode="residuals", ols_kwargs=_ols_kwargs
     )
 
     # 3. 填充缺失值：中性化残差均值为 0，所以缺失填 0.0 是最合理的

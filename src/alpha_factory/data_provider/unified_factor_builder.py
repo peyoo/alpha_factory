@@ -17,45 +17,49 @@ from alpha_factory.utils.schema import F
 
 class UnifiedFactorBuilder:
     """
-    统一因子库构建器 (L2/L3 ETL 引擎)
+        统一因子库构建器 (L2/L3 ETL 引擎)
 
-    职责:
-    1. 骨架填充：生成 (Date x Asset) 矩阵，确保停牌及存续期数据连续。
-    2. 单位对齐：金额(元), 成交量(股), 市值(元)。
-    3. 类型锁定：强制使用 StockAssetsManager 的全局 Enum 确保跨表计算性能。
-    4. 指标分类：集成坐标轴、原始价格、复权价格、量价指标、状态标记。
+        职责:
+        1. 骨架填充：生成 (Date x Asset) 矩阵，确保停牌及存续期数据连续。
+        2. 单位对齐：金额(元), 成交量(股), 市值(元)。
+        3. 类型锁定：强制使用 StockAssetsManager 的全局 Enum 确保跨表计算性能。
+        4. 指标分类：集成坐标轴、原始价格、复权价格、量价指标、状态标记。
 
-类别,字段名,类型,单位,业务含义与逻辑
-坐标轴,DATE,Date,-,交易日期（已根据交易日历对齐）
-,ASSET,Enum,-,股票唯一代码（类型锁定，跨表计算不丢索引）
-状态,IS_ST,Bool,-,是否风险警示：基于 st 接口标记并前向填充。
-,IS_SUSPENDED,Bool,-,是否全天停牌：(显式停牌接口 == True) OR (价格缺失)。
-复权价格,OPEN,F32,元,后复权开盘价：用于计算收益率（已处理停牌填充）。
-,HIGH,F32,元,后复权最高价：用于计算波动率及技术指标。
-,LOW,F32,元,后复权最低价：用于计算波动率及技术指标。
-,CLOSE,F32,元,后复权收盘价：最核心的价格计算基准。
-原始行情,CLOSE_RAW,F32,元,交易所原始价格：用于判断是否触及涨跌停。
-,UP_LIMIT,F32,元,当日涨停价：用于计算封板强度。
-,DOWN_LIMIT,F32,元,当日跌停价：用于判断极端流动性风险。
-,ADJ_FACTOR,F32,-,Tushare 原始复权因子。
-量价指标,VOLUME,F64,股,当日成交股数（已由"手"换算为"股"，停牌日为 0）。
-,AMOUNT,F64,元,当日成交金额（已由"千元"换算为"元"，停牌日为 0）。
-,TURNOVER_RATE,F32,%,当日成交量占总流通股比例（用于流动性分析）。
-,VWAP,F32,元,成交量加权平均价（AMOUNT/VOLUME），停牌日由前一日填充。
-基本面,TOTAL_MV,F64,元,当日总市值（已换算为"元"，用于市值加权）。
-,CIRC_MV,F64,元,当日流通市值（已换算为"元"，用于成分股筛选）。
-,PE,F32,倍,市盈率（TTM/最近），停牌日由前一日填充。
-,PB,F32,倍,市净率（最近），停牌日由前一日填充。
-,PS,F32,倍,市销率（最近），停牌日由前一日填充。
+    类别,字段名,类型,单位,业务含义与逻辑
+    坐标轴,DATE,Date,-,交易日期（已根据交易日历对齐）
+    ,ASSET,Enum,-,股票唯一代码（类型锁定，跨表计算不丢索引）
+    状态,IS_ST,Bool,-,是否风险警示：基于 st 接口标记并前向填充。
+    ,IS_SUSPENDED,Bool,-,是否全天停牌：(显式停牌接口 == True) OR (价格缺失)。
+    复权价格,OPEN,F32,元,后复权开盘价：用于计算收益率（已处理停牌填充）。
+    ,HIGH,F32,元,后复权最高价：用于计算波动率及技术指标。
+    ,LOW,F32,元,后复权最低价：用于计算波动率及技术指标。
+    ,CLOSE,F32,元,后复权收盘价：最核心的价格计算基准。
+    原始行情,CLOSE_RAW,F32,元,交易所原始价格：用于判断是否触及涨跌停。
+    ,UP_LIMIT,F32,元,当日涨停价：用于计算封板强度。
+    ,DOWN_LIMIT,F32,元,当日跌停价：用于判断极端流动性风险。
+    ,ADJ_FACTOR,F32,-,Tushare 原始复权因子。
+    量价指标,VOLUME,F64,股,当日成交股数（已由"手"换算为"股"，停牌日为 0）。
+    ,AMOUNT,F64,元,当日成交金额（已由"千元"换算为"元"，停牌日为 0）。
+    ,TURNOVER_RATE,F32,%,当日成交量占总流通股比例（用于流动性分析）。
+    ,VWAP,F32,元,成交量加权平均价（AMOUNT/VOLUME），停牌日由前一日填充。
+    基本面,TOTAL_MV,F64,元,当日总市值（已换算为"元"，用于市值加权）。
+    ,CIRC_MV,F64,元,当日流通市值（已换算为"元"，用于成分股筛选）。
+    ,PE,F32,倍,市盈率（TTM/最近），停牌日由前一日填充。
+    ,PB,F32,倍,市净率（最近），停牌日由前一日填充。
+    ,PS,F32,倍,市销率（最近），停牌日由前一日填充。
     """
 
-    def __init__(self, assets_mgr: StockAssetsManager, calendar_mgr: TradeCalendarManager):
+    def __init__(
+        self, assets_mgr: StockAssetsManager, calendar_mgr: TradeCalendarManager
+    ):
         self.assets_mgr = assets_mgr
         self.calendar_mgr = calendar_mgr
         self.cache_manager = HDF5CacheManager(settings.RAW_DATA_DIR)
         self.warehouse_dir = settings.WAREHOUSE_DIR
 
-    def build_unified_factors(self, start_date: datetime.date, end_date: datetime.date) -> None:
+    def build_unified_factors(
+        self, start_date: datetime.date, end_date: datetime.date
+    ) -> None:
         """
         构建 L2 统一因子库：
         内部自动按年拆分时间段，逐年执行 ETL 并独立保存，确保内存安全。
@@ -63,7 +67,9 @@ class UnifiedFactorBuilder:
         """
         # --- 1. 跨度解析与年份切分 ---
         all_years = list(range(start_date.year, end_date.year + 1))
-        logger.info(f"🚀 开始任务：跨度 {start_date} -> {end_date}，拆分为 {len(all_years)} 个年度任务")
+        logger.info(
+            f"🚀 开始任务：跨度 {start_date} -> {end_date}，拆分为 {len(all_years)} 个年度任务"
+        )
 
         for year in all_years:
             # 动态计算年度区间
@@ -73,15 +79,15 @@ class UnifiedFactorBuilder:
 
         logger.success("✨ 所有年度任务已处理完毕。")
 
-    def _execute_single_year_build(self, start_dt: date, end_dt: date, year: int) -> None:
+    def _execute_single_year_build(
+        self, start_dt: date, end_dt: date, year: int
+    ) -> None:
         """
         [私有方法] 执行单一年度片段的 ETL 逻辑
         加入了 30 天的前置 Buffer 机制，确保跨年数据填充的连续性。
         """
         logger.info(f"📂 正在处理 {year} 年度数据片段: {start_dt} -> {end_dt}")
         try:
-
-
             # --- 1. 获取带 Buffer 的交易日 ---
             # 向前多取 30 天，确保 1 月初的 forward_fill 有初始值
             buffer_start = start_dt - pd.Timedelta(days=30)
@@ -105,8 +111,7 @@ class UnifiedFactorBuilder:
 
             # 多路左连接
             panel = (
-                skeleton
-                .join(daily_lf, on=[F.DATE, F.ASSET], how="left")
+                skeleton.join(daily_lf, on=[F.DATE, F.ASSET], how="left")
                 .join(adj_lf, on=[F.DATE, F.ASSET], how="left")
                 .join(basic_lf, on=[F.DATE, F.ASSET], how="left")
                 .join(limit_lf, on=[F.DATE, F.ASSET], how="left")
@@ -138,7 +143,8 @@ class UnifiedFactorBuilder:
             df_year.write_parquet(output_path, compression="snappy")
 
             logger.info(
-                f"💾 {year}.parquet 已保存 | 包含日期: {df_year['DATE'].min()} ~ {df_year['DATE'].max()} | 行数: {df_year.height}")
+                f"💾 {year}.parquet 已保存 | 包含日期: {df_year['DATE'].min()} ~ {df_year['DATE'].max()} | 行数: {df_year.height}"
+            )
         finally:
             # 💡 每次年度任务完成后手动清理一下 HDF5 句柄
             # 避免多年度连续同步时，同时打开过多的 .h5 文件
@@ -148,14 +154,21 @@ class UnifiedFactorBuilder:
 
     def _generate_skeleton_lf(self, trading_dates: List[date]) -> pl.LazyFrame:
         """生成基于资产存续期的标准坐标轴"""
-        date_df = pl.DataFrame({F.DATE: trading_dates}).select(pl.col(F.DATE).cast(pl.Date))
+        date_df = pl.DataFrame({F.DATE: trading_dates}).select(
+            pl.col(F.DATE).cast(pl.Date)
+        )
         properties = self.assets_mgr.get_properties()
 
         return (
-            date_df.join(properties.select([F.ASSET, "list_date", "delist_date"]), how="cross")
+            date_df.join(
+                properties.select([F.ASSET, "list_date", "delist_date"]), how="cross"
+            )
             .filter(
-                (pl.col(F.DATE) >= pl.col("list_date")) &
-                (pl.col("delist_date").is_null() | (pl.col(F.DATE) <= pl.col("delist_date")))
+                (pl.col(F.DATE) >= pl.col("list_date"))
+                & (
+                    pl.col("delist_date").is_null()
+                    | (pl.col(F.DATE) <= pl.col("delist_date"))
+                )
             )
             .drop(["list_date", "delist_date"])
             .lazy()
@@ -166,9 +179,8 @@ class UnifiedFactorBuilder:
     def _ensure_valid_assets(self, lf: pl.LazyFrame) -> pl.LazyFrame:
         """防火墙：剔除名录外代码并强制转换 Enum"""
         valid_codes = self.assets_mgr.get_all_codes()
-        return (
-            lf.filter(pl.col(F.ASSET).is_in(valid_codes))
-            .with_columns(pl.col(F.ASSET).cast(self.assets_mgr.stock_type))
+        return lf.filter(pl.col(F.ASSET).is_in(valid_codes)).with_columns(
+            pl.col(F.ASSET).cast(self.assets_mgr.stock_type)
         )
 
     def _op_clean_daily(self, trading_dates: List[date]) -> pl.LazyFrame:
@@ -176,90 +188,109 @@ class UnifiedFactorBuilder:
         # 1. 直接获取已经转好 Date 类型的 Polars DataFrame
         df_pl = self.cache_manager.load_as_polars("daily", trading_dates)
         if df_pl is None:
-            return pl.LazyFrame(schema={F.DATE: pl.Date, F.ASSET: self.assets_mgr.stock_type})
+            return pl.LazyFrame(
+                schema={F.DATE: pl.Date, F.ASSET: self.assets_mgr.stock_type}
+            )
 
         # 2. 这里的 DATE 和 ASSET 已经是正确类型，保留字符串以支持新资产
-        return (self._ensure_valid_assets(df_pl.lazy())
-        .select([
-            pl.col(F.DATE),
-            pl.col(F.ASSET).cast(self.assets_mgr.stock_type),  # 保留为字符串而非 Enum
-            pl.col("open").cast(pl.Float32).alias(F.OPEN_RAW),
-            pl.col("high").cast(pl.Float32).alias(F.HIGH_RAW),
-            pl.col("low").cast(pl.Float32).alias(F.LOW_RAW),
-            pl.col("close").cast(pl.Float32).alias(F.CLOSE_RAW),
-            (pl.col("vol") * 100).cast(pl.Float32).alias(F.VOLUME),  # 手 -> 股
-            (pl.col("amount") * 1000).cast(pl.Float32).alias(F.AMOUNT),  # 千元 -> 元
-            # 💡 成交量加权平均价：AMOUNT / VOLUME（停牌日为 None，前向填充）
-            pl.when(pl.col("vol") > 0)
-                .then((pl.col("amount") * 1000 / (pl.col("vol") * 100)).cast(pl.Float32))
+        return self._ensure_valid_assets(df_pl.lazy()).select(
+            [
+                pl.col(F.DATE),
+                pl.col(F.ASSET).cast(
+                    self.assets_mgr.stock_type
+                ),  # 保留为字符串而非 Enum
+                pl.col("open").cast(pl.Float32).alias(F.OPEN_RAW),
+                pl.col("high").cast(pl.Float32).alias(F.HIGH_RAW),
+                pl.col("low").cast(pl.Float32).alias(F.LOW_RAW),
+                pl.col("close").cast(pl.Float32).alias(F.CLOSE_RAW),
+                (pl.col("vol") * 100).cast(pl.Float32).alias(F.VOLUME),  # 手 -> 股
+                (pl.col("amount") * 1000)
+                .cast(pl.Float32)
+                .alias(F.AMOUNT),  # 千元 -> 元
+                # 💡 成交量加权平均价：AMOUNT / VOLUME（停牌日为 None，前向填充）
+                pl.when(pl.col("vol") > 0)
+                .then(
+                    (pl.col("amount") * 1000 / (pl.col("vol") * 100)).cast(pl.Float32)
+                )
                 .otherwise(None)
                 .alias(F.VWAP_RAW),
-        ]))
+            ]
+        )
 
     def _op_clean_adj(self, trading_dates: List[date]) -> pl.LazyFrame:
         df_pl = self.cache_manager.load_as_polars("adj_factor", trading_dates)
         if df_pl is None:
             return pl.LazyFrame()
 
-        return self._ensure_valid_assets(df_pl.lazy()).select([
-            pl.col(F.DATE),
-            pl.col(F.ASSET).cast(self.assets_mgr.stock_type),  # 保留为字符串
-            pl.col("adj_factor").cast(pl.Float32).alias("ADJ_FACTOR"),
-        ])
+        return self._ensure_valid_assets(df_pl.lazy()).select(
+            [
+                pl.col(F.DATE),
+                pl.col(F.ASSET).cast(self.assets_mgr.stock_type),  # 保留为字符串
+                pl.col("adj_factor").cast(pl.Float32).alias("ADJ_FACTOR"),
+            ]
+        )
 
     def _op_clean_basic(self, trading_dates: List[date]) -> pl.LazyFrame:
         df_pl = self.cache_manager.load_as_polars("daily_basic", trading_dates)
         if df_pl is None:
-            return pl.LazyFrame(schema={
-                F.DATE: pl.Date,
-                F.ASSET: self.assets_mgr.stock_type,
-                "PE": pl.Float32,
-                "PB": pl.Float32,
-                "PS": pl.Float32,
-                "TURNOVER_RATE": pl.Float32,
-                "TOTAL_MV": pl.Float64,
-                "CIRC_MV": pl.Float64
-            })
+            return pl.LazyFrame(
+                schema={
+                    F.DATE: pl.Date,
+                    F.ASSET: self.assets_mgr.stock_type,
+                    "PE": pl.Float32,
+                    "PB": pl.Float32,
+                    "PS": pl.Float32,
+                    "TURNOVER_RATE": pl.Float32,
+                    "TOTAL_MV": pl.Float64,
+                    "CIRC_MV": pl.Float64,
+                }
+            )
 
-        return self._ensure_valid_assets(df_pl.lazy()).select([
-            pl.col(F.DATE),
-            pl.col(F.ASSET),  # 已经在 load_as_polars 重命名过，且在 _ensure_valid_assets 转了 Enum
-            pl.col("pe").cast(pl.Float32).alias(F.PE),
-            pl.col("pb").cast(pl.Float32).alias(F.PB),
-            pl.col("ps").cast(pl.Float32).alias(F.PS),
-            pl.col("turnover_rate").cast(pl.Float32).alias(F.TURNOVER_RATE),
-            # 💡 这里一定要补齐 circ_mv，且金额换算为"元"
-            (pl.col("total_mv") * 10000).cast(pl.Float64).alias(F.TOTAL_MV),
-            (pl.col("circ_mv") * 10000).cast(pl.Float64).alias(F.CIRC_MV),
-        ])
+        return self._ensure_valid_assets(df_pl.lazy()).select(
+            [
+                pl.col(F.DATE),
+                pl.col(
+                    F.ASSET
+                ),  # 已经在 load_as_polars 重命名过，且在 _ensure_valid_assets 转了 Enum
+                pl.col("pe").cast(pl.Float32).alias(F.PE),
+                pl.col("pb").cast(pl.Float32).alias(F.PB),
+                pl.col("ps").cast(pl.Float32).alias(F.PS),
+                pl.col("turnover_rate").cast(pl.Float32).alias(F.TURNOVER_RATE),
+                # 💡 这里一定要补齐 circ_mv，且金额换算为"元"
+                (pl.col("total_mv") * 10000).cast(pl.Float64).alias(F.TOTAL_MV),
+                (pl.col("circ_mv") * 10000).cast(pl.Float64).alias(F.CIRC_MV),
+            ]
+        )
 
     def _op_clean_limit(self, trading_dates: List[date]) -> pl.LazyFrame:
         df_pl = self.cache_manager.load_as_polars("stk_limit", trading_dates)
         if df_pl is None:
             return pl.LazyFrame()
-        return self._ensure_valid_assets(df_pl.lazy()).select([
-            pl.col(F.DATE),
-            pl.col(F.ASSET).cast(self.assets_mgr.stock_type),
-            pl.col("up_limit").cast(pl.Float32).alias(F.UP_LIMIT),
-            pl.col("down_limit").cast(pl.Float32).alias(F.DOWN_LIMIT),
-        ])
+        return self._ensure_valid_assets(df_pl.lazy()).select(
+            [
+                pl.col(F.DATE),
+                pl.col(F.ASSET).cast(self.assets_mgr.stock_type),
+                pl.col("up_limit").cast(pl.Float32).alias(F.UP_LIMIT),
+                pl.col("down_limit").cast(pl.Float32).alias(F.DOWN_LIMIT),
+            ]
+        )
 
     def _op_clean_suspend(self, trading_dates: List[date]) -> pl.LazyFrame:
         """清洗显式停牌数据"""
         df_pl = self.cache_manager.load_as_polars("suspend_d", trading_dates)
 
         if df_pl is None:
-            return pl.LazyFrame(schema={
-                F.DATE: pl.Date,
-                F.ASSET: self.assets_mgr.stock_type,
-                "_TMP_SUSPEND_": pl.Boolean # 💡 使用临时前缀，方便批量剔除
-            })
+            return pl.LazyFrame(
+                schema={
+                    F.DATE: pl.Date,
+                    F.ASSET: self.assets_mgr.stock_type,
+                    "_TMP_SUSPEND_": pl.Boolean,  # 💡 使用临时前缀，方便批量剔除
+                }
+            )
 
-        return self._ensure_valid_assets(df_pl.lazy()).select([
-            pl.col(F.DATE),
-            pl.col(F.ASSET),
-            pl.lit(True).alias("_TMP_SUSPEND_")
-        ])
+        return self._ensure_valid_assets(df_pl.lazy()).select(
+            [pl.col(F.DATE), pl.col(F.ASSET), pl.lit(True).alias("_TMP_SUSPEND_")]
+        )
 
     def _op_clean_st(self, trading_dates: List[date]) -> pl.LazyFrame:
         """清洗 ST 标记数据"""
@@ -268,66 +299,96 @@ class UnifiedFactorBuilder:
 
         # 如果没有 ST 数据（可能该年度无 ST 股票或未同步），返回带 Schema 的空表
         if df_pl is None:
-            return pl.LazyFrame(schema={
-                F.DATE: pl.Date,
-                F.ASSET: self.assets_mgr.stock_type,
-                "IS_ST": pl.Boolean
-            })
+            return pl.LazyFrame(
+                schema={
+                    F.DATE: pl.Date,
+                    F.ASSET: self.assets_mgr.stock_type,
+                    "IS_ST": pl.Boolean,
+                }
+            )
 
-        return self._ensure_valid_assets(df_pl.lazy()).select([
-            pl.col(F.DATE),
-            pl.col(F.ASSET).cast(self.assets_mgr.stock_type),
-            pl.lit(True).alias(F.IS_ST)
-        ])
+        return self._ensure_valid_assets(df_pl.lazy()).select(
+            [
+                pl.col(F.DATE),
+                pl.col(F.ASSET).cast(self.assets_mgr.stock_type),
+                pl.lit(True).alias(F.IS_ST),
+            ]
+        )
 
     def _op_process_indicators(self, lf: pl.LazyFrame) -> pl.LazyFrame:
         """核心业务逻辑：填充、状态判定、复权计算"""
-        ffill_cols = [F.CLOSE_RAW, F.ADJ_FACTOR, F.TOTAL_MV, F.CIRC_MV, F.PE, F.PB, F.PS,
-                      F.TURNOVER_RATE, F.VWAP_RAW, F.UP_LIMIT, F.DOWN_LIMIT]
+        ffill_cols = [
+            F.CLOSE_RAW,
+            F.ADJ_FACTOR,
+            F.TOTAL_MV,
+            F.CIRC_MV,
+            F.PE,
+            F.PB,
+            F.PS,
+            F.TURNOVER_RATE,
+            F.VWAP_RAW,
+            F.UP_LIMIT,
+            F.DOWN_LIMIT,
+        ]
 
         return (
             lf.sort([F.ASSET, F.DATE])
-            .with_columns([
-                # 1. 综合停牌判定：显式标记 OR 价格缺失
-                (
-                        pl.col("_TMP_SUSPEND_").fill_null(False) | pl.col(F.CLOSE_RAW).is_null()
-                ).alias(F.IS_SUSPENDED),
-
-                # ST 状态填充
-                pl.col(F.IS_ST).fill_null(False).forward_fill().over(F.ASSET),
-
-                # 时序填充
-                pl.col(ffill_cols).forward_fill().over(F.ASSET),
-                pl.col([F.VOLUME, F.AMOUNT]).fill_null(0.0),
-            ])
-            .with_columns([
-                # 2. 停牌日价格补全
-                pl.col(F.OPEN_RAW).fill_null(pl.col(F.CLOSE_RAW)),
-                pl.col(F.HIGH_RAW).fill_null(pl.col(F.CLOSE_RAW)),
-                pl.col(F.LOW_RAW).fill_null(pl.col(F.CLOSE_RAW)),
-                pl.col(F.VWAP_RAW).fill_null(pl.col(F.VWAP_RAW)),
-            ])
-            .with_columns([
-                # 3. 复权计算
-                (pl.col(F.OPEN_RAW) * pl.col(F.ADJ_FACTOR)).cast(pl.Float32).alias(F.OPEN),
-                (pl.col(F.HIGH_RAW) * pl.col(F.ADJ_FACTOR)).cast(pl.Float32).alias(F.HIGH),
-                (pl.col(F.LOW_RAW) * pl.col(F.ADJ_FACTOR)).cast(pl.Float32).alias(F.LOW),
-                (pl.col(F.CLOSE_RAW) * pl.col(F.ADJ_FACTOR)).cast(pl.Float32).alias(F.CLOSE),
-                (pl.col(F.VWAP_RAW) * pl.col(F.ADJ_FACTOR)).cast(pl.Float32).alias(F.VWAP),
-            ])
+            .with_columns(
+                [
+                    # 1. 综合停牌判定：显式标记 OR 价格缺失
+                    (
+                        pl.col("_TMP_SUSPEND_").fill_null(False)
+                        | pl.col(F.CLOSE_RAW).is_null()
+                    ).alias(F.IS_SUSPENDED),
+                    # ST 状态填充
+                    pl.col(F.IS_ST).fill_null(False).forward_fill().over(F.ASSET),
+                    # 时序填充
+                    pl.col(ffill_cols).forward_fill().over(F.ASSET),
+                    pl.col([F.VOLUME, F.AMOUNT]).fill_null(0.0),
+                ]
+            )
+            .with_columns(
+                [
+                    # 2. 停牌日价格补全
+                    pl.col(F.OPEN_RAW).fill_null(pl.col(F.CLOSE_RAW)),
+                    pl.col(F.HIGH_RAW).fill_null(pl.col(F.CLOSE_RAW)),
+                    pl.col(F.LOW_RAW).fill_null(pl.col(F.CLOSE_RAW)),
+                    pl.col(F.VWAP_RAW).fill_null(pl.col(F.VWAP_RAW)),
+                ]
+            )
+            .with_columns(
+                [
+                    # 3. 复权计算
+                    (pl.col(F.OPEN_RAW) * pl.col(F.ADJ_FACTOR))
+                    .cast(pl.Float32)
+                    .alias(F.OPEN),
+                    (pl.col(F.HIGH_RAW) * pl.col(F.ADJ_FACTOR))
+                    .cast(pl.Float32)
+                    .alias(F.HIGH),
+                    (pl.col(F.LOW_RAW) * pl.col(F.ADJ_FACTOR))
+                    .cast(pl.Float32)
+                    .alias(F.LOW),
+                    (pl.col(F.CLOSE_RAW) * pl.col(F.ADJ_FACTOR))
+                    .cast(pl.Float32)
+                    .alias(F.CLOSE),
+                    (pl.col(F.VWAP_RAW) * pl.col(F.ADJ_FACTOR))
+                    .cast(pl.Float32)
+                    .alias(F.VWAP),
+                ]
+            )
             # 💡 4. 仅删除临时列，保留 _RAW 原始价格列和 ADJ_FACTOR 供后续分析使用
-            .drop([
-                cs.starts_with("_TMP_")
-            ])
+            .drop([cs.starts_with("_TMP_")])
         )
 
     def _validate_unified_factors(self, lf: pl.LazyFrame) -> None:
         """数据质量验证"""
         # 示例验证：检查关键主键是否包含 Null
-        check = lf.select([
-            pl.col(F.DATE).null_count().alias("null_date"),
-            pl.col(F.ASSET).null_count().alias("null_asset")
-        ]).collect()
+        check = lf.select(
+            [
+                pl.col(F.DATE).null_count().alias("null_date"),
+                pl.col(F.ASSET).null_count().alias("null_asset"),
+            ]
+        ).collect()
 
         if check["null_date"][0] > 0 or check["null_asset"][0] > 0:
             raise ValueError(f"✗ 关键坐标轴包含 Null 值: {check}")

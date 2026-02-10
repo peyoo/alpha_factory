@@ -1,60 +1,61 @@
-# Python
+# === Python 核心基础 ===
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-env/
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
 *.egg
+build/
+dist/
+.eggs/
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-scripts/logs/
-scripts/runs/
-
-# Environment
-.env
+# === uv 虚拟环境与包管理 ===
 .venv/
 venv/
 ENV/
-config/*.toml
+.uv/
+# 注意：千万不要忽略 pyproject.toml 和 uv.lock！
 
-# IDE settings
+# === IDE 与 系统 ===
 .idea/
 .vscode/
 *.swp
 *.swo
+.DS_Store
+Thumbs.db
 
-# Project Specific
+# === 量化数据管理 (核心防线) ===
+# 忽略所有数据和输出，但保留目录结构
 data/
 output/
 !data/.gitkeep
 !output/.gitkeep
-# Also ignore common alternate output dirs
+
+# 忽略临时数据目录
 output_*/
 tmp_output/
+*.parquet
+*.feather
+*.csv
+*.h5
 
-# Temporary Assets (临时性资产管理)
-# 快速原型和实验代码不提交
+# === 配置与密钥 (安全防线) ===
+.env
+# 仅忽略本地私有的配置文件，不忽略 pyproject.toml
+local_settings.toml
+*.local.toml
+secrets.*
+
+# === 实验与日志 ===
+logs/
+runs/
 scratch/
-*.tmp
 *.experiment
+*.tmp
 
-# Mac
-.DS_Store
+# === 宪法保护 (确保核心不被误删) ===
+!pyproject.toml
+!uv.lock
+!.python-version
+!.pre-commit-config.yaml

@@ -7,6 +7,7 @@ Tushare 数据同步服务 (L0-L1 接入层)
 - 禁止按股票循环 (ts_code 参数)
 - 无数据量超限风险
 """
+
 import os
 import time
 from loguru import logger
@@ -25,6 +26,7 @@ from alpha_factory.utils.schema import F
 
 class DataSyncError(RuntimeError):
     """致命性同步错误：当关键分片缺失或写入失败时抛出。"""
+
     pass
 
 
@@ -56,7 +58,9 @@ class TushareDataService:
 
     def __init__(self):
         # 1. Token 获取逻辑
-        self.token = getattr(settings, "TUSHARE_TOKEN", None) or os.getenv("TUSHARE_TOKEN")
+        self.token = getattr(settings, "TUSHARE_TOKEN", None) or os.getenv(
+            "TUSHARE_TOKEN"
+        )
         if not self.token:
             raise ValueError("❌ TUSHARE_TOKEN 未设置，请在 settings 或环境变量中配置")
 
@@ -77,6 +81,7 @@ class TushareDataService:
 
     def _init_tushare(self):
         import tushare as ts
+
         return ts.pro_api(self.token)
 
     # ---------------------------------------------------------------------
@@ -97,7 +102,9 @@ class TushareDataService:
         # 2. 确定 end_date：如果为 None，智能查找最新可用数据
         if end_date is None:
             end_date = self._find_latest_available_date()
-            logger.info(f"⏰ end_date 自动设置为: {end_date} (daily_basic 最新可用数据)")
+            logger.info(
+                f"⏰ end_date 自动设置为: {end_date} (daily_basic 最新可用数据)"
+            )
 
         # 3. 获取交易日列表
         start_dt = datetime.strptime(start_date, "%Y%m%d").date()
@@ -137,41 +144,48 @@ class TushareDataService:
         # 1. 定义标准任务表 (数据源, API函数, 预期的 Schema)
         # 统一使用 dict 存储列名和 Dtype，既能用于 fields 参数，也能用于 astype
         tasks = [
-            ("daily", self.pro.daily, {
-                "ts_code": "string",
-                "open": "float32",
-                "high": "float32",
-                "low": "float32",
-                "close": "float32",
-                "vol": "float32",
-                "amount": "float64"
-            }),
-            ("adj_factor", self.pro.adj_factor, {
-                "ts_code": "string",
-                "adj_factor": "float32"
-            }),
-            ("daily_basic", self.pro.daily_basic, {
-                "ts_code": "string",
-                "turnover_rate": "float32",
-                "pe": "float32",
-                "pb": "float32",
-                "ps": "float32",
-                "total_mv": "float64",
-                "circ_mv": "float64"
-            }),
-            ("stk_limit", self.pro.stk_limit, {
-                "ts_code": "string",
-                "up_limit": "float32",
-                "down_limit": "float32"
-            }),
-            ("suspend_d", self.pro.suspend_d, {
-                "ts_code": "string",
-                "suspend_type": "string"
-            }),
-            ("st", self.pro.stock_st, {
-                "ts_code": "string",
-                "is_st": "string"
-            }),
+            (
+                "daily",
+                self.pro.daily,
+                {
+                    "ts_code": "string",
+                    "open": "float32",
+                    "high": "float32",
+                    "low": "float32",
+                    "close": "float32",
+                    "vol": "float32",
+                    "amount": "float64",
+                },
+            ),
+            (
+                "adj_factor",
+                self.pro.adj_factor,
+                {"ts_code": "string", "adj_factor": "float32"},
+            ),
+            (
+                "daily_basic",
+                self.pro.daily_basic,
+                {
+                    "ts_code": "string",
+                    "turnover_rate": "float32",
+                    "pe": "float32",
+                    "pb": "float32",
+                    "ps": "float32",
+                    "total_mv": "float64",
+                    "circ_mv": "float64",
+                },
+            ),
+            (
+                "stk_limit",
+                self.pro.stk_limit,
+                {"ts_code": "string", "up_limit": "float32", "down_limit": "float32"},
+            ),
+            (
+                "suspend_d",
+                self.pro.suspend_d,
+                {"ts_code": "string", "suspend_type": "string"},
+            ),
+            ("st", self.pro.stock_st, {"ts_code": "string", "is_st": "string"}),
         ]
 
         for source, api_func, fields_schema in tasks:
@@ -195,7 +209,9 @@ class TushareDataService:
                         if dtype == "string":
                             df[col] = df[col].fillna("").astype(str).astype("S12")
                         else:
-                            df[col] = pd.to_numeric(df[col], errors='coerce').astype(dtype)
+                            df[col] = pd.to_numeric(df[col], errors="coerce").astype(
+                                dtype
+                            )
 
                 # 💡 3. 直接落盘
                 self.cache_manager.save_to_hdf5(source, trade_date, df)
@@ -245,7 +261,9 @@ class TushareDataService:
 
                 # 如果返回不为空，说明该日有数据
                 if df is not None and not df.empty:
-                    logger.info(f"✓ 找到最新可用数据 (daily_basic): {date_str} (检查了 {checked_count} 个交易日)")
+                    logger.info(
+                        f"✓ 找到最新可用数据 (daily_basic): {date_str} (检查了 {checked_count} 个交易日)"
+                    )
                     return date_str
                 else:
                     logger.debug(f"⏭️  {date_str} 无数据，继续查找")
@@ -256,7 +274,8 @@ class TushareDataService:
 
         # 如果找不到任何有数据的日期，返回今天
         logger.warning(
-            f"⚠️ 向前查找 {lookback_days} 个交易日都无数据，使用今天作为 end_date: {today.strftime('%Y%m%d')}")
+            f"⚠️ 向前查找 {lookback_days} 个交易日都无数据，使用今天作为 end_date: {today.strftime('%Y%m%d')}"
+        )
         return today.strftime("%Y%m%d")
 
     # ---------------------------------------------------------------------
@@ -286,7 +305,9 @@ class TushareDataService:
         try:
             # 极致性能：只扫描不加载，获取最大值
             # 注意：统一因子库的日期列是 DATE（而非 trade_date）
-            max_date = pl.scan_parquet(str(path)).select(pl.col(F.DATE).max()).collect().item()
+            max_date = (
+                pl.scan_parquet(str(path)).select(pl.col(F.DATE).max()).collect().item()
+            )
             if max_date:
                 if isinstance(max_date, pl.Date):
                     max_date = max_date.as_py()

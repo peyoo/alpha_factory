@@ -7,13 +7,13 @@ from alpha_factory.utils.schema import F
 
 
 def backtest_periodic_rebalance(
-        df_input: Union[pl.DataFrame, pl.LazyFrame],
-        factor_col: str,
-        hold_num: int = 10,
-        rebalance_period: int = 20,
-        cost_rate: float = 0.0025,
-        exec_price: str = F.OPEN,
-        ascending: bool = False
+    df_input: Union[pl.DataFrame, pl.LazyFrame],
+    factor_col: str,
+    hold_num: int = 10,
+    rebalance_period: int = 20,
+    cost_rate: float = 0.0025,
+    exec_price: str = F.OPEN,
+    ascending: bool = False,
 ) -> Dict[str, pl.DataFrame]:
     """
     按时间周期换股的回测框架
@@ -35,17 +35,28 @@ def backtest_periodic_rebalance(
     lf = df_input.lazy() if isinstance(df_input, pl.LazyFrame) else df_input.lazy()
 
     # 预计算排名
-    lf = lf.with_columns([
-        pl.when(pl.col(F.POOL_MASK))
-        .then(pl.col(factor_col))
-        .otherwise(None)
-        .rank(descending=not ascending, method="random")
-        .over(F.DATE)
-        .fill_null(999999)
-        .alias("RANK")
-    ])
+    lf = lf.with_columns(
+        [
+            pl.when(pl.col(F.POOL_MASK))
+            .then(pl.col(factor_col))
+            .otherwise(None)
+            .rank(descending=not ascending, method="random")
+            .over(F.DATE)
+            .fill_null(999999)
+            .alias("RANK")
+        ]
+    )
 
-    final_cols = [F.DATE, F.ASSET, exec_price, F.CLOSE, "RANK", F.IS_UP_LIMIT, F.IS_DOWN_LIMIT, F.IS_SUSPENDED]
+    final_cols = [
+        F.DATE,
+        F.ASSET,
+        exec_price,
+        F.CLOSE,
+        "RANK",
+        F.IS_UP_LIMIT,
+        F.IS_DOWN_LIMIT,
+        F.IS_SUSPENDED,
+    ]
     df = lf.select(final_cols).collect()
 
     all_dates = df.get_column(F.DATE).unique().sort().to_list()
@@ -58,13 +69,22 @@ def backtest_periodic_rebalance(
     trades_records = []
     last_rebalance_idx = -rebalance_period  # 强制第一次交易
 
-    logger.info(f"🚀 周期换股回测 | 因子: {factor_col} | 持股数: {hold_num} | 周期: {rebalance_period} 天 | 费率: {cost_rate:.4f}")
+    logger.info(
+        f"🚀 周期换股回测 | 因子: {factor_col} | 持股数: {hold_num} | 周期: {rebalance_period} 天 | 费率: {cost_rate:.4f}"
+    )
 
     # --- 3. 逐日演进 ---
     for i, curr_dt in enumerate(all_dates):
         day_df = grouped.get((curr_dt,))
         if day_df is None:
-            daily_records.append({F.DATE: curr_dt, "RAW_RET": 0.0, "TURNOVER": 0.0, "COUNT": len(current_holdings)})
+            daily_records.append(
+                {
+                    F.DATE: curr_dt,
+                    "RAW_RET": 0.0,
+                    "TURNOVER": 0.0,
+                    "COUNT": len(current_holdings),
+                }
+            )
             continue
 
         day_info = {row[F.ASSET]: row for row in day_df.to_dicts()}
@@ -79,7 +99,9 @@ def backtest_periodic_rebalance(
 
         # B. 更新目标持仓
         if need_rebalance:
-            target_holdings = {a for a, info in day_info.items() if info["RANK"] <= hold_num}
+            target_holdings = {
+                a for a, info in day_info.items() if info["RANK"] <= hold_num
+            }
             last_rebalance_idx = i
 
         # C. 处理现有持仓
@@ -100,15 +122,17 @@ def backtest_periodic_rebalance(
                     day_raw_ret += ((info[F.CLOSE] / price_today_exec) - 1) / hold_num
                     new_holdings[asset] = hold_info
                 else:
-                    trades_records.append({
-                        F.ASSET: asset,
-                        "entry_date": hold_info["entry_date"],
-                        "exit_date": curr_dt,
-                        "entry_price": hold_info["entry_price"],
-                        "exit_price": price_today_exec,
-                        "pnl_ret": price_today_exec / hold_info["entry_price"] - 1,
-                        "holding_periods": i - hold_info["entry_idx"]
-                    })
+                    trades_records.append(
+                        {
+                            F.ASSET: asset,
+                            "entry_date": hold_info["entry_date"],
+                            "exit_date": curr_dt,
+                            "entry_price": hold_info["entry_price"],
+                            "exit_price": price_today_exec,
+                            "pnl_ret": price_today_exec / hold_info["entry_price"] - 1,
+                            "holding_periods": i - hold_info["entry_idx"],
+                        }
+                    )
                     num_sold += 1
             else:
                 day_raw_ret += ((info[F.CLOSE] / price_today_exec) - 1) / hold_num
@@ -117,7 +141,9 @@ def backtest_periodic_rebalance(
 
         # D. 处理新股票买入
         potential_buys = [a for a in target_holdings if a not in new_holdings]
-        potential_buys.sort(key=lambda x: day_info[x]["RANK"] if x in day_info else 999999)
+        potential_buys.sort(
+            key=lambda x: day_info[x]["RANK"] if x in day_info else 999999
+        )
 
         for asset in potential_buys:
             if len(new_holdings) < hold_num:
@@ -130,28 +156,29 @@ def backtest_periodic_rebalance(
                         "entry_date": curr_dt,
                         "entry_price": price_buy_exec,
                         "last_price": info[F.CLOSE],
-                        "entry_idx": i
+                        "entry_idx": i,
                     }
                     num_bought += 1
 
         # E. 记录流水
         turnover = (num_bought + num_sold) / hold_num if hold_num > 0 else 0.0
         current_holdings = new_holdings
-        daily_records.append({
-            F.DATE: curr_dt,
-            "RAW_RET": day_raw_ret,
-            "TURNOVER": turnover,
-            "COUNT": len(current_holdings)
-        })
+        daily_records.append(
+            {
+                F.DATE: curr_dt,
+                "RAW_RET": day_raw_ret,
+                "TURNOVER": turnover,
+                "COUNT": len(current_holdings),
+            }
+        )
 
     # --- 4. 结算 ---
-    res_daily = pl.DataFrame(daily_records).with_columns([
-        (pl.col("RAW_RET") - pl.col("TURNOVER") * cost_rate).alias("NET_RET")
-    ]).with_columns([
-        (pl.col("NET_RET") + 1).cum_prod().alias("NAV")
-    ])
+    res_daily = (
+        pl.DataFrame(daily_records)
+        .with_columns(
+            [(pl.col("RAW_RET") - pl.col("TURNOVER") * cost_rate).alias("NET_RET")]
+        )
+        .with_columns([(pl.col("NET_RET") + 1).cum_prod().alias("NAV")])
+    )
 
-    return {
-        "daily_results": res_daily,
-        "trade_details": pl.DataFrame(trades_records)
-    }
+    return {"daily_results": res_daily, "trade_details": pl.DataFrame(trades_records)}

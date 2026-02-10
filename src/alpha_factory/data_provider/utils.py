@@ -15,10 +15,10 @@ from alpha_factory.utils.schema import F
 
 
 def extract_expressions_from_csv(
-        file_path: Union[str, Path],
-        formula_col: str = "expression",
-        name_col: Optional[str] = 'factor_name',
-        only_formula: bool = True
+    file_path: Union[str, Path],
+    formula_col: str = "expression",
+    name_col: Optional[str] = "factor_name",
+    only_formula: bool = True,
 ) -> List[str]:
     """
     从 CSV 中提取符合 expr_codegen 格式的表达式列表。
@@ -53,11 +53,11 @@ def extract_expressions_from_csv(
 
 
 def my_codegen_exec(
-        lf: pl.LazyFrame,
-        *codes: Union[str, callable],  # 修正：使用 *codes 接收解包后的参数
-        over_null: Optional[str] = None,
-        date: str = F.DATE,
-        asset: str = F.ASSET,
+    lf: pl.LazyFrame,
+    *codes: Union[str, callable],  # 修正：使用 *codes 接收解包后的参数
+    over_null: Optional[str] = None,
+    date: str = F.DATE,
+    asset: str = F.ASSET,
 ) -> pl.LazyFrame:
     """
     基于 expr_codegen 生成表达式并应用到 LazyFrame。
@@ -81,7 +81,9 @@ def my_codegen_exec(
     # 2. 解析代码：将字符串或函数解析为 (name, expr, comment) 三元组
     # 这是修复 "ValueError: not enough values to unpack" 的关键
     try:
-        raw_source, exprs_dst = sources_to_exprs(tool.globals_, *codes,convert_xor=False)
+        raw_source, exprs_dst = sources_to_exprs(
+            tool.globals_, *codes, convert_xor=False
+        )
     except Exception as e:
         logger.error(f"❌ 表达式解析失败: {e} | 输入: {codes}")
         raise
@@ -95,8 +97,8 @@ def my_codegen_exec(
     try:
         generated_code, _ = tool.all(
             exprs_src=exprs_dst,
-            style='polars',
-            template_file='../utils/custom_template.py.j2',
+            style="polars",
+            template_file="../utils/custom_template.py.j2",
             replace=False,
             regroup=True,
             format=True,
@@ -104,7 +106,7 @@ def my_codegen_exec(
             asset=asset,
             over_null=over_null,
             skip_simplify=True,
-            extra_codes=(raw_source,)
+            extra_codes=(raw_source,),
         )
     except Exception as e:
         logger.error(f"❌ 代码生成失败: {e}")
@@ -121,18 +123,18 @@ def my_codegen_exec(
         raise
 
     # 5. 调用生成的 main 函数
-    if 'main' not in exec_globals:
+    if "main" not in exec_globals:
         raise RuntimeError("❌ 生成的代码中未找到 'main' 函数")
 
     # 注意：expr_codegen 生成的函数签名通常是 (df) 或 (df, ge_date_idx)
     # 这里直接传 lf
-    df_output = exec_globals['main'](lf,ge_date_idx = 0)
+    df_output = exec_globals["main"](lf, ge_date_idx=0)
 
     return df_output
 
 
 if __name__ == "__main__":
     # 简单测试
-    path = settings.OUTPUT_DIR/'gp'/'SmallCSGenerator'/'best_factors.csv'
+    path = settings.OUTPUT_DIR / "gp" / "SmallCSGenerator" / "best_factors.csv"
     exprs = extract_expressions_from_csv(path)
     print(exprs)

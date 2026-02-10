@@ -21,10 +21,12 @@ from alpha_factory.data_provider import TushareDataService, DataProvider
 service = None
 provider = None
 
+
 def _init_services():
     global service, provider
     service = TushareDataService(is_vip=True)
     provider = DataProvider()
+
 
 if __name__ == "__main__":
     os.environ["TUSHARE_TOKEN"] = "your_tushare_token"
@@ -63,7 +65,7 @@ lf = provider.load_data(
     start_date="20240101",
     end_date="20241231",
     columns=["CLOSE", "VOLUME", "pe", "pct_change"],
-    exclude_suspended=True  # 排除停牌
+    exclude_suspended=True,  # 排除停牌
 )
 
 # 返回 pl.LazyFrame (未执行，允许查询优化)

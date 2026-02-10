@@ -16,7 +16,7 @@ from alpha_factory.utils.schema import F
 
 def main():
     # 1. 设置路径与提取表达式
-    path = settings.OUTPUT_DIR / 'gp' / 'SmallCSGenerator' / 'best_factors.csv'
+    path = settings.OUTPUT_DIR / "gp" / "SmallCSGenerator" / "best_factors.csv"
     exprs = extract_expressions_from_csv(path)
 
     # 创建因子名与表达式的映射字典
@@ -33,8 +33,8 @@ def main():
         start_date="20190101",
         end_date="20251231",
         funcs=[main_small_pool, add_extra_terminals, label_OO_for_tradable],
-        column_exprs=[f'{F.LABEL_FOR_RET}=OPEN[-2] / OPEN[-1] - 1', *exprs_with_names],
-        lookback_window=200
+        column_exprs=[f"{F.LABEL_FOR_RET}=OPEN[-2] / OPEN[-1] - 1", *exprs_with_names],
+        lookback_window=200,
     )
 
     # 3. 批量绩效评估
@@ -43,14 +43,18 @@ def main():
 
     # 后处理：添加 expression 列并排序列
     df_result = df_result.with_columns(
-        pl.col("factor").map_elements(
-            lambda f: factor_expr_map.get(f, "unknown"),
-            return_dtype=pl.String
-        ).alias("expression")
-    ).select([
-        "factor", "expression",
-        *[col for col in df_result.columns if col not in ["factor", "expression"]]
-    ])
+        pl.col("factor")
+        .map_elements(
+            lambda f: factor_expr_map.get(f, "unknown"), return_dtype=pl.String
+        )
+        .alias("expression")
+    ).select(
+        [
+            "factor",
+            "expression",
+            *[col for col in df_result.columns if col not in ["factor", "expression"]],
+        ]
+    )
 
     # 4. 逻辑聚类
     logger.info("🔍 正在进行因子逻辑聚类 (采样 50,000 行)...")
@@ -60,26 +64,26 @@ def main():
     logger.info("📈 正在生成 Cluster 分组统计...")
 
     # 转换聚类字典为 DataFrame
-    df_clusters = pl.DataFrame({
-        "factor": list(cluster_dict.keys()),
-        "cluster_id": list(cluster_dict.values())
-    })
+    df_clusters = pl.DataFrame(
+        {"factor": list(cluster_dict.keys()), "cluster_id": list(cluster_dict.values())}
+    )
 
     # 合并绩效与聚类 ID
     df_merged = df_result.join(df_clusters, on="factor")
 
     # 按 Cluster 分组：统计因子数、最高夏普、并选出最强因子的 ID
     df_cluster_stats = (
-        df_merged
-        .group_by("cluster_id")
-        .agg([
-            pl.count("factor").alias("因子数量"),
-            pl.max("sharpe").alias("最高夏普"),
-            # 找到夏普最高的那个因子的 ID
-            pl.col("factor").sort_by("sharpe").last().alias("最强因子ID"),
-            # 找到夏普最高的那个因子的 表达式
-            pl.col("expression").sort_by("sharpe").last().alias("最强因子逻辑")
-        ])
+        df_merged.group_by("cluster_id")
+        .agg(
+            [
+                pl.count("factor").alias("因子数量"),
+                pl.max("sharpe").alias("最高夏普"),
+                # 找到夏普最高的那个因子的 ID
+                pl.col("factor").sort_by("sharpe").last().alias("最强因子ID"),
+                # 找到夏普最高的那个因子的 表达式
+                pl.col("expression").sort_by("sharpe").last().alias("最强因子逻辑"),
+            ]
+        )
         .sort("最高夏普", descending=True)
     )
 
@@ -97,11 +101,15 @@ def main():
 
     # 从 LazyFrame 中提取这些因子的数据并计算相关性
     # 采样 20000 行足以代表截面相关性
-    df_corr_data = lf.select(best_factor_ids).collect().sample(n=min(20000, 50000)).to_pandas()
+    df_corr_data = (
+        lf.select(best_factor_ids).collect().sample(n=min(20000, 50000)).to_pandas()
+    )
     corr_matrix = df_corr_data.corr()
 
     # 打印相关性矩阵
-    print("\n" + "=" * 50 + " 各 Cluster 族长相关性矩阵 (Cross-Correlation) " + "=" * 50)
+    print(
+        "\n" + "=" * 50 + " 各 Cluster 族长相关性矩阵 (Cross-Correlation) " + "=" * 50
+    )
     print(corr_matrix.round(2))
 
     # 计算整体相关性指标

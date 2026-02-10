@@ -12,6 +12,7 @@ try:
         """
         全功能 Settings，基于 pydantic-settings（当可用时使用）。
         """
+
         BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
         ENV_FILE: ClassVar[Path] = BASE_DIR / ".env"
 
@@ -49,17 +50,32 @@ try:
 
         ASSETS_PATCHES: List[Dict[str, Any]] = []
 
-        TUSHARE_TOKEN: str = Field(default="YOUR_TOKEN_HERE", validation_alias="TUSHARE_TOKEN")
+        TUSHARE_TOKEN: str = Field(
+            default="YOUR_TOKEN_HERE", validation_alias="TUSHARE_TOKEN"
+        )
         is_vip: bool = Field(default=True, validation_alias="IS_VIP")
 
-        model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore", case_sensitive=False)
+        model_config = SettingsConfigDict(
+            env_file=ENV_FILE,
+            env_file_encoding="utf-8",
+            extra="ignore",
+            case_sensitive=False,
+        )
 
         @property
         def template_path_str(self) -> str:
             return str(self.TEMPLATE_PATH)
 
         def make_dirs(self):
-            for path in [self.RAW_DATA_DIR, self.WAREHOUSE_DIR, self.LOG_DIR, self.CODEGEN_DIR, self.GP_DEAP_DIR, self.MODEL_DIR, self.REPORT_DIR]:
+            for path in [
+                self.RAW_DATA_DIR,
+                self.WAREHOUSE_DIR,
+                self.LOG_DIR,
+                self.CODEGEN_DIR,
+                self.GP_DEAP_DIR,
+                self.MODEL_DIR,
+                self.REPORT_DIR,
+            ]:
                 path.mkdir(parents=True, exist_ok=True)
 
     settings = Settings()
@@ -87,7 +103,14 @@ except Exception:
         ASSETS_FILENAME = "stock_assets.parquet"
 
         CALENDAR_SCHEMA = {"date": pl.Date, "is_open": pl.Int8, "exchange": pl.Utf8}
-        ASSETS_SCHEMA = {F.ASSET: pl.Utf8, "name": pl.Utf8, "list_date": pl.Date, "delist_date": pl.Date, "exchange": pl.Utf8, "market": pl.Utf8}
+        ASSETS_SCHEMA = {
+            F.ASSET: pl.Utf8,
+            "name": pl.Utf8,
+            "list_date": pl.Date,
+            "delist_date": pl.Date,
+            "exchange": pl.Utf8,
+            "market": pl.Utf8,
+        }
 
         ASSETS_PATCHES = []
         TUSHARE_TOKEN = "YOUR_TOKEN_HERE"
@@ -97,7 +120,15 @@ except Exception:
             return str(self.TEMPLATE_PATH)
 
         def make_dirs(self):
-            for path in [self.RAW_DATA_DIR, self.WAREHOUSE_DIR, self.LOG_DIR, self.CODEGEN_DIR, self.GP_DEAP_DIR, self.MODEL_DIR, self.REPORT_DIR]:
+            for path in [
+                self.RAW_DATA_DIR,
+                self.WAREHOUSE_DIR,
+                self.LOG_DIR,
+                self.CODEGEN_DIR,
+                self.GP_DEAP_DIR,
+                self.MODEL_DIR,
+                self.REPORT_DIR,
+            ]:
                 path.mkdir(parents=True, exist_ok=True)
 
     settings = Settings()

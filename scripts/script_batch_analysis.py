@@ -15,9 +15,11 @@ from alpha_factory.utils.schema import F
 
 def main():
     # 1. 路径与参数设置
-    input_path = settings.OUTPUT_DIR / 'main_small_pool' / 'best_factors.csv'
-    output_path = settings.OUTPUT_DIR / 'main_small_pool' / 'factors_full_report.csv'
-    refined_output_path = settings.OUTPUT_DIR / 'main_small_pool' / 'refined_top_factors.csv'
+    input_path = settings.OUTPUT_DIR / "main_small_pool" / "best_factors.csv"
+    output_path = settings.OUTPUT_DIR / "main_small_pool" / "factors_full_report.csv"
+    refined_output_path = (
+        settings.OUTPUT_DIR / "main_small_pool" / "refined_top_factors.csv"
+    )
 
     # 2. 提取表达式
     exprs = extract_expressions_from_csv(input_path)
@@ -38,9 +40,14 @@ def main():
     lf = DataProvider().load_data(
         start_date="20190101",
         end_date="20251231",
-        funcs=[main_small_pool, add_extra_terminals, label_OO_for_IC, label_OO_for_tradable],
+        funcs=[
+            main_small_pool,
+            add_extra_terminals,
+            label_OO_for_IC,
+            label_OO_for_tradable,
+        ],
         column_exprs=needed_columns,
-        lookback_window=200
+        lookback_window=200,
     )
 
     # 4. 执行计算 (Collect)
@@ -51,10 +58,7 @@ def main():
     # 基于你设定的阈值 0.8 [cite: 2026-02-04]
     logger.info("🌿 正在计算因子聚类 (Threshold=0.8)...")
     cluster_mapping = batch_clustering(
-        df=df_calculated,
-        factors=factor_names,
-        threshold=0.8,
-        method="average"
+        df=df_calculated, factors=factor_names, threshold=0.8, method="average"
     )
     if isinstance(cluster_mapping, tuple):
         cluster_mapping = cluster_mapping[0]
@@ -67,31 +71,42 @@ def main():
         factors=factor_names,
         label_ret_col=F.LABEL_FOR_RET,
         fee=0.0015,  # 设置单边 15bps 的交易摩擦
-        mode='long_only'
+        mode="long_only",
     )
 
     # 7. 报表合并与初步格式化
     final_report = (
-        report_data
-        .with_columns([
-            # 注入聚类 ID 和 原始公式
-            pl.col("factor").replace(cluster_mapping).cast(pl.Int32).alias("cluster_id"),
-            pl.col("factor").replace(factor_expr_map).alias("expression"),
-            pl.col(pl.Float64).round(4)
-        ])
-        .select([
-            "cluster_id", "factor", "ic_ir", "ann_ret", "sharpe", "turnover_est", "expression"
-        ])
+        report_data.with_columns(
+            [
+                # 注入聚类 ID 和 原始公式
+                pl.col("factor")
+                .replace(cluster_mapping)
+                .cast(pl.Int32)
+                .alias("cluster_id"),
+                pl.col("factor").replace(factor_expr_map).alias("expression"),
+                pl.col(pl.Float64).round(4),
+            ]
+        )
+        .select(
+            [
+                "cluster_id",
+                "factor",
+                "ic_ir",
+                "ann_ret",
+                "sharpe",
+                "turnover_est",
+                "expression",
+            ]
+        )
         .sort(by=["cluster_id", "sharpe"], descending=[False, True])
     )
 
     # 8. 自动化精选：每簇取前两个“优等生”
     # 逻辑：在每个逻辑簇内，选择扣费后 Sharpe 最高的前 2 名
     refined_report = (
-        final_report
-        .filter(
-            (pl.col("sharpe") > 0.3) &  # 扣费后 Sharpe 至少要为正且具备基本意义
-            (pl.col("ic_ir").abs() > 0.05)
+        final_report.filter(
+            (pl.col("sharpe") > 0.3)  # 扣费后 Sharpe 至少要为正且具备基本意义
+            & (pl.col("ic_ir").abs() > 0.05)
         )
         .group_by("cluster_id")
         .head(2)
@@ -103,7 +118,9 @@ def main():
     refined_report.write_csv(refined_output_path)
 
     logger.success(f"🎊 增强型分析完成！结果已写入: {output_path}")
-    logger.info(f"原样本: {len(final_report)} | 扣费并每簇选二后剩余: {len(refined_report)}")
+    logger.info(
+        f"原样本: {len(final_report)} | 扣费并每簇选二后剩余: {len(refined_report)}"
+    )
 
     # 10. 展示精选名单预览
     with pl.Config(fmt_str_lengths=50, tbl_rows=20, tbl_width_chars=160):

@@ -13,7 +13,10 @@ import polars as pl
 
 from alpha_factory.utils.schema import F
 
-def main_small_pool(lf: pl.LazyFrame, small_num: int = 800, production=False) -> pl.LazyFrame:
+
+def main_small_pool(
+    lf: pl.LazyFrame, small_num: int = 800, production=False
+) -> pl.LazyFrame:
     """
     定义一个"小市值股票池"，用于捕捉小盘股效应，不可用于生产环境，仅供研究参考。
 
@@ -48,17 +51,19 @@ def main_small_pool(lf: pl.LazyFrame, small_num: int = 800, production=False) ->
     # 2. 限制板块：仅保留主板和创业板（科创板通常为 "科创板"）
     # 3. 补充：通过代码前缀排除 688 (科创板) 和 8/4 (北交所)
 
-    lf = lf.with_columns([
-        pl.col("EXCHANGE").cast(pl.String),
-        pl.col("MARKET_TYPE").cast(pl.String),
-        pl.col("ASSET").cast(pl.String)
-    ])
+    lf = lf.with_columns(
+        [
+            pl.col("EXCHANGE").cast(pl.String),
+            pl.col("MARKET_TYPE").cast(pl.String),
+            pl.col("ASSET").cast(pl.String),
+        ]
+    )
     lf = lf.filter(
-        (pl.col("EXCHANGE").is_in(["SSE", "SZSE"])) &
-        (pl.col("MARKET_TYPE").is_in(["主板", "创业板"])) &
-        ~pl.col("ASSET").str.starts_with("688") &
-        ~pl.col("ASSET").str.starts_with("8") &
-        ~pl.col("ASSET").str.starts_with("4")
+        (pl.col("EXCHANGE").is_in(["SSE", "SZSE"]))
+        & (pl.col("MARKET_TYPE").is_in(["主板", "创业板"]))
+        & ~pl.col("ASSET").str.starts_with("688")
+        & ~pl.col("ASSET").str.starts_with("8")
+        & ~pl.col("ASSET").str.starts_with("4")
     )
 
     if production is False:
@@ -66,9 +71,7 @@ def main_small_pool(lf: pl.LazyFrame, small_num: int = 800, production=False) ->
         # 找到在回测期间"至少有一次"进入过市值前1200名的标的
         # 这一步是为了过滤掉那些永远不可能入选的"巨头"或"僵尸股"，从而加速后续计算
         candidate_assets = (
-            lf.with_columns(
-                _tmp_rank=pl.col("TOTAL_MV").rank("ordinal").over(F.DATE)
-            )
+            lf.with_columns(_tmp_rank=pl.col("TOTAL_MV").rank("ordinal").over(F.DATE))
             .filter(pl.col("_tmp_rank") <= 1200)
             .select("ASSET")
             .unique()
@@ -80,18 +83,26 @@ def main_small_pool(lf: pl.LazyFrame, small_num: int = 800, production=False) ->
     # 这确保排名是基于"有效可交易"的股票，避免了"稀疏日期"问题
     # 导致嵌套因子（如 ts_rank(cs_rank_mask(...))）在特定日期失效
     lf = lf.filter(
-        ~pl.col("IS_ST") &
-        ~pl.col("IS_SUSPENDED") &
-        (pl.col("LIST_DAYS") >= 180) &
-        ~pl.col("IS_UP_LIMIT") &
-        ~pl.col("IS_DOWN_LIMIT")
+        ~pl.col("IS_ST")
+        & ~pl.col("IS_SUSPENDED")
+        & (pl.col("LIST_DAYS") >= 180)
+        & ~pl.col("IS_UP_LIMIT")
+        & ~pl.col("IS_DOWN_LIMIT")
     )
 
     # 现在对"干净数据"进行排名
-    return lf.with_columns([
-        # 计算每一天的实时排名（仅基于有效交易的股票）
-        pl.col("TOTAL_MV").rank("ordinal").over(F.DATE).alias("mv_rank")
-    ]).with_columns([
-        # 预定义可交易池：简化的核心逻辑（因为坏数据已提前过滤）
-        (pl.col("mv_rank") <= small_num).alias(F.POOL_MASK)
-    ]).drop(["mv_rank"])
+    return (
+        lf.with_columns(
+            [
+                # 计算每一天的实时排名（仅基于有效交易的股票）
+                pl.col("TOTAL_MV").rank("ordinal").over(F.DATE).alias("mv_rank")
+            ]
+        )
+        .with_columns(
+            [
+                # 预定义可交易池：简化的核心逻辑（因为坏数据已提前过滤）
+                (pl.col("mv_rank") <= small_num).alias(F.POOL_MASK)
+            ]
+        )
+        .drop(["mv_rank"])
+    )

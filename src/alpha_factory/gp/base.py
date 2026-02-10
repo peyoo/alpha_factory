@@ -5,10 +5,12 @@ from expr_codegen.codes import sources_to_exprs
 from loguru import logger
 from sympy import Basic, Function, symbols, preorder_traversal
 
+
 def dummy(*args):
     # 由于生成后的表达计算已经被map和evaluate接管，所以这里并没有用到，可随便定义
-    print('dummy')
+    print("dummy")
     return 1
+
 
 class RET_TYPE:
     # 是什么不重要
@@ -21,6 +23,7 @@ class RET_TYPE:
 # TODO 如果用使用其它库，这里可能要修改
 Expr = RET_TYPE
 
+
 def convert_inverse_prim(prim, args):
     """
     Convert inverse prims according to:
@@ -31,20 +34,20 @@ def convert_inverse_prim(prim, args):
     prim = copy.copy(prim)
 
     converter = {
-        'sub': lambda *args_: "Add({}, Mul(-1,{}))".format(*args_),
-        'div': lambda *args_: "Mul({}, Pow({}, -1))".format(*args_),
-        'mul': lambda *args_: "Mul({},{})".format(*args_),
-        'add': lambda *args_: "Add({},{})".format(*args_),
-        'max': lambda *args_: "max_({},{})".format(*args_),
-        'min': lambda *args_: "min_({},{})".format(*args_),
+        "sub": lambda *args_: "Add({}, Mul(-1,{}))".format(*args_),
+        "div": lambda *args_: "Mul({}, Pow({}, -1))".format(*args_),
+        "mul": lambda *args_: "Mul({},{})".format(*args_),
+        "add": lambda *args_: "Add({},{})".format(*args_),
+        "max": lambda *args_: "max_({},{})".format(*args_),
+        "min": lambda *args_: "min_({},{})".format(*args_),
     }
     mapping = {}
-    for name in ['add', 'sub', 'mul', 'div', 'max', 'min']:
-        mapping[f'oo_{name}'] = name
-        mapping[f'oi_{name}'] = name
-        mapping[f'io_{name}'] = name
-        mapping[f'of_{name}'] = name
-        mapping[f'fo_{name}'] = name
+    for name in ["add", "sub", "mul", "div", "max", "min"]:
+        mapping[f"oo_{name}"] = name
+        mapping[f"oi_{name}"] = name
+        mapping[f"io_{name}"] = name
+        mapping[f"of_{name}"] = name
+        mapping[f"fo_{name}"] = name
 
     prim_formatter = converter.get(mapping.get(prim.name, prim.name), prim.format)
 
@@ -52,8 +55,7 @@ def convert_inverse_prim(prim, args):
 
 
 def stringify_for_sympy(f):
-    """Return the expression in a human readable string.
-    """
+    """Return the expression in a human readable string."""
     string = ""
     stack = []
     for node in f:
@@ -69,7 +71,7 @@ def stringify_for_sympy(f):
 
 def get_node_name(node):
     """得到节点名"""
-    if hasattr(node, 'name'):
+    if hasattr(node, "name"):
         # 如 ts_arg_max
         node_name = node.name
     else:
@@ -86,34 +88,34 @@ def convert_inverse_sympy(e):
     for node in preorder_traversal(e):
         node_name = get_node_name(node)
 
-        if node_name in ('max_', 'min_'):
-            func_name = list('oo_' + node_name[:-1])
+        if node_name in ("max_", "min_"):
+            func_name = list("oo_" + node_name[:-1])
             for i in range(2):
                 if node.args[i].is_Integer:
-                    func_name[i] = 'i'
+                    func_name[i] = "i"
                 if node.args[i].is_Float:
-                    func_name[i] = 'f'
-            func = symbols(''.join(func_name), cls=Function)
+                    func_name[i] = "f"
+            func = symbols("".join(func_name), cls=Function)
             replacements.append((node, func(node.args[0], node.args[1])))
 
-        if node_name in ('Add', 'Mul'):
+        if node_name in ("Add", "Mul"):
             last_node = node.args[0]
             for arg2 in node.args[1:]:
-                func_name = list('oo_' + node_name.lower())
+                func_name = list("oo_" + node_name.lower())
                 if last_node.is_Integer:
-                    func_name[0] = 'i'
+                    func_name[0] = "i"
                 if last_node.is_Float:
-                    func_name[0] = 'f'
+                    func_name[0] = "f"
                 if arg2.is_Integer:
-                    func_name[1] = 'i'
+                    func_name[1] = "i"
                 if arg2.is_Float:
-                    func_name[1] = 'f'
-                func = symbols(''.join(func_name), cls=Function)
+                    func_name[1] = "f"
+                func = symbols("".join(func_name), cls=Function)
                 last_node = func(last_node, arg2)
             replacements.append((node, last_node))
 
     for node, replacement in replacements:
-        print(node, '  ->  ', replacement)
+        print(node, "  ->  ", replacement)
         e = e.xreplace({node: replacement})
     return e
 
@@ -150,7 +152,7 @@ def _invalid_number_type(e, pset, ret_type):
     for node in preorder_traversal(e):
         if not node.is_Function:
             continue
-        if hasattr(node, 'name'):
+        if hasattr(node, "name"):
             node_name = node.name
         else:
             node_name = str(node.func)
@@ -160,7 +162,9 @@ def _invalid_number_type(e, pset, ret_type):
         for i, arg in enumerate(prim.args):
             if issubclass(arg, ret_type):  # 此处非常重要
                 if node.args[i].is_Number:
-                    logger.debug(f"发现无意义表达式,返回类型参数为RET_TYPE，但结果为数值：{str(e)}")
+                    logger.debug(
+                        f"发现无意义表达式,返回类型参数为RET_TYPE，但结果为数值：{str(e)}"
+                    )
                     return True
             elif issubclass(arg, int):
                 # 应当是整数，结果却是浮点
@@ -185,11 +189,11 @@ def _meaningless__ts_xxx_1(e):
     for node in preorder_traversal(e):
         if len(node.args) >= 2:
             node_name = get_node_name(node)
-            if node_name in ('ts_delay', 'ts_delta'):
+            if node_name in ("ts_delay", "ts_delta"):
                 if not node.args[1].is_Integer:
                     logger.debug(f"发现无意义表达式,时序参数非整数：{str(e)}")
                     return True
-            if node_name.startswith('ts_'):
+            if node_name.startswith("ts_"):
                 if not node.args[-1].is_Number:
                     logger.debug(f"发现无意义表达式,时序参数非数字：{str(e)}")
                     return True
@@ -210,7 +214,7 @@ def _meaningless__xx_xx(e):
 
 
 def get_fitness(name: str, kv: Dict[str, float]) -> float:
-    return kv.get(name, False) or float('nan')
+    return kv.get(name, False) or float("nan")
 
 
 def print_population(population, globals_, more=True):
@@ -220,20 +224,22 @@ def print_population(population, globals_, more=True):
     if more:
         # 打印时更好看
         for (k, v, c), i in zip(exprs_list, population):
-            print(f'{k}', '\t', i.fitness, '\t', v, '\t<--->\t', i)
+            print(f"{k}", "\t", i.fitness, "\t", v, "\t<--->\t", i)
     else:
         # 输出到expr_codegen时更方便
         for (k, v, c), i in zip(exprs_list, population):
-            print(f'{k}={v}')
+            print(f"{k}={v}")
 
 
 def population_to_exprs(population, globals_):
     """群体转表达式"""
     if len(population) == 0:
         return {}
-    sources = [f'GP_{i:04d}={stringify_for_sympy(expr)}' for i, expr in enumerate(population)]
+    sources = [
+        f"GP_{i:04d}={stringify_for_sympy(expr)}" for i, expr in enumerate(population)
+    ]
     # sources.insert(0, 'GP_000=1') # DEBUG
-    raw, exprs_list = sources_to_exprs(globals_, '\n'.join(sources), convert_xor=False)
+    raw, exprs_list = sources_to_exprs(globals_, "\n".join(sources), convert_xor=False)
     return exprs_list
 
 
@@ -241,8 +247,8 @@ def strings_to_sympy(population, globals_):
     """字符串转表达式"""
     if len(population) == 0:
         return {}
-    sources = [f'GP_{i:04d}={expr}' for i, expr in enumerate(population)]
-    raw, exprs_list = sources_to_exprs(globals_, '\n'.join(sources), convert_xor=False)
+    sources = [f"GP_{i:04d}={expr}" for i, expr in enumerate(population)]
+    raw, exprs_list = sources_to_exprs(globals_, "\n".join(sources), convert_xor=False)
     exprs_list = [(k, convert_inverse_sympy(v), c) for k, v, c in exprs_list]
     return exprs_list
 
@@ -253,15 +259,19 @@ def filter_exprs(exprs_list, pset, RET_TYPE, fitness_results):
     exprs_list = {v: (k, v, c) for k, v, c in exprs_list}
     exprs_list = [v for k, v in exprs_list.items()]
     # 清理非法表达式
-    exprs_list = [(k, v, c) for k, v, c in exprs_list if not is_invalid(v, pset, RET_TYPE)]
+    exprs_list = [
+        (k, v, c) for k, v, c in exprs_list if not is_invalid(v, pset, RET_TYPE)
+    ]
     # 清理无意义表达式
     exprs_list = [(k, v, c) for k, v, c in exprs_list if not is_meaningless(v)]
     after_len = len(exprs_list)
-    logger.info('剔除重复、非法、无意义表达式，数量由 {} -> {}', before_len, after_len)
+    logger.info("剔除重复、非法、无意义表达式，数量由 {} -> {}", before_len, after_len)
 
     # 历史表达式不再重复计算
     before_len = len(exprs_list)
     exprs_list = [(k, v, c) for k, v, c in exprs_list if str(v) not in fitness_results]
     after_len = len(exprs_list)
-    logger.info('剔除历史已经计算过适应度的表达式，数量由 {} -> {}', before_len, after_len)
+    logger.info(
+        "剔除历史已经计算过适应度的表达式，数量由 {} -> {}", before_len, after_len
+    )
     return exprs_list

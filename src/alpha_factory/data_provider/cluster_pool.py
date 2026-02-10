@@ -2,6 +2,7 @@
 供以后研究使用
 通过聚类动态生成股票池（POOL_MASK）
 """
+
 import polars as pl
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
@@ -9,7 +10,9 @@ from sklearn.preprocessing import StandardScaler
 from alpha_factory.utils.schema import F
 
 
-def main_cluster_pool(lf: pl.LazyFrame, n_clusters: int = 5, target_cluster_idx: int = 0) -> pl.LazyFrame:
+def main_cluster_pool(
+    lf: pl.LazyFrame, n_clusters: int = 5, target_cluster_idx: int = 0
+) -> pl.LazyFrame:
     """
     通过聚类动态生成 POOL_MASK
     1. 特征选取：如市值(MV)、换手率(Turnover)、波动率(Volatility)

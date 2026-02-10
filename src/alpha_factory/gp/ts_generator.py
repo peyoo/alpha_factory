@@ -28,6 +28,7 @@ def _random_window_int_timeseries() -> int:
         # 时序长窗甚至可以扩展到 500（两年线），用于识别极端估值回归
         return random.choice([120, 200, 250, 500])
 
+
 class TSGPGenerator(GPDeapGenerator):
     """基于时序因子挖掘的GP因子生成器"""
 
@@ -39,20 +40,25 @@ class TSGPGenerator(GPDeapGenerator):
         pset = gp.PrimitiveSetTyped("MAIN", [], Expr)
 
         # 1. 终端 (Terminals)
-        for factor in ['OPEN', 'HIGH', 'LOW', 'CLOSE', 'VOLUME','AMOUNT']:
+        for factor in ["OPEN", "HIGH", "LOW", "CLOSE", "VOLUME", "AMOUNT"]:
             pset.addTerminal(1, Expr, name=factor)
 
         # 2. 窗口参数 (Constants)
         pset.addEphemeralConstant("rand_int", _random_window_int_timeseries, int)
 
         # 3. 基础算术 (用于构建复合指标)
-        for name in ['add', 'sub', 'mul', 'div', 'max', 'min']:
-            pset.addPrimitive(dummy, [Expr, Expr], Expr, name=f'oo_{name}')
+        for name in ["add", "sub", "mul", "div", "max", "min"]:
+            pset.addPrimitive(dummy, [Expr, Expr], Expr, name=f"oo_{name}")
 
         # 4. 核心时序统计算子 (分布特征)
         # 相比截面，增加了 skewness 和 kurtosis 来捕捉肥尾风险
         ts_stats_ops = [
-            'ts_mean', 'ts_std_dev', 'ts_max', 'ts_min','ts_skewness', 'ts_kurtosis'
+            "ts_mean",
+            "ts_std_dev",
+            "ts_max",
+            "ts_min",
+            "ts_skewness",
+            "ts_kurtosis",
         ]
         for op in ts_stats_ops:
             pset.addPrimitive(dummy, [Expr, int], Expr, name=op)
@@ -60,27 +66,25 @@ class TSGPGenerator(GPDeapGenerator):
         # 5. 权重衰减与平滑算子 (时序挖掘的灵魂)
         # 强调“近高远低”的逻辑，这是捕捉时序动量的关键
         ts_smooth_ops = [
-            'ts_ema',  # 指数移动平均
-            'ts_wma',  # 加权移动平均
-            'ts_decay_linear'  # 线性衰减权重
+            "ts_ema",  # 指数移动平均
+            "ts_wma",  # 加权移动平均
+            "ts_decay_linear",  # 线性衰减权重
         ]
         for op in ts_smooth_ops:
             pset.addPrimitive(dummy, [Expr, int], Expr, name=op)
 
         # 6. 动量与位置算子 (捕捉形态)
         # ts_arg_max/min 能告诉模型“高点在多久前”，是极强的择时特征
-        ts_morph_ops = [
-            'ts_delta', 'ts_returns', 'ts_rank','ts_arg_max', 'ts_arg_min'
-        ]
+        ts_morph_ops = ["ts_delta", "ts_returns", "ts_rank", "ts_arg_max", "ts_arg_min"]
         for op in ts_morph_ops:
             pset.addPrimitive(dummy, [Expr, int], Expr, name=op)
 
         # 7. 时序关联算子
-        pset.addPrimitive(dummy, [Expr, Expr, int], Expr, name='ts_corr')
-        pset.addPrimitive(dummy, [Expr, Expr, int], Expr, name='ts_covariance')
+        pset.addPrimitive(dummy, [Expr, Expr, int], Expr, name="ts_corr")
+        pset.addPrimitive(dummy, [Expr, Expr, int], Expr, name="ts_covariance")
 
         # 8. 数值变换 (非线性增强)
-        for op in ['abs_', 'log', 'sqrt', 'sign']:
+        for op in ["abs_", "log", "sqrt", "sign"]:
             pset.addPrimitive(dummy, [Expr], Expr, name=op)
 
         return pset

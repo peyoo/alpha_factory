@@ -30,6 +30,7 @@ def pass_through(x):
 
 'pass_int': lambda *args_: "{}".format(*args_),
 """
+
 import random
 import sys
 
@@ -74,9 +75,11 @@ def generate(pset, min_, max_, condition, type_=None):
                 term = random.choice(pset.terminals[type_])
             except IndexError:
                 _, _, traceback = sys.exc_info()
-                raise IndexError("The gp.generate function tried to add "
-                                 "a terminal of type '%s', but there is "
-                                 "none available." % (type_,)).with_traceback(traceback)
+                raise IndexError(
+                    "The gp.generate function tried to add "
+                    "a terminal of type '%s', but there is "
+                    "none available." % (type_,)
+                ).with_traceback(traceback)
             if type(term) is MetaEphemeral:
                 term = term()
             expr.append(term)
@@ -85,9 +88,11 @@ def generate(pset, min_, max_, condition, type_=None):
                 prim = random.choice(pset.primitives[type_])
             except IndexError:
                 _, _, traceback = sys.exc_info()
-                raise IndexError("The gp.generate function tried to add "
-                                 "a primitive of type '%s', but there is "
-                                 "none available." % (type_,)).with_traceback(traceback)
+                raise IndexError(
+                    "The gp.generate function tried to add "
+                    "a primitive of type '%s', but there is "
+                    "none available." % (type_,)
+                ).with_traceback(traceback)
             expr.append(prim)
             for arg in reversed(prim.args):
                 stack.append((depth + 1, arg))
@@ -169,11 +174,23 @@ def apply_deap_patches():
     Fitness.__gt__ = __gt__
     Fitness.__ge__ = __ge__
 
+
 # ===============================================
 
-def eaMuPlusLambda(population, toolbox, mu, lambda_, cxpb, mutpb, ngen,
-                   stats=None, halloffame=None, verbose=__debug__,
-                   early_stopping_rounds=10):
+
+def eaMuPlusLambda(
+    population,
+    toolbox,
+    mu,
+    lambda_,
+    cxpb,
+    mutpb,
+    ngen,
+    stats=None,
+    halloffame=None,
+    verbose=__debug__,
+    early_stopping_rounds=10,
+):
     r"""This is the :math:`(\mu + \lambda)` evolutionary algorithm.
 
     :param population: A list of individuals.
@@ -221,7 +238,7 @@ def eaMuPlusLambda(population, toolbox, mu, lambda_, cxpb, mutpb, ngen,
     variation.
     """
     logbook = tools.Logbook()
-    logbook.header = ['gen', 'nevals'] + (stats.fields if stats else [])
+    logbook.header = ["gen", "nevals"] + (stats.fields if stats else [])
 
     # Evaluate the individuals with an invalid fitness
     invalid_ind = [ind for ind in population if not ind.fitness.valid]
@@ -237,8 +254,8 @@ def eaMuPlusLambda(population, toolbox, mu, lambda_, cxpb, mutpb, ngen,
     # 新添
     writer = SummaryWriter()
     for k, v in record.items():
-        for i, n in enumerate(('train', 'vaild')):
-            writer.add_scalar(f'{k}/{n}', v[i], 0)
+        for i, n in enumerate(("train", "vaild")):
+            writer.add_scalar(f"{k}/{n}", v[i], 0)
 
     logbook.record(gen=0, nevals=len(invalid_ind), **record)
     if verbose:
@@ -265,19 +282,19 @@ def eaMuPlusLambda(population, toolbox, mu, lambda_, cxpb, mutpb, ngen,
         # Update the statistics with the new population
         record = stats.compile(population) if stats is not None else {}
         for k, v in record.items():
-            for i, n in enumerate(('train', 'vaild')):
-                writer.add_scalar(f'{k}/{n}', v[i], gen)
+            for i, n in enumerate(("train", "vaild")):
+                writer.add_scalar(f"{k}/{n}", v[i], gen)
 
         logbook.record(gen=gen, nevals=len(invalid_ind), **record)
         if verbose:
             print(logbook.stream)
 
         # TODO 不知写的早停算法是否合适，用户可自行修改
-        avg = logbook.select('avg')
+        avg = logbook.select("avg")
         if len(avg) > early_stopping_rounds:
             std = np.std(avg[-early_stopping_rounds:])
             if std < 0.00001:
-                print(f'early_stopping_rounds={early_stopping_rounds}', '\t', std)
+                print(f"early_stopping_rounds={early_stopping_rounds}", "\t", std)
                 break
     # 关闭
     writer.close()

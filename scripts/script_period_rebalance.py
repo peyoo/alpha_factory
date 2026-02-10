@@ -6,8 +6,10 @@ from alpha_factory.evaluation.analysis.returns import show_report
 from alpha_factory.evaluation.analysis.trades import analysis_trades
 from alpha_factory.evaluation.backtest.period import backtest_periodic_rebalance
 from alpha_factory.gp.extra_terminal import add_extra_terminals
+
 # 导入你的配置、字段库和回测函数
 from alpha_factory.utils.schema import F
+
 
 def run_factor_test():
     # --- 1. 数据加载 ---
@@ -34,7 +36,7 @@ def run_factor_test():
         funcs=[main_small_pool, add_extra_terminals],
         column_exprs=[f"{factor_name}={expr}"],
         lookback_window=2,
-        cache_path='md5'
+        cache_path="md5",
     )
 
     # --- 2. 运行回测 ---
@@ -47,7 +49,7 @@ def run_factor_test():
         rebalance_period=25,
         cost_rate=0.0025,
         exec_price=F.OPEN,  # 也可以根据你的 funcs 结果使用 VWAP
-        ascending=True  # 偏度因子通常测试“高偏度”或“低偏度”的 Alpha 性
+        ascending=True,  # 偏度因子通常测试“高偏度”或“低偏度”的 Alpha 性
     )
 
     # --- 3. 结果提取与展示 ---
@@ -56,7 +58,7 @@ def run_factor_test():
 
     # 打印核心绩效摘要
     analysis_trades(trade_df)
-    show_report(daily_df, factor=expr,ret_col='NET_RET')
+    show_report(daily_df, factor=expr, ret_col="NET_RET")
 
 
 if __name__ == "__main__":

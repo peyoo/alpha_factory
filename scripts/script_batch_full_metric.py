@@ -32,9 +32,14 @@ def run_batch_factor_test():
     lf = DataProvider().load_data(
         start_date="20190101",
         end_date="20251231",
-        funcs=[main_small_pool, add_extra_terminals, label_OO_for_IC, label_OO_for_tradable],
-        column_exprs=[f'{F.LABEL_FOR_RET}=OPEN[-2] / OPEN[-1] - 1', *exprs_with_names],
-        lookback_window=200
+        funcs=[
+            main_small_pool,
+            add_extra_terminals,
+            label_OO_for_IC,
+            label_OO_for_tradable,
+        ],
+        column_exprs=[f"{F.LABEL_FOR_RET}=OPEN[-2] / OPEN[-1] - 1", *exprs_with_names],
+        lookback_window=200,
     )
 
     # --- 3. 调用全维度评估 ---
@@ -42,24 +47,18 @@ def run_batch_factor_test():
     logger.info("⚙️ 启动全维度指标评估 (Fee: 0.003)...")
 
     df_result = batch_full_metrics(
-        lf,
-        factors=r"^factor_.*",
-        fee=0.0025,
-        annual_days=252,
-        n_bins= 10
+        lf, factors=r"^factor_.*", fee=0.0025, annual_days=252, n_bins=10
     )
 
     # --- 4. 字段映射与后处理 ---
     # 匹配你提供的返回格式: factor, ic_ir, ann_ret, sharpe, turnover_est, direction
-    df_result = (
-        df_result
-        .with_columns(
-            pl.col("factor").map_elements(
-                lambda f: factor_expr_map.get(f, "unknown"),
-                return_dtype=pl.String
-            ).alias("expression")
-        ).sort("sharpe", descending=True)
-    )
+    df_result = df_result.with_columns(
+        pl.col("factor")
+        .map_elements(
+            lambda f: factor_expr_map.get(f, "unknown"), return_dtype=pl.String
+        )
+        .alias("expression")
+    ).sort("sharpe", descending=True)
 
     # --- 5. 结果展示 ---
     logger.success("✅ 评估任务完成，结果概览:")

@@ -6,18 +6,19 @@ from loguru import logger
 
 from alpha_factory.utils.schema import F
 
+
 def batch_full_metrics(
-        df: Union[pl.DataFrame, pl.LazyFrame],
-        factors: Union[str, List[str]] = r"^factor_.*",
-        label_ic_col: str = F.LABEL_FOR_IC,
-        label_ret_col: str = F.LABEL_FOR_RET,
-        date_col: str = F.DATE,
-        asset_col: str = F.ASSET,
-        pool_mask_col: str = F.POOL_MASK,
-        n_bins: int = 10,
-        mode: Literal['long_only', 'long_short', 'active'] = 'long_only',
-        annual_days: int = 252,
-        fee: float = 0.0025
+    df: Union[pl.DataFrame, pl.LazyFrame],
+    factors: Union[str, List[str]] = r"^factor_.*",
+    label_ic_col: str = F.LABEL_FOR_IC,
+    label_ret_col: str = F.LABEL_FOR_RET,
+    date_col: str = F.DATE,
+    asset_col: str = F.ASSET,
+    pool_mask_col: str = F.POOL_MASK,
+    n_bins: int = 10,
+    mode: Literal["long_only", "long_short", "active"] = "long_only",
+    annual_days: int = 252,
+    fee: float = 0.0025,
 ) -> pl.DataFrame:
     """
     批量因子评估（基于目标股票池）
@@ -73,53 +74,97 @@ def batch_full_metrics(
         logger.warning(f"⚠️ 未找到池掩码列 {pool_mask_col}，使用全市场数据")
 
     # Step 2: 获取因子列
-    f_selector = cs.matches(factors) if isinstance(factors, str) else cs.by_name(factors)
+    f_selector = (
+        cs.matches(factors) if isinstance(factors, str) else cs.by_name(factors)
+    )
     factor_cols = lf.select(f_selector).collect_schema().names()
     if not factor_cols:
         return pl.DataFrame()
 
-    lf = lf.with_columns([
-        pl.col(f).rank().over(date_col).alias(f"{f}_rank")
-        for f in factor_cols
-    ]).with_columns([
-        (pl.col(f"{f}_rank") > (pl.len().over(date_col) * (n_bins - 1) / n_bins))
-        .alias(f"{f}_is_top") for f in factor_cols
-    ] + [
-        (pl.col(f"{f}_rank") <= (pl.len().over(date_col) / n_bins))
-        .alias(f"{f}_is_btm") for f in factor_cols
-    ])
+    lf = lf.with_columns(
+        [pl.col(f).rank().over(date_col).alias(f"{f}_rank") for f in factor_cols]
+    ).with_columns(
+        [
+            (
+                pl.col(f"{f}_rank") > (pl.len().over(date_col) * (n_bins - 1) / n_bins)
+            ).alias(f"{f}_is_top")
+            for f in factor_cols
+        ]
+        + [
+            (pl.col(f"{f}_rank") <= (pl.len().over(date_col) / n_bins)).alias(
+                f"{f}_is_btm"
+            )
+            for f in factor_cols
+        ]
+    )
 
     # Step 4: 生成信号（shift、换手检测）
-    lf = lf.with_columns([
-        pl.col(f"{f}_is_top").shift(1).over(asset_col).fill_null(False)
-        .alias(f"{f}_sig_top") for f in factor_cols
-    ] + [
-        pl.col(f"{f}_is_btm").shift(1).over(asset_col).fill_null(False)
-        .alias(f"{f}_sig_btm") for f in factor_cols
-    ]).with_columns([
-        (pl.col(f"{f}_is_top") & ~pl.col(f"{f}_sig_top"))
-        .alias(f"{f}_buy_top") for f in factor_cols
-    ] + [
-        (pl.col(f"{f}_is_btm") & ~pl.col(f"{f}_sig_btm"))
-        .alias(f"{f}_buy_btm") for f in factor_cols
-    ])
+    lf = lf.with_columns(
+        [
+            pl.col(f"{f}_is_top")
+            .shift(1)
+            .over(asset_col)
+            .fill_null(False)
+            .alias(f"{f}_sig_top")
+            for f in factor_cols
+        ]
+        + [
+            pl.col(f"{f}_is_btm")
+            .shift(1)
+            .over(asset_col)
+            .fill_null(False)
+            .alias(f"{f}_sig_btm")
+            for f in factor_cols
+        ]
+    ).with_columns(
+        [
+            (pl.col(f"{f}_is_top") & ~pl.col(f"{f}_sig_top")).alias(f"{f}_buy_top")
+            for f in factor_cols
+        ]
+        + [
+            (pl.col(f"{f}_is_btm") & ~pl.col(f"{f}_sig_btm")).alias(f"{f}_buy_btm")
+            for f in factor_cols
+        ]
+    )
 
     # Step 5: 日度聚合
     daily_stats = (
         lf.group_by(date_col)
-        .agg([
-            pl.col(label_ret_col).mean().alias("market_avg"),
-
-            *[pl.corr(f, label_ic_col, method="spearman").alias(f"{f}_ic") for f in factor_cols],
-
-            *[pl.col(label_ret_col).filter(pl.col(f"{f}_sig_top")).mean().alias(f"{f}_top_ret") for f in factor_cols],
-
-            *[pl.col(label_ret_col).filter(pl.col(f"{f}_sig_btm")).mean().alias(f"{f}_btm_ret") for f in factor_cols],
-
-            *[(pl.col(f"{f}_buy_top").sum() / (pl.len() / n_bins)).alias(f"{f}_to_top") for f in factor_cols],
-
-            *[(pl.col(f"{f}_buy_btm").sum() / (pl.len() / n_bins)).alias(f"{f}_to_btm") for f in factor_cols],
-        ])
+        .agg(
+            [
+                pl.col(label_ret_col).mean().alias("market_avg"),
+                *[
+                    pl.corr(f, label_ic_col, method="spearman").alias(f"{f}_ic")
+                    for f in factor_cols
+                ],
+                *[
+                    pl.col(label_ret_col)
+                    .filter(pl.col(f"{f}_sig_top"))
+                    .mean()
+                    .alias(f"{f}_top_ret")
+                    for f in factor_cols
+                ],
+                *[
+                    pl.col(label_ret_col)
+                    .filter(pl.col(f"{f}_sig_btm"))
+                    .mean()
+                    .alias(f"{f}_btm_ret")
+                    for f in factor_cols
+                ],
+                *[
+                    (pl.col(f"{f}_buy_top").sum() / (pl.len() / n_bins)).alias(
+                        f"{f}_to_top"
+                    )
+                    for f in factor_cols
+                ],
+                *[
+                    (pl.col(f"{f}_buy_btm").sum() / (pl.len() / n_bins)).alias(
+                        f"{f}_to_btm"
+                    )
+                    for f in factor_cols
+                ],
+            ]
+        )
         .sort(date_col)
         .collect()
     )
@@ -142,27 +187,33 @@ def batch_full_metrics(
             raw_ret = daily_stats.get_column(f"{f}_btm_ret").fill_null(0.0).to_numpy()
             turnover_val = daily_stats.get_column(f"{f}_to_btm").mean() or 0.0
 
-        if mode == 'active':
-            raw_ret = raw_ret - daily_stats.get_column("market_avg").fill_null(0.0).to_numpy()
+        if mode == "active":
+            raw_ret = (
+                raw_ret - daily_stats.get_column("market_avg").fill_null(0.0).to_numpy()
+            )
 
         net_daily_ret = raw_ret - (turnover_val * fee * 2)
         nav = np.cumprod(1.0 + net_daily_ret)
 
         total_ret = nav[-1] - 1 if len(nav) > 0 else 0.0
-        ann_ret = (1 + total_ret) ** (annual_days / total_days) - 1 if total_days > 0 else 0.0
+        ann_ret = (
+            (1 + total_ret) ** (annual_days / total_days) - 1 if total_days > 0 else 0.0
+        )
         vol = np.std(net_daily_ret) * np.sqrt(annual_days)
         sharpe = ann_ret / (vol + 1e-9)
 
-        final_results.append({
-            "factor": f,
-            "ic_mean": ic_mean,
-            'ic_mean_abs': ic_mean_abs,
-            "ic_ir": ic_mean / ic_std,
-            "ic_ir_abs": ic_mean_abs / ic_std,
-            "ann_ret": ann_ret,
-            "sharpe": sharpe,
-            "turnover_est": turnover_val,
-            "direction": direction
-        })
+        final_results.append(
+            {
+                "factor": f,
+                "ic_mean": ic_mean,
+                "ic_mean_abs": ic_mean_abs,
+                "ic_ir": ic_mean / ic_std,
+                "ic_ir_abs": ic_mean_abs / ic_std,
+                "ann_ret": ann_ret,
+                "sharpe": sharpe,
+                "turnover_est": turnover_val,
+                "direction": direction,
+            }
+        )
 
     return pl.DataFrame(final_results).sort("sharpe", descending=True)

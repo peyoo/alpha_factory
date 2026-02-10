@@ -15,7 +15,10 @@ try:
 except Exception:
     # Provide a lazy stub that raises only when called. This allows `import alpha_factory` to succeed in CI/test
     def codegen_exec(*args, **kwargs):
-        raise RuntimeError("expr_codegen.codegen_exec is not available in this environment. Install 'expr_codegen' to enable code generation features.")
+        raise RuntimeError(
+            "expr_codegen.codegen_exec is not available in this environment. Install 'expr_codegen' to enable code generation features."
+        )
+
 
 from alpha_factory.data_provider import TushareDataService
 from alpha_factory.data_provider.stock_assets_manager import StockAssetsManager
@@ -46,16 +49,16 @@ class DataProvider:
         logger.debug("✓ DataProvider (Enhanced) 初始化完成")
 
     def load_data(
-            self,
-            start_date: str,
-            end_date: Optional[str] = None,
-            column_blocks: Optional[List] = None,
-            column_exprs: Optional[List[str]] = None,
-            funcs: Optional[List[Callable[[pl.LazyFrame], pl.LazyFrame]]] = None,
-            lookback_window: int = 0,
-            select_cols: Optional[List] = None,
-            cache_path: Optional[Union[str, Path]] = None,  # 🆕 新增缓存路径参数
-            codegen_over_null:Literal['partition_by', 'order_by', None] = None
+        self,
+        start_date: str,
+        end_date: Optional[str] = None,
+        column_blocks: Optional[List] = None,
+        column_exprs: Optional[List[str]] = None,
+        funcs: Optional[List[Callable[[pl.LazyFrame], pl.LazyFrame]]] = None,
+        lookback_window: int = 0,
+        select_cols: Optional[List] = None,
+        cache_path: Optional[Union[str, Path]] = None,  # 🆕 新增缓存路径参数
+        codegen_over_null: Literal["partition_by", "order_by", None] = None,
     ) -> pl.LazyFrame:
         """
         统一数据集构建管线（带持久化缓存支持）
@@ -115,12 +118,12 @@ class DataProvider:
 
                 # 2. 使用标准 hashlib 计算 MD5
                 # hex digest 返回的是标准的 32 位 16 进制字符串
-                md5_hash = hashlib.md5(hash_content.encode('utf-8')).hexdigest()
+                md5_hash = hashlib.md5(hash_content.encode("utf-8")).hexdigest()
 
                 # 3. 构建路径 (假设默认前缀为 'cached_data')
                 # 注意：不要对字符串使用 .stem，直接构建文件名
                 file_name = f"factor_data_{md5_hash}.parquet"
-                cache_path = Path(settings.OUTPUT_DIR) / 'tmp_data' / file_name
+                cache_path = Path(settings.OUTPUT_DIR) / "tmp_data" / file_name
 
                 # 确保目录存在，防止写入时报错
                 cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -137,10 +140,16 @@ class DataProvider:
                     pl.col(pl.NUMERIC_DTYPES).cast(pl.Float64)
                 )
 
-        end_date = self.tushare_service.get_latest_date_from_warehouse() if end_date is None else end_date.strip()
+        end_date = (
+            self.tushare_service.get_latest_date_from_warehouse()
+            if end_date is None
+            else end_date.strip()
+        )
 
         # 2. 🏗️ 执行完整计算流水线 (如果缓存未命中或未设置)
-        logger.info(f"⚙️ 缓存未命中或未设置，开始计算数据 [{start_date} -> {end_date}]...")
+        logger.info(
+            f"⚙️ 缓存未命中或未设置，开始计算数据 [{start_date} -> {end_date}]..."
+        )
 
         # A. 物理层扫描
         lf = self._scan_with_lookback(start_date, end_date, lookback_window)
@@ -161,7 +170,14 @@ class DataProvider:
         # D. 列生成：func block 型，expr_codegen 支持批量处理
         if column_blocks:
             # 因为使用了POOL_MASK ,函数映射必须加上自定义操作符
-            lf = codegen_exec(lf, *column_blocks,over_null=codegen_over_null,template_file=template_path,date=F.DATE,asset=F.ASSET)
+            lf = codegen_exec(
+                lf,
+                *column_blocks,
+                over_null=codegen_over_null,
+                template_file=template_path,
+                date=F.DATE,
+                asset=F.ASSET,
+            )
 
         # E. 列生成：表达式型
         generated_expr_cols = []
@@ -170,16 +186,21 @@ class DataProvider:
                 if "=" in expr_str:
                     generated_expr_cols.append(expr_str.split("=")[0].strip())
 
-            batch_size = getattr(settings,"CODEGEN_BATCH_SIZE", 100)
+            batch_size = getattr(settings, "CODEGEN_BATCH_SIZE", 100)
             for i in range(0, len(column_exprs), batch_size):
-                batch = column_exprs[i: i + batch_size]
-                lf = codegen_exec(lf, *batch,over_null=codegen_over_null,template_file=template_path,date=F.DATE,asset=F.ASSET)
-
+                batch = column_exprs[i : i + batch_size]
+                lf = codegen_exec(
+                    lf,
+                    *batch,
+                    over_null=codegen_over_null,
+                    template_file=template_path,
+                    date=F.DATE,
+                    asset=F.ASSET,
+                )
 
         # F. 时间切片 & 行过滤
         s_dt = datetime.strptime(start_date, "%Y%m%d").date()
         lf = lf.filter(pl.col("DATE") >= s_dt)
-
 
         # G. 投影
         if select_cols:
@@ -188,7 +209,6 @@ class DataProvider:
         # lf.sort('ASSET', 'DATE').with_columns(
         #     pl.col("ASSET").set_sorted(True)
         # )
-
 
         # 3. 💾 持久化缓存 (如果指定了 cache_path)
         if cache_path:
@@ -207,12 +227,12 @@ class DataProvider:
             lf = pl.scan_parquet(cache_path)
 
         return lf.with_columns(
-            #全部转换成float64，避免后续计算中类型不匹配的问题
+            # 全部转换成float64，避免后续计算中类型不匹配的问题
             cs.numeric().cast(pl.Float64)
         )
 
-    def clean_old_caches(self,days=7):
-        tmp_path = Path(settings.OUTPUT_DIR) / 'tmp_data'
+    def clean_old_caches(self, days=7):
+        tmp_path = Path(settings.OUTPUT_DIR) / "tmp_data"
         now = datetime.now().timestamp()
         for f in tmp_path.glob("factor_data_*.parquet"):
             if f.stat().st_mtime < (now - days * 86400):
@@ -220,7 +240,9 @@ class DataProvider:
 
     # --- 内部核心组件 ---
 
-    def _scan_with_lookback(self, start_date: str, end_date: str, lookback: int) -> pl.LazyFrame:
+    def _scan_with_lookback(
+        self, start_date: str, end_date: str, lookback: int
+    ) -> pl.LazyFrame:
         """根据 lookback 天数自动向前扩充扫描年份"""
         s_dt = datetime.strptime(start_date, "%Y%m%d").date()
         e_dt = datetime.strptime(end_date, "%Y%m%d").date()
@@ -251,26 +273,42 @@ class DataProvider:
         MARKET_TYPE: 市场类型（SZSE/SSE/BSE）
 
         """
-        return (
-            lf.join(self._static_props, left_on=F.ASSET, right_on=F.ASSET, how="left")
-            .with_columns([
+        return lf.join(
+            self._static_props, left_on=F.ASSET, right_on=F.ASSET, how="left"
+        ).with_columns(
+            [
                 # 计算上市天数
-                (pl.col(F.DATE).cast(pl.Date) - pl.col("list_date")).dt.total_days().fill_null(0).alias("LIST_DAYS"),
+                (pl.col(F.DATE).cast(pl.Date) - pl.col("list_date"))
+                .dt.total_days()
+                .fill_null(0)
+                .alias("LIST_DAYS"),
                 # 识别基础交易限制
-                (pl.col("CLOSE_RAW") >= pl.col("UP_LIMIT") - 0.001).alias("IS_UP_LIMIT"),
-                (pl.col("CLOSE_RAW") <= pl.col("DOWN_LIMIT") + 0.001).alias("IS_DOWN_LIMIT"),
+                (pl.col("CLOSE_RAW") >= pl.col("UP_LIMIT") - 0.001).alias(
+                    "IS_UP_LIMIT"
+                ),
+                (pl.col("CLOSE_RAW") <= pl.col("DOWN_LIMIT") + 0.001).alias(
+                    "IS_DOWN_LIMIT"
+                ),
                 # 计算截面市值百分位
-                (pl.col("TOTAL_MV").rank().over("DATE") / pl.col(F.ASSET).count().over("DATE")).alias("TOTAL_MV_PCT"),
+                (
+                    pl.col("TOTAL_MV").rank().over("DATE")
+                    / pl.col(F.ASSET).count().over("DATE")
+                ).alias("TOTAL_MV_PCT"),
                 # 关键修复：在此处转换，避免后续 filter 中的严格类型检查
                 pl.col("exchange").alias("EXCHANGE"),
-                pl.col("market").alias("MARKET_TYPE")
-            ])
+                pl.col("market").alias("MARKET_TYPE"),
+            ]
         )
 
-    def _finalize_projection(self, lf: pl.LazyFrame, base_cols: List[str], generated_cols: List[str]) -> pl.LazyFrame:
+    def _finalize_projection(
+        self, lf: pl.LazyFrame, base_cols: List[str], generated_cols: List[str]
+    ) -> pl.LazyFrame:
         """动态感知列空间并执行投影下压"""
         # 默认始终保留的 ID 和状态列
-        essential = ["DATE", "ASSET", ]
+        essential = [
+            "DATE",
+            "ASSET",
+        ]
 
         # 汇总所有请求的列
         requested = essential + (base_cols or []) + generated_cols

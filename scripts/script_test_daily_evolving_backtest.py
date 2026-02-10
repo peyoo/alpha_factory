@@ -6,30 +6,29 @@ from alpha_factory.evaluation.analysis.returns import show_report
 from alpha_factory.evaluation.analysis.trades import analysis_trades
 from alpha_factory.evaluation.backtest.daily_evolving import backtest_daily_evolving
 from alpha_factory.gp.extra_terminal import add_extra_terminals
+
 # 导入你的配置、字段库和回测函数
 from alpha_factory.utils.schema import F
+
 
 def run_factor_test():
     # --- 1. 数据加载 ---
     exprs = [
         "ts_mean(TURNOVER_RATE, 60)",
         "ts_std_dev(TURNOVER_RATE,60)",
-        "ts_decay_linear(TURNOVER_RATE,60)"
-        "ts_std_dev(AMOUNT,60)",
+        "ts_decay_linear(TURNOVER_RATE,60)ts_std_dev(AMOUNT,60)",
         "ts_mean(AMOUNT,60)",
         "ts_decay_linear(AMOUNT,60)",
         "ts_max(AMOUNT,60)",
         "-ts_corr(cs_rank(VOLUME), cs_rank(ts_returns(CLOSE, 1)), 10)",
-
     ]
-    expr = exprs[len(exprs)-1]  # 选择第7个表达式进行测试
+    expr = exprs[len(exprs) - 1]  # 选择第7个表达式进行测试
     # expr = 'ts_std_dev(cs_mad_zscore_mask(VWAP), 30)'
     # expr = 'ts_rank(cs_rank_mask(cs_rank_mask(VWAP)), 15)'
     # 中性30日换手率波动率因子表达式
     # expr = "ts_std_dev(TURNOVER_RATE,40)"
     # # ILLIQ20 非流动性因子表达
     # expr = "ts_mean(abs(ts_returns(CLOSE,1))/AMOUNT,20)"
-
 
     factor_name = "factor_1"
 
@@ -43,7 +42,7 @@ def run_factor_test():
         funcs=[main_small_pool, add_extra_terminals],
         column_exprs=[f"{factor_name}={expr}"],
         lookback_window=200,
-        cache_path='md5'
+        cache_path="md5",
     )
 
     # --- 2. 运行回测 ---
@@ -56,7 +55,7 @@ def run_factor_test():
         sell_rank=30,
         cost_rate=0.0025,
         exec_price=F.OPEN,  # 也可以根据你的 funcs 结果使用 VWAP
-        ascending=True  # 偏度因子通常测试“高偏度”或“低偏度”的 Alpha 性
+        ascending=True,  # 偏度因子通常测试“高偏度”或“低偏度”的 Alpha 性
     )
 
     # --- 3. 结果提取与展示 ---
@@ -65,7 +64,7 @@ def run_factor_test():
 
     # 打印核心绩效摘要
     analysis_trades(trade_df)
-    show_report(daily_df, factor=factor_name,ret_col='NET_RET')
+    show_report(daily_df, factor=factor_name, ret_col="NET_RET")
 
 
 if __name__ == "__main__":

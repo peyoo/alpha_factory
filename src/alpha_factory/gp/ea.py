@@ -3,14 +3,26 @@ from deap import tools, algorithms
 from loguru import logger
 
 
-def eaMuPlusLambda_NSGA2(population, toolbox, mu, lambda_, cxpb, mutpb, ngen,
-                         stats=None, halloffame=None, verbose=__debug__,
-                         early_stopping_rounds=15, delta=1e-4,generator=None):
+def eaMuPlusLambda_NSGA2(
+    population,
+    toolbox,
+    mu,
+    lambda_,
+    cxpb,
+    mutpb,
+    ngen,
+    stats=None,
+    halloffame=None,
+    verbose=__debug__,
+    early_stopping_rounds=15,
+    delta=1e-4,
+    generator=None,
+):
     """
     专门为 NSGA-II 优化的进化循环
     """
     logbook = tools.Logbook()
-    logbook.header = ['gen', 'nevals'] + (stats.fields if stats else [])
+    logbook.header = ["gen", "nevals"] + (stats.fields if stats else [])
 
     # 1. 初始评估 (使用并行 map)
     invalid_ind = [ind for ind in population if not ind.fitness.valid]
@@ -47,11 +59,15 @@ def eaMuPlusLambda_NSGA2(population, toolbox, mu, lambda_, cxpb, mutpb, ngen,
         redundancy = (1 - unique_count / total_count) * 100 if total_count > 0 else 0
 
         logger.debug(f"Generation {gen}: Evaluating {total_count} individuals.")
-        logger.debug(f"Unique Expressions: {unique_count} | Redundancy: {redundancy:.2f}%")
+        logger.debug(
+            f"Unique Expressions: {unique_count} | Redundancy: {redundancy:.2f}%"
+        )
 
         # 如果重复率过高，给出警告
         if redundancy > 50:
-            logger.warning(f"High redundancy detected! Over {redundancy:.2f}% of offspring are clones.")
+            logger.warning(
+                f"High redundancy detected! Over {redundancy:.2f}% of offspring are clones."
+            )
 
         fitnesses = toolbox.map(toolbox.evaluate, invalid_ind)
         for ind, fit in zip(invalid_ind, fitnesses):
@@ -68,7 +84,9 @@ def eaMuPlusLambda_NSGA2(population, toolbox, mu, lambda_, cxpb, mutpb, ngen,
                 unique_pop.append(ind)
             seen.add(expr)
 
-        logger.debug(f"Post-selection unique individuals: {len(unique_pop)} out of {len(population)}")
+        logger.debug(
+            f"Post-selection unique individuals: {len(unique_pop)} out of {len(population)}"
+        )
         population[:] = unique_pop
 
         if halloffame is not None:
@@ -77,8 +95,7 @@ def eaMuPlusLambda_NSGA2(population, toolbox, mu, lambda_, cxpb, mutpb, ngen,
             # 日志输出排在前5位的个体，及其表达式
             logger.debug("Hall of Fame Top 10 Individuals:")
             for i, ind in enumerate(halloffame.items[:10]):
-                logger.debug(f"Rank {i+1}: {ind} with fitness {ind.fitness.values}")
-
+                logger.debug(f"Rank {i + 1}: {ind} with fitness {ind.fitness.values}")
 
         # 统计
         record = stats.compile(population) if stats is not None else {}
@@ -89,7 +106,7 @@ def eaMuPlusLambda_NSGA2(population, toolbox, mu, lambda_, cxpb, mutpb, ngen,
         # 3. 优化后的早停逻辑 (监控验证集指标提升)
         # 假设 stats 中记录了验证集的最高 ann_ret，存放在 record['max'] 的特定索引
         # 这里以第一个目标作为监控主指标
-        current_score = record['max'][0] if 'max' in record else 0
+        current_score = record["max"][0] if "max" in record else 0
 
         if current_score > (best_valid_score + delta):
             best_valid_score = current_score

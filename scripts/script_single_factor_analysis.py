@@ -11,17 +11,27 @@ from alpha_factory.utils.schema import F
 # expr = 'ts_corr(cs_rank_mask(CLOSE), cs_rank_mask(VOLUME), 20)'
 # 中性120日换手率因子表达式
 # expr = "ts_max(cs_mad_zscore_mask(ts_skewness(VWAP, 15)), 10)"
-expr = 'cs_mad_zscore_mask(ts_skewness(HIGH, 20))'
+expr = "cs_mad_zscore_mask(ts_skewness(HIGH, 20))"
 
 logger.info(f"使用因子表达式: {expr}")
 lf = DataProvider().load_data(
     start_date="20190101",
     end_date="20251231",
-    funcs=[main_small_pool, add_extra_terminals,label_OO_for_IC, label_OO_for_tradable],
-    column_exprs= [f"factor_1={expr}"],
-    lookback_window=200
+    funcs=[
+        main_small_pool,
+        add_extra_terminals,
+        label_OO_for_IC,
+        label_OO_for_tradable,
+    ],
+    column_exprs=[f"factor_1={expr}"],
+    lookback_window=200,
 )
 
-single_factor_alpha_analysis(lf, "factor_1", F.LABEL_FOR_RET,
-                             period=1,n_bins=5,mode='long_only',
-                             )
+single_factor_alpha_analysis(
+    lf,
+    "factor_1",
+    F.LABEL_FOR_RET,
+    period=1,
+    n_bins=5,
+    mode="long_only",
+)

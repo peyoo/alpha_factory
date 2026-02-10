@@ -18,11 +18,13 @@ class DependenceManager:
     3. 聚类引擎剥离: _run_fast_clustering 负责纯粹的数学计算。
     """
 
-    def __init__(self,
-                 opt_names: Tuple[str, ...],
-                 opt_weights: Tuple[float, ...],
-                 cluster_threshold: float = 0.9,
-                 penalty_factor: float = -0.1):
+    def __init__(
+        self,
+        opt_names: Tuple[str, ...],
+        opt_weights: Tuple[float, ...],
+        cluster_threshold: float = 0.9,
+        penalty_factor: float = -0.1,
+    ):
         # 按照用户记忆，threshold 默认为 0.8
         self.threshold = cluster_threshold
         self.penalty_factor = penalty_factor
@@ -30,8 +32,11 @@ class DependenceManager:
         self.opt_weights = opt_weights
 
         # 筛选绩效指标索引，用于计算综合“武力值” (如 IC, Returns)
-        self.perf_indices = [i for i, name in enumerate(opt_names)
-                             if name not in ["complexity", "independence"]]
+        self.perf_indices = [
+            i
+            for i, name in enumerate(opt_names)
+            if name not in ["complexity", "independence"]
+        ]
         self.perf_weights = [opt_weights[i] for i in self.perf_indices]
 
         # 采样锚点数据
@@ -44,7 +49,9 @@ class DependenceManager:
         self.elite_keys: List[str] = []
         self.elite_power_scores: Dict[str, float] = {}
 
-        logger.info(f"🚀 DependenceManager 初始化 | 阈值: {self.threshold} | 惩罚: {self.penalty_factor}")
+        logger.info(
+            f"🚀 DependenceManager 初始化 | 阈值: {self.threshold} | 惩罚: {self.penalty_factor}"
+        )
 
     def _init_anchor_if_needed(self, df_output: pl.DataFrame):
         """初始化采样锚点 (固定 50,000 点)"""
@@ -65,7 +72,9 @@ class DependenceManager:
 
     # --- 阶段 1: 指纹采集 (在 batched_exprs 计算层调用) ---
 
-    def register_fingerprints(self, df_output: pl.DataFrame, expr_batch_info: List[Tuple]):
+    def register_fingerprints(
+        self, df_output: pl.DataFrame, expr_batch_info: List[Tuple]
+    ):
         """
         Args:
             df_output: 包含计算结果的数据框 (列名为临时的因子名)
@@ -105,7 +114,9 @@ class DependenceManager:
                     logger.error(f"提取指纹失败: {col_name} | {e}")
 
     # --- 阶段 2: 动态评价 (在 fill_fitness 评估层调用) ---
-    def calculate_contextual_independence(self, exprs_list: List[str], current_results: Dict) -> List[float]:
+    def calculate_contextual_independence(
+        self, exprs_list: List[str], current_results: Dict
+    ) -> List[float]:
         """
         [终极进攻版]
         1. 物理层：全员默认 0.1，彻底封杀克隆体。
@@ -137,7 +148,9 @@ class DependenceManager:
             if expr_str in self.fingerprints_dict:
                 all_to_cluster.append((expr_str, first_idx))
                 # 记录该因子的纯武力值
-                batch_power[expr_str] = self._get_power_score(current_results.get(expr_str, {}))
+                batch_power[expr_str] = self._get_power_score(
+                    current_results.get(expr_str, {})
+                )
             else:
                 # 凡是没指纹的（即：既没进榜，本代也没被变异出来的老因子）
                 # 哪怕你是首发，也维持 scores_list[first_idx] = 0.1
@@ -148,7 +161,9 @@ class DependenceManager:
             try:
                 # 提取参与竞争的所有因子指纹
                 keys_to_calc = [x[0] for x in all_to_cluster]
-                matrix = np.column_stack([self.fingerprints_dict[k] for k in keys_to_calc])
+                matrix = np.column_stack(
+                    [self.fingerprints_dict[k] for k in keys_to_calc]
+                )
 
                 # 聚类：把逻辑相似（>0.8）的划分为一簇
                 labels = self._run_fast_clustering(matrix, self.threshold)
@@ -159,7 +174,7 @@ class DependenceManager:
                 sorted_candidates = sorted(
                     all_to_cluster,
                     key=lambda x: (batch_power.get(x[0], 0), x[0]),
-                    reverse=True
+                    reverse=True,
                 )
 
                 cluster_occupied = set()
@@ -187,7 +202,9 @@ class DependenceManager:
         [核心计算逻辑] 基于 Spearman 相关性的快速聚类实现
         """
         # 1. 秩变换 (Spearman 相关性基础)
-        matrix_rank = np.apply_along_axis(lambda x: x.argsort().argsort(), 0, matrix).astype(np.float32)
+        matrix_rank = np.apply_along_axis(
+            lambda x: x.argsort().argsort(), 0, matrix
+        ).astype(np.float32)
 
         # 2. 相关性矩阵
         corr_matrix = np.nan_to_num(np.corrcoef(matrix_rank, rowvar=False), nan=0.0)
@@ -198,11 +215,11 @@ class DependenceManager:
         np.fill_diagonal(dist_matrix, 0)
 
         # 4. 快速聚类
-        Z = fastcluster.linkage(squareform(dist_matrix), method='complete')
+        Z = fastcluster.linkage(squareform(dist_matrix), method="complete")
 
         # 5. 切割
         t_val = np.sqrt(2 * (1 - threshold))
-        return fcluster(Z, t=t_val, criterion='distance')
+        return fcluster(Z, t=t_val, criterion="distance")
 
     # --- 阶段 3: 内存与精英状态同步 ---
 
@@ -215,17 +232,22 @@ class DependenceManager:
         self.elite_power_scores = {}
 
         for ind in halloffame:
-            expr_str = getattr(ind, 'expr_str',None)
+            expr_str = getattr(ind, "expr_str", None)
             if expr_str is None:
-                 logger.error(f"无法从个体获取 expr_str 属性: {ind}")
-                 continue
+                logger.error(f"无法从个体获取 expr_str 属性: {ind}")
+                continue
 
             if expr_str in self.fingerprints_dict:
                 new_fingerprints[expr_str] = self.fingerprints_dict[expr_str]
                 if expr_str not in self.elite_keys:
                     self.elite_keys.append(expr_str)
-                    metrics = {name: val for name, val in zip(self.opt_names, ind.fitness.values)}
+                    metrics = {
+                        name: val
+                        for name, val in zip(self.opt_names, ind.fitness.values)
+                    }
                     self.elite_power_scores[expr_str] = self._get_power_score(metrics)
 
         self.fingerprints_dict = new_fingerprints
-        logger.info(f"🧹 独立性管理器剪枝: {before_count} -> {len(self.elite_keys)} (保留精英)")
+        logger.info(
+            f"🧹 独立性管理器剪枝: {before_count} -> {len(self.elite_keys)} (保留精英)"
+        )

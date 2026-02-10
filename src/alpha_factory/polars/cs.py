@@ -5,7 +5,9 @@ from polars import when
 from alpha_factory.utils.schema import F
 
 
-def cs_mad_zscore_mask(x: pl.Expr, mask: pl.Expr = pl.col(F.POOL_MASK),fill_null=0.0) -> pl.Expr:
+def cs_mad_zscore_mask(
+    x: pl.Expr, mask: pl.Expr = pl.col(F.POOL_MASK), fill_null=0.0
+) -> pl.Expr:
     """
     在指定的 mask 范围内进行 MAD 去极值和标准化
     """
@@ -31,7 +33,9 @@ def cs_mad_zscore_mask(x: pl.Expr, mask: pl.Expr = pl.col(F.POOL_MASK),fill_null
     return res.fill_null(fill_null)
 
 
-def cs_rank_mask(x: pl.Expr, mask: pl.Expr = pl.col(F.POOL_MASK), fill_null=0.5) -> pl.Expr:
+def cs_rank_mask(
+    x: pl.Expr, mask: pl.Expr = pl.col(F.POOL_MASK), fill_null=0.5
+) -> pl.Expr:
     """
     在指定的 mask 范围内进行横截面排名标准化
     """
@@ -57,7 +61,9 @@ def cs_rank_mask(x: pl.Expr, mask: pl.Expr = pl.col(F.POOL_MASK), fill_null=0.5)
     return when(mask).then(res).otherwise(fill_null)
 
 
-def cs_demean_mask(x: pl.Expr, mask: pl.Expr = pl.col(F.POOL_MASK), fill_null=0.0) -> pl.Expr:
+def cs_demean_mask(
+    x: pl.Expr, mask: pl.Expr = pl.col(F.POOL_MASK), fill_null=0.0
+) -> pl.Expr:
     """截面去均值：x - mean(x_in_pool)"""
     if mask is None:
         mask = pl.lit(True)
@@ -71,7 +77,9 @@ def cs_demean_mask(x: pl.Expr, mask: pl.Expr = pl.col(F.POOL_MASK), fill_null=0.
     return when(mask).then(res).otherwise(fill_null)
 
 
-def cs_qcut_mask(x: pl.Expr, n_bins: int = 10, mask: pl.Expr = pl.col(F.POOL_MASK), fill_null=0.0) -> pl.Expr:
+def cs_qcut_mask(
+    x: pl.Expr, n_bins: int = 10, mask: pl.Expr = pl.col(F.POOL_MASK), fill_null=0.0
+) -> pl.Expr:
     """截面等频分箱：将池内数据映射到 [0, n_bins-1]"""
     # 逻辑同 rank，因为 qcut 本质上是对 rank 的切分
     if mask is None:

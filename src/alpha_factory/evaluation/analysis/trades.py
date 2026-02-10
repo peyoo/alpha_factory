@@ -1,6 +1,7 @@
 import polars as pl
 from loguru import logger
 
+
 def analysis_trades(trades: pl.DataFrame) -> dict:
     """
     分析交易明细数据，提供胜率、盈亏比、持仓周期等核心指标。
@@ -25,10 +26,12 @@ def analysis_trades(trades: pl.DataFrame) -> dict:
     win_rate = win_count / total_count if total_count > 0 else 0
 
     avg_profit = profits["pnl_ret"].mean() if not profits.is_empty() else 0
-    avg_loss = losses["pnl_ret"].mean() if not losses.is_empty() else 0 # 注意此处为负数
+    avg_loss = (
+        losses["pnl_ret"].mean() if not losses.is_empty() else 0
+    )  # 注意此处为负数
 
     # 盈亏比 (Profit/Loss Ratio)
-    pnl_ratio = (avg_profit / abs(avg_loss)) if avg_loss != 0 else float('inf')
+    pnl_ratio = (avg_profit / abs(avg_loss)) if avg_loss != 0 else float("inf")
 
     # 3. 持仓周期统计
     avg_holding = trades["holding_periods"].mean()
@@ -40,29 +43,33 @@ def analysis_trades(trades: pl.DataFrame) -> dict:
 
     # 5. 结果汇总
     metrics = {
-        "count": total_count,                   # 总交易次数
-        "win_rate": win_rate,                   # 胜率
-        "pnl_ratio": pnl_ratio,                 # 盈亏比
-        "avg_ret": trades["pnl_ret"].mean(),     # 笔均收益
-        "avg_profit": avg_profit,               # 平均盈利单收益
-        "avg_loss": avg_loss,                   # 平均亏损单收益
-        "avg_holding_days": avg_holding,        # 平均持仓天数
-        "max_holding_days": max_holding,        # 最长持仓天数
-        "best_pnl": best_trade["pnl_ret"],      # 最大单笔盈利
-        "worst_pnl": worst_trade["pnl_ret"],    # 最大单笔亏损
+        "count": total_count,  # 总交易次数
+        "win_rate": win_rate,  # 胜率
+        "pnl_ratio": pnl_ratio,  # 盈亏比
+        "avg_ret": trades["pnl_ret"].mean(),  # 笔均收益
+        "avg_profit": avg_profit,  # 平均盈利单收益
+        "avg_loss": avg_loss,  # 平均亏损单收益
+        "avg_holding_days": avg_holding,  # 平均持仓天数
+        "max_holding_days": max_holding,  # 最长持仓天数
+        "best_pnl": best_trade["pnl_ret"],  # 最大单笔盈利
+        "worst_pnl": worst_trade["pnl_ret"],  # 最大单笔亏损
         "best_asset": best_trade.get("ASSET"),  # 最佳标的
-        "worst_asset": worst_trade.get("ASSET") # 最差标的
+        "worst_asset": worst_trade.get("ASSET"),  # 最差标的
     }
 
     # 打印格式化输出
-    print("\n" + "🔍 交易明细深度透视" + " " + "="*30)
+    print("\n" + "🔍 交易明细深度透视" + " " + "=" * 30)
     print(f"📊 样本规模: {metrics['count']} 笔交易")
     print(f"📈 胜率/盈亏比: {metrics['win_rate']:.2%} | {metrics['pnl_ratio']:.2f}")
-    print(f"⏱️ 平均持仓: {metrics['avg_holding_days']:.1f} 天 (最大 {metrics['max_holding_days']} 天)")
+    print(
+        f"⏱️ 平均持仓: {metrics['avg_holding_days']:.1f} 天 (最大 {metrics['max_holding_days']} 天)"
+    )
     print(f"💰 单笔均益: {metrics['avg_ret']:.2%}")
-    print(f"✅ 平均盈利: {metrics['avg_profit']:.2%} | ❌ 平均亏损: {metrics['avg_loss']:.2%}")
+    print(
+        f"✅ 平均盈利: {metrics['avg_profit']:.2%} | ❌ 平均亏损: {metrics['avg_loss']:.2%}"
+    )
     print(f"🚀 最佳单笔: {metrics['best_pnl']:.2%} ({metrics['best_asset']})")
     print(f"💀 最差单笔: {metrics['worst_pnl']:.2%} ({metrics['worst_asset']})")
-    print("="*50 + "\n")
+    print("=" * 50 + "\n")
 
     return metrics

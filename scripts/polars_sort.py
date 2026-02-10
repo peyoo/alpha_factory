@@ -3,18 +3,23 @@ import time
 
 # 1. 创建物理有序的数据 (100万行)
 n = 1_000_000
-df = pl.DataFrame({
-    "date": pl.int_range(0, n, eager=True),
-    "value": pl.int_range(0, n, eager=True).cast(pl.Float64) * 0.5
-})
+df = pl.DataFrame(
+    {
+        "date": pl.int_range(0, n, eager=True),
+        "value": pl.int_range(0, n, eager=True).cast(pl.Float64) * 0.5,
+    }
+)
 
 # --- 场景 A：不声明有序 (默认走 Hash 路径) ---
 lazy_a = df.lazy().group_by("date").agg(pl.col("value").mean())
 
 # --- 场景 B：显式声明已排序 (走 Sorted 路径) ---
-lazy_b = df.lazy().with_columns(
-    pl.col("date").set_sorted()
-).group_by("date").agg(pl.col("value").mean())
+lazy_b = (
+    df.lazy()
+    .with_columns(pl.col("date").set_sorted())
+    .group_by("date")
+    .agg(pl.col("value").mean())
+)
 
 # 2. 开始压力测试：重复执行 100 次计算
 print("正在测试 100 万行数据的 100 次聚合计算...\n")

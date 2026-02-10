@@ -8,7 +8,10 @@ from loguru import logger
 from alpha_factory.utils.config import settings
 from alpha_factory.utils.schema import F
 
-def show_report(df_daily: pl.DataFrame, factor = '',ret_col='NET_RET',show=True) -> dict:
+
+def show_report(
+    df_daily: pl.DataFrame, factor="", ret_col="NET_RET", show=True
+) -> dict:
     """
     分析收益率数据，生成专业可视化 HTML 报告并自动打开。
 
@@ -33,24 +36,24 @@ def show_report(df_daily: pl.DataFrame, factor = '',ret_col='NET_RET',show=True)
     cagr = qs.stats.cagr(returns)
     max_dd = qs.stats.max_drawdown(returns)
 
-    logger.info(f"📈 策略初评 | Sharpe: {sharpe:.2f} | CAGR: {cagr:.2%} | MaxDD: {max_dd:.2%}")
+    logger.info(
+        f"📈 策略初评 | Sharpe: {sharpe:.2f} | CAGR: {cagr:.2%} | MaxDD: {max_dd:.2%}"
+    )
 
     if show:
         # --- 3. 生成报告与展示 ---
         # 这里的 settings.OUTPUT_DIR 建议根据你的项目实际配置
         # 临时演示使用当前路径下的 output/html_reports
-        report_dir = settings.OUTPUT_DIR / 'html_reports'
+        report_dir = settings.OUTPUT_DIR / "html_reports"
         report_dir.mkdir(parents=True, exist_ok=True)
 
-        timestamp = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
         filename = f"Report_{factor}_{timestamp}.html"
         output_path = report_dir / filename
 
         # 生成全量 HTML 报告
         qs.reports.html(
-            returns,
-            title=f"Factor Strategy: {factor}",
-            output=str(output_path)
+            returns, title=f"Factor Strategy: {factor}", output=str(output_path)
         )
         logger.info(f"📊 报告已成功生成: {output_path}")
 

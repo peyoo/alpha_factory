@@ -57,7 +57,9 @@ class HDF5CacheManager:
 
     def is_cached(self, source: str, trade_date: Union[str, date]) -> bool:
         """检查特定日期的数据是否存在于缓存中"""
-        date_str = trade_date if isinstance(trade_date, str) else trade_date.strftime("%Y%m%d")
+        date_str = (
+            trade_date if isinstance(trade_date, str) else trade_date.strftime("%Y%m%d")
+        )
         key = f"/{source}_{date_str}"
 
         cache_file = self.cache_dir / f"{source}.h5"
@@ -71,7 +73,9 @@ class HDF5CacheManager:
             logger.debug(f"检查缓存失败 ({source}_{date_str}): {e}")
             return False
 
-    def save_to_hdf5(self, source: str, trade_date: Union[str, date], df: pd.DataFrame) -> None:
+    def save_to_hdf5(
+        self, source: str, trade_date: Union[str, date], df: pd.DataFrame
+    ) -> None:
         if df is None or df.empty:
             return
 
@@ -81,13 +85,17 @@ class HDF5CacheManager:
             df = df.copy()  # 避免修改原始输入
             df["ts_code"] = df["ts_code"].astype(str).astype("S12")
 
-        date_str = trade_date if isinstance(trade_date, str) else trade_date.strftime("%Y%m%d")
+        date_str = (
+            trade_date if isinstance(trade_date, str) else trade_date.strftime("%Y%m%d")
+        )
         key = f"{source}_{date_str}"
 
         self._get_store(source).put(key, df, format="fixed")
         logger.debug(f"✓ [Fixed-NoDate] 缓存写入: {key}")
 
-    def load_as_polars(self, source: str, trading_dates: List[date]) -> Optional[pl.DataFrame]:
+    def load_as_polars(
+        self, source: str, trading_dates: List[date]
+    ) -> Optional[pl.DataFrame]:
         """
         [极速出口] 批量加载并重构数据
         逻辑：从 HDF5 读取原始数据 -> 修复 Binary 类型 -> 重命名 ts_code -> 回填 DATE -> 垂直合并
@@ -101,7 +109,7 @@ class HDF5CacheManager:
 
         pldfs = []
         for d in trading_dates:
-            date_str = d.strftime('%Y%m%d')
+            date_str = d.strftime("%Y%m%d")
             key = f"/{source}_{date_str}"
 
             if key in available_keys:
@@ -115,18 +123,23 @@ class HDF5CacheManager:
 
                 # 3. 💡 类型修复：处理 Binary -> String 转换
                 # HDF5 以 S12 存储会导致 Polars 识别为 Binary，必须转回 String 才能进行 is_in 过滤
-                binary_cols = [col for col, dtype in pldf.schema.items() if dtype == pl.Binary]
+                binary_cols = [
+                    col for col, dtype in pldf.schema.items() if dtype == pl.Binary
+                ]
                 if binary_cols:
-                    pldf = pldf.with_columns([
-                        pl.col(c).cast(pl.String) for c in binary_cols
-                    ])
+                    pldf = pldf.with_columns(
+                        [pl.col(c).cast(pl.String) for c in binary_cols]
+                    )
 
                 # 4. 数值精度对齐：强制转换数值列类型，防止 concat 时的 schema 不匹配
                 for col in pldf.columns:
                     if col in ["ts_code", "ASSET"]:
                         continue
                     # 将所有 float64 统一为 float32 (除非是需要高精度的成交额或市值)
-                    if pldf.schema[col] == pl.Float64 and col not in ["amount", "total_mv"]:
+                    if pldf.schema[col] == pl.Float64 and col not in [
+                        "amount",
+                        "total_mv",
+                    ]:
                         pldf = pldf.with_columns(pl.col(col).cast(pl.Float32))
 
                 # 5. 字段标准化：ts_code -> ASSET

@@ -7,19 +7,19 @@ from alpha_factory.utils.schema import F
 
 
 def single_calc_quantile_metrics(
-        df: Union[pl.DataFrame, pl.LazyFrame],  # 修改支持 LazyFrame
-        factor_col: str,
-        ret_col: str,
-        date_col: str = F.DATE,
-        asset_col: str = F.ASSET,
-        pool_mask_col: str = F.POOL_MASK,
-        n_bins: int = 10,
-        mode: Literal['long_only', 'long_short', 'active'] = 'active',
-        period: int = 1,
-        cost: float = 0.0025,
-        est_turnover: float = 0.2,
-        annual_days: int = 251,
-        direction: Literal[1, -1] = 1,  # 🆕 新增方向参数
+    df: Union[pl.DataFrame, pl.LazyFrame],  # 修改支持 LazyFrame
+    factor_col: str,
+    ret_col: str,
+    date_col: str = F.DATE,
+    asset_col: str = F.ASSET,
+    pool_mask_col: str = F.POOL_MASK,
+    n_bins: int = 10,
+    mode: Literal["long_only", "long_short", "active"] = "active",
+    period: int = 1,
+    cost: float = 0.0025,
+    est_turnover: float = 0.2,
+    annual_days: int = 251,
+    direction: Literal[1, -1] = 1,  # 🆕 新增方向参数
 ) -> dict:
     """
     计算单因子的分层收益表现及综合评价指标
@@ -98,7 +98,8 @@ def single_calc_quantile_metrics(
                 .over(date_col)
                 .qcut(n_bins, labels=[f"Q{i + 1}" for i in range(n_bins)])
             )
-            .otherwise(None).alias("quantile")
+            .otherwise(None)
+            .alias("quantile")
         )
         .sort([asset_col, date_col])
         .with_columns(pl.col("quantile").forward_fill().over(asset_col))
@@ -106,18 +107,19 @@ def single_calc_quantile_metrics(
     )
 
     # --- 3. 聚合收益 ---
-    q_rets_lf = (
-        df_with_q.group_by([date_col, "quantile"])
-        .agg([
+    q_rets_lf = df_with_q.group_by([date_col, "quantile"]).agg(
+        [
             pl.col(ret_col).mean().alias("ret"),
-            pl.len().alias("count")  # 增加 count 用于后续统计
-        ])
+            pl.len().alias("count"),  # 增加 count 用于后续统计
+        ]
     )
 
     # Pivot 操作在 Polars Lazy 中是阻塞的，会自动触发部分 collect
-    res_series = q_rets_lf.collect().pivot(
-        index=date_col, on="quantile", values="ret"
-    ).sort(date_col)
+    res_series = (
+        q_rets_lf.collect()
+        .pivot(index=date_col, on="quantile", values="ret")
+        .sort(date_col)
+    )
 
     # --- 4. 扣除成本 ---
     reb_cost = est_turnover * period * cost
@@ -134,7 +136,9 @@ def single_calc_quantile_metrics(
         res_series = res_series.with_columns(pl.col(long_col).alias("raw_ret"))
     elif mode == "long_short":
         # 此时如果是 direction=-1，会自动变成 Q1 - Q10
-        res_series = res_series.with_columns((pl.col(long_col) - pl.col(short_col)).alias("raw_ret"))
+        res_series = res_series.with_columns(
+            (pl.col(long_col) - pl.col(short_col)).alias("raw_ret")
+        )
         reb_cost = reb_cost * 2
     elif mode == "active":
         # 使用 long_col 减去截面平均
@@ -147,9 +151,7 @@ def single_calc_quantile_metrics(
         .then(pl.col("raw_ret") - reb_cost)
         .otherwise(pl.col("raw_ret"))
         .alias("target_ret")
-    ).with_columns(
-        (pl.col("target_ret").fill_null(0) + 1).cum_prod().alias("nav")
-    )
+    ).with_columns((pl.col("target_ret").fill_null(0) + 1).cum_prod().alias("nav"))
 
     # --- 5. 计算评价指标 ---
     total_days = len(all_dates)
@@ -162,7 +164,7 @@ def single_calc_quantile_metrics(
 
     total_ret = nav_arr[-1] - 1 if len(nav_arr) > 0 else 0.0
     annual_ret = (1 + total_ret) ** (annual_days / total_days) - 1
-    annual_vol = target_ret_arr.std() * (annual_days ** 0.5)
+    annual_vol = target_ret_arr.std() * (annual_days**0.5)
     sharpe_ratio = annual_ret / (annual_vol + 1e-9)
 
     # 最大回撤
@@ -190,20 +192,17 @@ def single_calc_quantile_metrics(
             "avg_count_per_bin": q_rets_df.get_column("count").mean(),
             "total_obs": q_rets_df.get_column("count").sum(),
             "rebalance_period": period,
-            "avg_daily_turnover": est_turnover
-        }
+            "avg_daily_turnover": est_turnover,
+        },
     }
+
 
 def _check_factor_smoothness(q_rets: pl.DataFrame, n_bins: int) -> dict:
     """
     判断分层收益的平滑度
     """
     # 1. 计算各分层的全周期平均收益
-    mean_rets = (
-        q_rets.group_by("quantile")
-        .agg(pl.col("ret").mean())
-        .sort("quantile")
-    )
+    mean_rets = q_rets.group_by("quantile").agg(pl.col("ret").mean()).sort("quantile")
 
     # 2. 计算单调性得分 (Spearman Rank Correlation)
     # 理想值是 1 (严格单调递增) 或 -1 (严格单调递减)
@@ -220,5 +219,5 @@ def _check_factor_smoothness(q_rets: pl.DataFrame, n_bins: int) -> dict:
 
     return {
         "monotonicity_score": monotonicity,
-        "gap_stability": 1 / (1 + gap_cv)  # 归一化，越接近 1 越平滑
+        "gap_stability": 1 / (1 + gap_cv),  # 归一化，越接近 1 越平滑
     }

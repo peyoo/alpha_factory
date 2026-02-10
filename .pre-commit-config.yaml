@@ -1,14 +1,17 @@
 repos:
 -   repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v6.0.0  # 升级到 v5.0
     hooks:
     -   id: check-ast
     -   id: trailing-whitespace
     -   id: check-yaml
+    -   id: check-added-large-files # 保护：防止不小心把几百MB的行情数据存入git
+        args: ['--maxkb=500']
     -   id: end-of-file-fixer
 
 -   repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.1.6
+    rev: v0.15.0  # 对应最新的高性能 ruff
     hooks:
-    -   id: ruff
+    -   id: ruff        # 逻辑检查（自动修复能修的）
         args: [ --fix, --exit-non-zero-on-fix ]
+    -   id: ruff-format # 格式检查（自动对齐，代替 black）

@@ -7,13 +7,13 @@ from alpha_factory.utils.schema import F
 
 
 def single_calc_decay_turnover(
-        df: Union[pl.DataFrame, pl.LazyFrame],
-        factor_col: str,
-        ret_col: str,
-        date_col: str = F.DATE,
-        asset_col: str = F.ASSET,
-        pool_mask_col: str = F.POOL_MASK,
-        max_lag: int = 10
+    df: Union[pl.DataFrame, pl.LazyFrame],
+    factor_col: str,
+    ret_col: str,
+    date_col: str = F.DATE,
+    asset_col: str = F.ASSET,
+    pool_mask_col: str = F.POOL_MASK,
+    max_lag: int = 10,
 ) -> dict:
     """
     计算单因子的 IC 衰减与换手率估计
@@ -45,25 +45,32 @@ def single_calc_decay_turnover(
     # 在这里 filter，保证 corr 计算时只使用 POOL_MASK=True 且位移成功的行
     filtered_lf = (
         lf.with_columns(shift_exprs)
-        .filter(pl.col(pool_mask_col)) # 计算完位移再过滤
-        .select([date_col, factor_col, "_factor_pre"] + [f"_ret_lag_{i}" for i in range(max_lag)])
+        .filter(pl.col(pool_mask_col))  # 计算完位移再过滤
+        .select(
+            [date_col, factor_col, "_factor_pre"]
+            + [f"_ret_lag_{i}" for i in range(max_lag)]
+        )
     )
 
     # 3. 计算聚合指标
     daily_res = (
         filtered_lf.group_by(date_col)
-        .agg([
-            pl.corr(factor_col, f"_ret_lag_{i}", method="spearman").alias(f"ic_{i}")
-            for i in range(max_lag)
-        ] + [
-            pl.corr(factor_col, "_factor_pre", method="spearman").alias("ac")
-        ])
+        .agg(
+            [
+                pl.corr(factor_col, f"_ret_lag_{i}", method="spearman").alias(f"ic_{i}")
+                for i in range(max_lag)
+            ]
+            + [pl.corr(factor_col, "_factor_pre", method="spearman").alias("ac")]
+        )
         .collect()
     )
 
     # 4. 提取均值并处理空
     # 使用 drop_nans().mean() 保证稳健性
-    lags = [daily_res.get_column(f"ic_{i}").drop_nans().mean() or 0.0 for i in range(max_lag)]
+    lags = [
+        daily_res.get_column(f"ic_{i}").drop_nans().mean() or 0.0
+        for i in range(max_lag)
+    ]
     autocorr_val = daily_res.get_column("ac").drop_nans().mean() or 0.0
 
     # 5. 换手率计算逻辑保护
@@ -74,5 +81,5 @@ def single_calc_decay_turnover(
     return {
         "ic_lags": lags,
         "autocorr": autocorr_val,
-        "est_daily_turnover": est_daily_turnover
+        "est_daily_turnover": est_daily_turnover,
     }

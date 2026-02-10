@@ -8,14 +8,13 @@ from alpha_factory.utils.logger import setup_logger
 
 setup_logger()
 
+
 def initialize_pipeline():
     # --- 1. 初始化 Tushare 服务 (L0 -> L1) ---
     logger.info("📡 正在初始化 Tushare 服务...")
     ts_service = TushareDataService()
 
-
-
-    ts_service.sync_data('20180101')
+    ts_service.sync_data("20180101")
     logger.info("✅ Tushare 数据同步完成。")
 
 
