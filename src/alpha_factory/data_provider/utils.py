@@ -10,7 +10,7 @@ from expr_codegen.tool import ExprTool
 from loguru import logger
 
 from alpha_factory.polars.utils import CUSTOM_OPERATORS
-from alpha_factory.utils.config import settings
+from alpha_factory.config.base import settings
 from alpha_factory.utils.schema import F
 
 

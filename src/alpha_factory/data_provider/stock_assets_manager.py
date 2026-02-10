@@ -31,7 +31,7 @@ from typing import Optional, Dict
 
 import polars as pl
 
-from alpha_factory.utils.config import settings
+from alpha_factory.config.base import settings
 from alpha_factory.utils.logger import logger
 from alpha_factory.utils.schema import F
 

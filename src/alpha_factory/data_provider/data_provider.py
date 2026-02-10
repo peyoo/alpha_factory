@@ -22,7 +22,7 @@ except Exception:
 
 from alpha_factory.data_provider import TushareDataService
 from alpha_factory.data_provider.stock_assets_manager import StockAssetsManager
-from alpha_factory.utils.config import settings
+from alpha_factory.config.base import settings
 from alpha_factory.utils.schema import F
 
 

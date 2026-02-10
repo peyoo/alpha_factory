@@ -16,7 +16,7 @@ from typing import Optional
 import pandas as pd
 import polars as pl
 
-from alpha_factory.utils.config import settings
+from alpha_factory.config.base import settings
 from alpha_factory.data_provider.cache_manager import HDF5CacheManager
 from alpha_factory.data_provider.unified_factor_builder import UnifiedFactorBuilder
 from alpha_factory.data_provider.trade_calendar_manager import TradeCalendarManager

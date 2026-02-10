@@ -31,7 +31,7 @@ __all__ = [
 # --- 快速诊断信息 ---
 def info():
     """打印数据层核心状态简报"""
-    from alpha_factory.utils.config import settings
+    from alpha_factory.config.base import settings
     import polars as pl
 
     print("=" * 40)

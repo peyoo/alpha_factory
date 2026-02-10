@@ -9,7 +9,7 @@ from alpha_factory.evaluation.batch.full_metrics import batch_full_metrics
 from alpha_factory.gp.extra_terminal import add_extra_terminals
 from alpha_factory.gp.label import label_OO_for_tradable, label_OO_for_IC
 from alpha_factory.patch.expr_codegen_patch import apply_expr_codegen_patches
-from alpha_factory.utils.config import settings
+from alpha_factory.config.base import settings
 from alpha_factory.utils.schema import F
 
 

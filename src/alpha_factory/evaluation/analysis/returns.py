@@ -5,7 +5,7 @@ import pandas as pd
 import quantstats as qs
 from loguru import logger
 
-from alpha_factory.utils.config import settings
+from alpha_factory.config.base import settings
 from alpha_factory.utils.schema import F
 
 

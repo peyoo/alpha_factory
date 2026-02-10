@@ -10,7 +10,7 @@ from alpha_factory.evaluation.batch.cluster import batch_clustering
 from alpha_factory.evaluation.batch.returns import batch_quantile_returns
 from alpha_factory.gp.extra_terminal import add_extra_terminals
 from alpha_factory.gp.label import label_OO_for_tradable
-from alpha_factory.utils.config import settings
+from alpha_factory.config.base import settings
 from alpha_factory.utils.schema import F
 
 

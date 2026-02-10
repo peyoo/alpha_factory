@@ -53,7 +53,7 @@ from alpha_factory.gp.label import label_OO_for_IC, label_OO_for_tradable
 from alpha_factory.patch.deap_patch import apply_deap_patches
 from alpha_factory.patch.expr_codegen_patch import apply_expr_codegen_patches
 from alpha_factory.polars.utils import CUSTOM_OPERATORS
-from alpha_factory.utils.config import settings
+from alpha_factory.config.base import settings
 from alpha_factory.utils.schema import F
 
 from typing import TypeVar
