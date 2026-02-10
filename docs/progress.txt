@@ -247,12 +247,16 @@ inspector.print_report(report)
 - `output/reports/ALPHAINSPECT_FINAL_SUMMARY.md` - 最终总结
 
 ### 迁移记录（uv） - 2026-02-09
+// 备份: docs/progress.txt 修改前已复制为 docs/progress.txt.bak
+// 修改说明: 将用户可见运行示例中所有 `poetry` 用法替换为 `uv`，并更新迁移记录措辞。[test]
+
+迁移记录（uv） - 2026-02-09
 - 迁移分支: `chore/migrate-to-uv`
 - 迁移目的: 从 Poetry/Conda 混合管理迁移到 `uv`（统一 pip wheel 管理）。
-- 备份位置: `backup/migrate-to-uv/`（包含 `environment.yml`, `pyproject.toml`, 原 `poetry.lock`, 以及探测脚本 `scripts/probe_deps.sh`, `scripts/merge_probe_results.py` 等）。
+- 备份位置: `backup/migrate-to-uv/`（包含 `environment.yml`, `pyproject.toml`, 原 `poetry.lock`（已归档），以及探测脚本 `scripts/probe_deps.sh`, `scripts/merge_probe_results.py` 等）。
 
 迁移流程要点与结果：
-- 步骤: 更新 `pyproject.toml`（移除 `ta-lib`，增加 `cvxpy` 到依赖），生成 `uv.lock`，运行 `uv sync`，并在 uv 创建的 `.venv` 中做导入验证。
+- 步骤: 更新 `pyproject.toml`（移除 `ta-lib`，增加 `cvxpy` 到依赖），生成 `uv.lock`，运行 `uv sync`，并在 `uv` 创建的 `.venv` 中做导入验证。原 `poetry` 示例已替换为 `uv` 对应命令。
 - uv sync 耗时（wall-clock）: 26.914396 秒（见 `output/uv-sync.log`）。
 - `uv.lock` 中关键包版本:
   - `quantstats`: 0.0.81
@@ -281,4 +285,3 @@ uv sync             # 同步并创建 .venv
 - 将 `uv.lock` 扩展到多平台锁（linux-64 / osx-64 / osx-arm64），并生成 `conda-lock.yml` 摘要（需 CI 或在对应平台上运行）；
 - 修复 backup 中脚本的 ruff 报错并将其纳回主树；
 - 生成一份正式的迁移报告 `docs/deps-audit.md`（更详细的依赖审计）。
-2026-02-09 22:16:38  refactor: start migration to src/ layout; branch=refactor/src-layout; shim alpha/__init__.py added; test=test_src_layout_smoke.py added

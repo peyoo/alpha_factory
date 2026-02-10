@@ -8,7 +8,7 @@ def test_alpha_factory_package_importable():
     Smoke test:
     - ensure top-level package `alpha_factory` can be imported
     - ensure a representative subpackage `alpha_factory.data_provider` imports
-    This validates the src/ layout + editable install or Poetry environment.
+    This validates the src/ layout + editable install or legacy packaging environment.
     """
     # Ensure src is on sys.path during tests (supports editable or non-installed runs)
     repo_root = pathlib.Path(__file__).resolve().parents[1]

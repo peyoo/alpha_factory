@@ -11,7 +11,7 @@
 - `refactor`: 代码重构（未改变功能，如优化 OpenClaw 插件结构）。
 - `perf`: 提高性能（如优化向量化计算、减少 API 调用延迟）。
 - `docs`: 修改文档、注释或 SKILL.md。
-- `chore`: 更新依赖 (Poetry/pnpm)、修改 .gitignore。
+- `chore`: 更新依赖 (uv/pnpm)、修改 .gitignore。
 
 ## 范围定义 (Scope)
 - `factor`: 涉及因子计算逻辑。

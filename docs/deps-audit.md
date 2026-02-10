@@ -4,7 +4,7 @@
 
 概述
 ----
-本次迁移将项目从原先的 (Conda + Poetry) 混合依赖管理，迁移到 `uv`（使用 PyPI wheels + `uv` 的 lock/sync），并对部分二进制/复杂编译包保留审慎处理策略（将 `ta-lib` 视为需由 Conda/系统包特殊安装）。本报告记录了决策依据、跨平台锁摘要、验证步骤与 PyCharm 使用建议。
+本次迁移将项目从原先的 (Conda + legacy-tool) 混合依赖管理，迁移到 `uv`（使用 PyPI wheels + `uv` 的 lock/sync），并对部分二进制/复杂编译包保留审慎处理策略（将 `ta-lib` 视为需由 Conda/系统包特殊安装）。本报告记录了决策依据、跨平台锁摘要、验证步骤与 PyCharm 使用建议。
 
 1) 断/舍/离 决策（为什么移除 `ta-lib`）
 -------------------------------------
@@ -59,7 +59,7 @@ python -m uv sync       # create/update .venv and install
 -----------------------------------------
 - 安装速度
   - Conda: 初次创建环境（含二进制包）通常较快，因为 Conda 提供了预编译的二进制包，但对某些包（非 Conda 仓库）仍需构建。
-  - Poetry+pip: 取决于 PyPI wheel 是否可用，源码构建会慢很多。Poetry solver 通常较慢于 uv（取决于版本）。
+  - legacy-tool+pip: 取决于 PyPI wheel 是否可用，源码构建会慢很多。legacy-tool 的 dependency solver 在部分版本上通常较慢于 uv（取决于具体实现和版本）。
   - uv: 通过解析 PyPI wheel 并尽可能使用 pre-built wheels，通常在解析/锁定速度上比纯 Poetry 快（本次 uv lock/resolution 在本机为数秒，uv sync 完成安装约 27s）
 
 - 磁盘占用
