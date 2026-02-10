@@ -1,42 +1,33 @@
-Alpha-Factory Copilot 指引 (精简版)
-## 1. 角色与核心准则
-你是一位量化金融/高性能 Python 专家。目标：编写强类型、Polars 优先、模块化的代码。
-核心禁令：严禁未来数据泄露（Check shift/rolling）、严禁隐式类型转换、严禁硬编码路径。
+# 📜 Alpha-Factory 仓库指南 (宪法)
 
-## 2. 强制工作流 (TDD 闭环)
-对齐：主动声明已读 docs/ 下的 PRD、进度和规范。重构任务必须先报告当前单元测试通过率。
-拆解：代码前必须输出 3-5 步 TDD 计划，每步定义一个验证点（正常、边界、异常情况）。
-验证：算法必须附带最小可运行测试 (MRE)，函数末尾需包含 assert 自检逻辑（检查 shape、null 率、极值）。
-审计：检查类型提示、loguru 日志、以及量化特有风险（生存偏误、停牌处理、精度）。
-归档：任务结束必须更新 docs/progress.txt，提交信息强制包含 [test] 标签。
+## 📂 项目结构 & 模块组织
+- **源代码**: `src/alpha_factory/`
+  - CLI相关代码在 `cli/`
+  - 数据处理在 `data/`
+  - 因子评估在 `evaluation/`
+  - 回测相关代码在 `backtest/`
+  - 遗传算法相关在 `gp/`
+  - 机器学习相关在 `ml/`
+  - 公共工具函数在 `utils/`
+- **测试**: `tests/` (文件名格式 `test_*.py`)。
+- **文档**: `docs/` (进度记录 `progress.txt`)。
 
-## 3. 技术栈与协作契约
-Stack: Python 3.11+, Polars (Lazy 优先), Pydantic-settings, Loguru, Pytest.
-Git: 强制 Conventional Commits (type(scope): subject)。提交前必过 pre-commit。
-安全: 严禁提交 .env 或数据文件，强制检查 .gitignore。
+## 🛠️ 构建、测试与开发命令
+- **环境同步**: `uv sync`
+- **运行 CLI**: `uv run quant [commands]`
+- **代码检查**: `uv run ruff check .`
+- **执行测试**: `uv run pytest` (带覆盖率: `uv run pytest --cov`)
 
-## 4. 代码规范 (契约化)
-Polars 最佳实践
-LazyFrame: 函数接收/返回 pl.LazyFrame。
-禁止: for 循环、.apply()、原地修改、隐式 Schema。
-表达式: 优先 pl.col().over() 窗口计算。价格用 Float32，ID 用 Categorical。
-命名与数据契约
-键列: DATE, ASSET。OHLCV: 全大写。
+## ⌨️ 编码风格 & 命名约定
+- **语言**: Python 3.11+。强制使用类型标注 (Type Hints)。
+- **核心库**: `polars` (Lazy 优先), `typer` (CLI), `rich` (UI)。
+- **原则**: 保持文件简洁；工具函数提取至 `utils.py`；关键逻辑必须包含 `assert` 自检。
 
-前缀: 因子 factor_, 标签 label_。
-单位: 金额 (RMB), 成交量 (股), 收益率 (小数)。
-缺失值: 统一用 pl.Null，严禁随意填充。
+## 🧪 测试指南
+- **框架**: `pytest`。
+- **流程**: 修改逻辑后，必须运行 `uv run pytest` 确保回归正常。
 
-## 5. 项目结构索引
-config/: 环境配置 | docs/: 规范与进度 | data/: Parquet 仓库
-alpha/: data_provider (数据), gp (遗传算法相关), ml (深度学习相关), evaluation (评价), backtest (回测)
-output/: codegen (代码), logs, reports
-
-## 6. 语言与回复规范
-尽量全部使用中文进行逻辑说明。
-
-## 7. 原子化交付 (Atomic Delivery)
-1 严禁过度预演： 严禁一次性提供超过 3 步以上的复合计划。AI 必须将大目标拆解为可独立运行、可即时 Commit 的“原子步骤”。
-2 确认后行： 每完成一个原子步骤，AI 必须等待厂长回复“确认”或“Commit 完成”后，方可提供下一步的代码。
-3 拒绝冗余说明： 交付代码时，禁止重复背景描述和 TDD 理论。首选：直接交付代码块 + 1行验证命令。
-4 强制工具一致： 严禁在指令中使用与当前项目工具链（如 uv）不符的命令。
+## 📝 提交 & 协作准则
+- **提交信息**: 遵循简洁、面向操作的 Conventional Commits (如 `feat(cli): add sync command [test]`)。
+- **原子交付**: **一次只交付一个文件的代码块**。严禁预测未来步骤。
+- **同步验证**: 给出代码块 -> 厂长物理验证 -> 确认后进入下一步。禁止输出冗长的 TDD 计划文档。
