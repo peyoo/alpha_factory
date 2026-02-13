@@ -15,3 +15,13 @@ repos:
     -   id: ruff        # 逻辑检查（自动修复能修的）
         args: [ --fix, --exit-non-zero-on-fix ]
     -   id: ruff-format # 格式检查（自动对齐，代替 black）
+
+-   repo: local
+    hooks:
+    -   id: pytest
+        name: pytest
+        entry: uv run pytest
+        language: system
+        types: [python]
+        pass_filenames: false
+        always_run: true
