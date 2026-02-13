@@ -39,3 +39,14 @@ htmlcov/
 # 6. IDE 配置文件 (可选)
 .idea/
 .vscode/
+
+
+# 7. 额外系统与工具缓存（建议）
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+.tox/
+.nox/
+.DS_Store
+Thumbs.db
+pip-wheel-metadata/

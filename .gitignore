@@ -59,3 +59,22 @@ scratch/
 !uv.lock
 !.python-version
 !.pre-commit-config.yaml
+
+
+.pytest_cache/
+
+# === 其他常见工具缓存/临时目录 ===
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+.tox/
+.nox/
+.cache/
+
+# Coverage/html reports
+.coverage
+.coverage.*
+htmlcov/
+
+# Build metadata
+pip-wheel-metadata/
