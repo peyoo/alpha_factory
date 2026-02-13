@@ -9,15 +9,7 @@ from loguru import logger
 from typing import Optional, List, Union, Callable, Literal
 from datetime import datetime, timedelta
 
-# Resilient import: expr_codegen.codegen_exec may not be installed in minimal test envs.
-try:
-    from expr_codegen import codegen_exec
-except Exception:
-    # Provide a lazy stub that raises only when called. This allows `import alpha_factory` to succeed in CI/test
-    def codegen_exec(*args, **kwargs):
-        raise RuntimeError(
-            "expr_codegen.codegen_exec is not available in this environment. Install 'expr_codegen' to enable code generation features."
-        )
+from expr_codegen import codegen_exec
 
 
 from alpha_factory.data_provider import TushareDataService
