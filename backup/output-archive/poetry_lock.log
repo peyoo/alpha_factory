@@ -1,3 +1,0 @@
-The "poetry.dev-dependencies" section is deprecated and will be removed in a future version. Use "poetry.group.dev.dependencies" instead.
-
-The option "--no-update" does not exist

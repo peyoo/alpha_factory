@@ -29,7 +29,9 @@ def get_tushare_token() -> str:
     return token or ""
 
 
-def validate_date_str(ctx: typer.Context, param: Any, value: Optional[str]) -> Optional[str]:
+def validate_date_str(
+    ctx: typer.Context, param: Any, value: Optional[str]
+) -> Optional[str]:
     """Typer 回调函数，用于验证日期字符串格式为 YYYYMMDD。
 
     如果格式不正确，使用 rich 打印错误并退出进程（sys.exit(1)），以配合 CLI 的交互习惯。
@@ -40,7 +42,9 @@ def validate_date_str(ctx: typer.Context, param: Any, value: Optional[str]) -> O
         return None
 
     if not isinstance(value, str):
-        console.print(f"[red]❌ 参数 `{getattr(param, 'name', str(param))}` 必须为字符串 (YYYYMMDD)。[/red]")
+        console.print(
+            f"[red]❌ 参数 `{getattr(param, 'name', str(param))}` 必须为字符串 (YYYYMMDD)。[/red]"
+        )
         sys.exit(1)
 
     try:
@@ -54,4 +58,3 @@ def validate_date_str(ctx: typer.Context, param: Any, value: Optional[str]) -> O
 
 
 __all__ = ["get_tushare_token", "validate_date_str"]
-

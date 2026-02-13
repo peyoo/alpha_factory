@@ -6,7 +6,10 @@ import typer
 from rich.console import Console
 
 from alpha_factory.cli.utils import get_tushare_token, validate_date_str
-from alpha_factory.data_provider.tushare_service import TushareDataService, DataSyncError
+from alpha_factory.data_provider.tushare_service import (
+    TushareDataService,
+    DataSyncError,
+)
 
 
 console = Console()

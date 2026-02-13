@@ -26,19 +26,5 @@ def status():
     typer.echo("-" * 30)
 
 
-@app.command()
-def factor(
-    name: str = typer.Argument(..., help="因子名称，例如: alpha001"),
-    period: int = typer.Option(20, help="计算周期 (T)"),
-):
-    """
-    计算特定量化因子。
-    如果所需因子未定义，AI 严禁自创代码，应向厂长提出需求。
-    """
-    typer.echo(f"⚙️ 正在启动内核算子计算因子: {name} (周期: {period}d)")
-    # 这里未来会接入具体的 polars 算子
-    typer.echo("⚠️ 提示: 因子逻辑待内核填充，当前为 mock 输出。")
-
-
 if __name__ == "__main__":
     app()
