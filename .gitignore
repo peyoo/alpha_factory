@@ -78,3 +78,24 @@ htmlcov/
 
 # Build metadata
 pip-wheel-metadata/
+
+# 仓库生成产物与临时缓存（根据仓库结构补充）
+# 临时/缓存数据
+data/tmp_cache/
+data/tmp_cache/**
+tmp_data/
+tmp_data/**
+
+# 自动生成/输出目录
+codegen/
+codegen/**
+html_reports/
+html_reports/**
+models/
+models/**
+
+# 运行/打包日志
+pip-logs/
+conda-logs/
+
+# 保留：data/ 与 output/ 顶级已在上方处理
