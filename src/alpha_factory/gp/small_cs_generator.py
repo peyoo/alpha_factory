@@ -21,8 +21,10 @@ class SmallCSGenerator(GPDeapGenerator):
     针对小微盘进行横截面因子挖掘GP因子生成器
     """
 
-    def __init__(self, config: Dict[str, Any] = {}) -> None:
+    def __init__(self, config: Dict[str, Any] = None) -> None:
         super().__init__(config)
+        if config is None:
+            config = {}
         self.top_n = config.get("top_n", 1000)
         self.max_height = config.get("max_height", 4)  # 最大树高限制
         self.cxpb = config.get("cxpb", 0.5)  # 交叉概率

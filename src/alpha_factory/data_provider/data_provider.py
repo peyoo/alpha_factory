@@ -40,6 +40,11 @@ class DataProvider:
         self._static_props = self.asset_manager.get_properties().lazy()
         logger.debug("✓ DataProvider (Enhanced) 初始化完成")
 
+    def load_pool_data(
+        self, pool, start_date: str, end_date: Optional[str] = None
+    ) -> pl.LazyFrame:
+        pass
+
     def load_data(
         self,
         start_date: str,
@@ -53,7 +58,7 @@ class DataProvider:
         codegen_over_null: Literal["partition_by", "order_by", None] = None,
     ) -> pl.LazyFrame:
         """
-        统一数据集构建管线（带持久化缓存支持）
+        统一数据集构建管线（带持久化缓存支持）\n
         :param start_date: 起始日期 (YYYYMMDD)
         :param end_date: 结束日期 (YYYYMMDD)
         :param column_blocks: 列生成函数块列表 (func block 型)

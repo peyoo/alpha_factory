@@ -14,6 +14,15 @@ import polars as pl
 from alpha_factory.utils.schema import F
 
 
+class PoolUniverse:
+    def __init__(self):
+        self._pool_funcs = []
+
+    @property
+    def pool_funcs(self):
+        return tuple(self._pool_funcs)
+
+
 def main_small_pool(
     lf: pl.LazyFrame, small_num: int = 800, production=False
 ) -> pl.LazyFrame:
