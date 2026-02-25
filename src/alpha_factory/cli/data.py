@@ -27,12 +27,6 @@ def sync(
     ),
 ):
     """按日期区间全量同步 Tushare 数据（将异常直接抛给用户处理）。"""
-    token = get_tushare_token()
-    if not token:
-        console.print(
-            "[red]❌ 未检测到 TUSHARE_TOKEN（settings.TUSHARE_TOKEN 为空）。请在环境变量或配置中设置后重试。[/red]"
-        )
-        raise typer.Exit(code=1)
 
     typer.echo(f"🚀 准备同步数据: start_date={start_date}, end_date={end_date}")
 
