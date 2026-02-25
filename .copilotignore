@@ -50,3 +50,20 @@ htmlcov/
 .DS_Store
 Thumbs.db
 pip-wheel-metadata/
+
+
+# 8. 仓库生成产物与临时缓存（根据仓库结构补充）
+data/tmp_cache/
+data/tmp_cache/**
+data/tmp_cache/warehouse/
+data/tmp_cache/warehouse/**
+codegen/
+codegen/**
+html_reports/
+html_reports/**
+models/
+models/**
+pip-logs/
+conda-logs/
+tmp_data/
+tmp_data/**
