@@ -100,8 +100,74 @@ def single_factor_alpha_analysis(
 
     # --- 第四部分：逻辑健壮性 ---
     print("\n【4. 逻辑健壮性 - 检验因子赚钱的底层逻辑】")
-    print(f"  > 收益单调性: {m['monotonicity']:.2f}")
-    print(f"  > 分层平滑度: {m['smoothness_index']:.2f}")
+    mono = m.get("monotonicity")
+    smooth = m.get("smoothness_index")
+
+    def _fmt(x):
+        try:
+            return f"{x:.2f}"
+        except Exception:
+            return str(x)
+
+    print(f"  > 收益单调性: {_fmt(mono)}")
+    # 解释单调性
+    if mono is None or (isinstance(mono, float) and (mono != mono)):
+        print("    [解释]: 单调性未定义（样本不足或计算异常）。")
+    else:
+        abs_m = abs(mono)
+        if abs_m >= 0.8:
+            msg = "非常好：分层收益随因子排序高度单调，因子区分度强。"
+        elif abs_m >= 0.5:
+            msg = "较好：存在稳定单调关系，通常为可交易信号（视波动/换手而定）。"
+        elif abs_m >= 0.2:
+            msg = "一般：单调性弱，可能依赖少数样本或特定区间表现好。"
+        else:
+            msg = "较差：未见明显单调关系，因子在区分收益上效力有限。"
+
+        # 方向性提示
+        if mono < 0:
+            dir_msg = "（负向单调：因子值越小越好，注意在回测中调整方向）"
+        else:
+            dir_msg = ""
+
+        print(f"    [解释]: {msg} {dir_msg}")
+
+    print(f"  > 分层平滑度: {_fmt(smooth)}")
+    # 解释平滑度
+    if smooth is None or (isinstance(smooth, float) and (smooth != smooth)):
+        print("    [解释]: 平滑度未定义（样本不足或计算异常）。")
+    else:
+        if smooth >= 0.8:
+            s_msg = "非常平滑：各分层收益间距稳定，信号鲁棒性高。"
+        elif smooth >= 0.5:
+            s_msg = "较为平滑：分层间距有一定稳定性，整体可信度良好。"
+        else:
+            s_msg = "不平滑：分层收益波动或间距不稳定，可能受噪声或极端值影响。"
+
+        print(
+            f"    [解释]: {s_msg} 若不平滑，请检查是否存在少数极端样本、资产集中或行业偏移。"
+        )
+
+    # 基于两项综合建议
+    try:
+        score = 0.0
+        if isinstance(mono, (int, float)) and mono == mono:
+            score += min(1.0, abs(mono))
+        if isinstance(smooth, (int, float)) and smooth == smooth:
+            score += min(1.0, smooth)
+
+        if score >= 1.6:
+            overall = "优秀：因子具有明确且稳定的分层能力，适合中低频实盘化。"
+        elif score >= 1.0:
+            overall = "良好：因子有可交易信号，但需注意换手和成本控制。"
+        elif score >= 0.5:
+            overall = "一般：因子存在一定信息，但需进一步净化或与其它因子组合使用。"
+        else:
+            overall = "较差：建议回溯数据源、处理异常值或放弃该因子。"
+
+        print(f"    [综合评估]: {overall}")
+    except Exception:
+        pass
 
     # --- 第五部分：信号衰减 ---
     print("\n【5. 信号衰减 - 衡量因子的“保鲜期”】")

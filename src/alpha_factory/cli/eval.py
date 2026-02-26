@@ -8,7 +8,7 @@ from rich.console import Console
 
 from alpha_factory.data_provider.data_provider import DataProvider
 from alpha_factory.data_provider.pool import MainSmallPool
-from alpha_factory.evaluation.single.quantile_metric import single_calc_quantile_metrics
+from alpha_factory.evaluation.single.single import single_factor_alpha_analysis
 from alpha_factory.evaluation.backtest.utils import generate_and_open_report
 from alpha_factory.utils.schema import F
 
@@ -29,7 +29,7 @@ def quant_eval(
         "--expr",
         help="用于生成或选择的因子表达式，格式示例：FACTOR = CLOSE.rolling_mean(5)",
     ),
-    report: bool = typer.Option(False, "--report", help="是否生成并打开 HTML 报告"),
+    report: bool = typer.Option(True, "--report", help="是否生成并打开 HTML 报告"),
     mode: str = typer.Option(
         "long_only", "--mode", help="评估模式: long_only|long_short|active"
     ),
@@ -51,14 +51,6 @@ def quant_eval(
     # 通过 expr 让 DataProvider 生成因子列（若 expr 为赋值语句，左侧为列名）
     lf = dp.load_pool_data(pool.value(), start_date, end_date, exprs=[expr])
 
-    try:
-        # 仅做快速预览以验证加载成功
-        df_preview = lf.select(["DATE"]).limit(3).collect()
-        typer.echo(f"加载预览成功，示例行数: {df_preview.shape[0]}")
-    except Exception as e:
-        console.print(f"[red]加载数据失败: {e}[/red]")
-        raise typer.Exit(code=1)
-
     typer.echo("✅ 数据加载完成 — 开始评估")
 
     # 从 expr 中推断因子列名（若为赋值形式）
@@ -66,7 +58,7 @@ def quant_eval(
 
     try:
         # 传入 LazyFrame（函数支持 LazyFrame）以便下压优化
-        result = single_calc_quantile_metrics(
+        result = single_factor_alpha_analysis(
             lf,
             factor_col=factor_col,
             ret_col=F.LABEL_FOR_RET,
@@ -78,35 +70,15 @@ def quant_eval(
             period=period,
             cost=cost,
         )
-
-        metrics = result.get("metrics") or {}
-
-        console.print("**评估摘要**")
-        console.print(
-            f"年化收益: {metrics.get('annual_return'):.4f}"
-            if metrics.get("annual_return") is not None
-            else "年化收益: -"
-        )
-        console.print(
-            f"夏普比率: {metrics.get('sharpe_ratio'):.4f}"
-            if metrics.get("sharpe_ratio") is not None
-            else "夏普比率: -"
-        )
-        console.print(
-            f"最大回撤: {metrics.get('max_drawdown'):.4f}"
-            if metrics.get("max_drawdown") is not None
-            else "最大回撤: -"
-        )
-        console.print(
-            f"估算日均换手率: {metrics.get('avg_daily_turnover'):.4f}"
-            if metrics.get("avg_daily_turnover") is not None
-            else "估算日均换手率: -"
-        )
-        console.print("IC 均值 / ICIR: (暂未计算在此处) ")
-
         if report:
             try:
-                generate_and_open_report(result, factor_col)
+                # 兼容旧的 report 接口，期待 key 为 'series'
+                report_result = result
+                if "series" not in report_result and "nav" in report_result:
+                    report_result = dict(report_result)
+                    report_result["series"] = report_result.get("nav")
+
+                generate_and_open_report(report_result, factor_col)
             except Exception as e:
                 console.print(f"[yellow]报告生成失败: {e}[/yellow]")
 
