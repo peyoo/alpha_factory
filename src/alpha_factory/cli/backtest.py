@@ -58,7 +58,7 @@ def quant_bt(
 
     \b
     示例:
-      quant bt -s 20200101 -e 20231231 --expr "F1 = -ts_mean(AMOUNT, 10)"
+      quant bt -s 20200101 -e 20231231 --expr "F1 = -ts_mean(AMOUNT, 30)"
       quant bt -s 20200101 --expr "MOM = CLOSE / CLOSE.shift(20) - 1" --n-buy 20 --sell-rank 50
     """
     # --- 1. 参数校验 ---
@@ -157,27 +157,77 @@ def _print_summary(daily_df, trade_df, factor_col: str) -> None:
     # 夏普比率（无风险利率取 0）
     sharpe = ann_ret / ann_vol if ann_vol > 1e-10 else 0.0
 
-    # 平均每日换手率
+    # Calmar 比率
+    calmar = ann_ret / abs(max_dd) if abs(max_dd) > 1e-10 else 0.0
+
+    # 年化换手率 = 平均日换手率 × 252
     avg_turnover = float(daily_df["TURNOVER"].mean() or 0.0)
+    ann_turnover = avg_turnover * 252
 
-    # 交易笔数
+    # ---- 交易层面统计 ----
     n_trades = len(trade_df)
-    avg_pnl = float(trade_df["pnl_ret"].mean() or 0.0) if n_trades > 0 else 0.0
+    if n_trades > 0:
+        pnl = trade_df["pnl_ret"]
 
+        avg_pnl = float(pnl.mean() or 0.0)
+        avg_hold = float(trade_df["holding_periods"].mean() or 0.0)
+
+        wins = pnl.filter(pnl > 0)
+        losses = pnl.filter(pnl <= 0)
+
+        win_rate = len(wins) / n_trades
+        avg_win = float(wins.mean()) if len(wins) > 0 else 0.0
+        avg_loss = float(losses.mean()) if len(losses) > 0 else 0.0
+
+        # 盈亏比：平均盈利 / 平均亏损绝对值
+        profit_factor = (
+            avg_win / abs(avg_loss) if abs(avg_loss) > 1e-10 else float("inf")
+        )
+    else:
+        avg_pnl = avg_hold = win_rate = avg_win = avg_loss = profit_factor = 0.0
+
+    # ---- 构建表格（分组显示） ----
     table = Table(
-        title=f"回测摘要 · {factor_col}", show_header=True, header_style="bold magenta"
+        title=f"回测摘要 · {factor_col}",
+        show_header=True,
+        header_style="bold magenta",
+        show_lines=False,
     )
-    table.add_column("指标", style="cyan", no_wrap=True)
-    table.add_column("数值", justify="right")
+    table.add_column("指标", style="cyan", no_wrap=True, min_width=18)
+    table.add_column("数值", justify="right", min_width=12)
 
+    # 整体表现
+    table.add_row("[bold]── 整体表现 ──[/bold]", "")
     table.add_row("交易天数", str(n_days))
     table.add_row("总收益率", f"{total_ret:+.2%}")
     table.add_row("年化收益率", f"{ann_ret:+.2%}")
     table.add_row("年化波动率", f"{ann_vol:.2%}")
     table.add_row("夏普比率", f"{sharpe:.3f}")
+    table.add_row("Calmar 比率", f"{calmar:.3f}")
     table.add_row("最大回撤", f"{max_dd:.2%}")
+
+    # 换手
+    table.add_row("[bold]── 换手 ──[/bold]", "")
     table.add_row("平均日换手率", f"{avg_turnover:.2%}")
+    table.add_row("年化换手率", f"{ann_turnover:.1f}x")
+
+    # 交易明细
+    table.add_row("[bold]── 交易明细 ──[/bold]", "")
     table.add_row("成交笔数", str(n_trades))
-    table.add_row("平均单笔 PnL", f"{avg_pnl:+.2%}" if n_trades > 0 else "N/A")
+    if n_trades > 0:
+        table.add_row("平均持有天数", f"{avg_hold:.1f} 天")
+        table.add_row("胜率", f"{win_rate:.2%}")
+        table.add_row("平均单笔 PnL", f"{avg_pnl:+.2%}")
+        table.add_row("正收益平均", f"{avg_win:+.2%}")
+        table.add_row("负收益平均", f"{avg_loss:+.2%}")
+        pf_str = f"{profit_factor:.2f}" if profit_factor != float("inf") else "∞"
+        table.add_row("盈亏比", pf_str)
+    else:
+        table.add_row("平均持有天数", "N/A")
+        table.add_row("胜率", "N/A")
+        table.add_row("平均单笔 PnL", "N/A")
+        table.add_row("正收益平均", "N/A")
+        table.add_row("负收益平均", "N/A")
+        table.add_row("盈亏比", "N/A")
 
     console.print(table)
