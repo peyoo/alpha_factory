@@ -5,6 +5,7 @@ from alpha_factory.cli.data import data_app
 app = typer.Typer(
     help="Alpha Factory: 厂长的量化核心指令集。请遵循宪法，通过此工具与内核交互。",
     rich_markup_mode="rich",
+    no_args_is_help=True,
 )
 
 # 注册 data 子命令
