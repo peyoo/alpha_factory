@@ -16,13 +16,19 @@ console = Console()
 
 
 def sync(
-    start_date: Optional[str] = typer.Argument(
+    start_date: Optional[str] = typer.Option(
         None,
+        "-s",
+        "--start-date",
         callback=validate_date_str,
         help="开始日期，格式: YYYYMMDD；省略则执行增量更新",
     ),
     end_date: Optional[str] = typer.Option(
-        None, callback=validate_date_str, help="结束日期，格式: YYYYMMDD，可选"
+        None,
+        "-e",
+        "--end-date",
+        callback=validate_date_str,
+        help="结束日期，格式: YYYYMMDD，可选",
     ),
 ):
     """同步 Tushare 数据。
