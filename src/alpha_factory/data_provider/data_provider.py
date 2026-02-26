@@ -184,8 +184,8 @@ class DataProvider:
                 *column_blocks,
                 over_null=codegen_over_null,
                 template_file=template_path,
-                date=F.DATE,
-                asset=F.ASSET,
+                date="DATE",  # 这里不能使用F.DATE，因为 codegen_exec 内部是通过字符串解析的，必须保持一致的字符串参数
+                asset="ASSET",  # 同上，保持字符串一致
             )
 
         # E. 列生成：表达式型
@@ -203,8 +203,8 @@ class DataProvider:
                     *batch,
                     over_null=codegen_over_null,
                     template_file=template_path,
-                    date=F.DATE,
-                    asset=F.ASSET,
+                    date="DATE",  # 这里不能使用F.DATE，因为 codegen_exec 内部是通过字符串解析的，必须保持一致的字符串参数
+                    asset="ASSET",  # 同上，保持字符串一致
                 )
 
         # F. 时间切片 & 行过滤

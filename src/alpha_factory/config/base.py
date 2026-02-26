@@ -60,6 +60,17 @@ class Settings(BaseSettings):
     )
     IS_VIP: bool = Field(default=True, validation_alias="IS_VIP")
 
+    # --- Codegen / template settings ---
+    # TEMPLATE_DIR: str = Field(default_factory=lambda: str(get_default_base() / "expression"))
+    # 代码生成批处理大小
+    CODEGEN_BATCH_SIZE: int = 100
+
+    # 向后兼容：部分模块期望字符串字段名 `template_path_str`
+    @property
+    def template_path_str(self) -> str:
+        # 相对于本配置模块文件的位置查找模板，确保打包后也能找到
+        return str(Path(__file__).resolve().parent / "custom_template.py.j2")
+
     # --- Schema 定义 ---
     CALENDAR_SCHEMA: ClassVar[Dict] = {
         "date": pl.Date,

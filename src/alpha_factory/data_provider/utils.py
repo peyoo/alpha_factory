@@ -98,7 +98,7 @@ def my_codegen_exec(
         generated_code, _ = tool.all(
             exprs_src=exprs_dst,
             style="polars",
-            template_file="../utils/custom_template.py.j2",
+            template_file="../config/custom_template.py.j2",
             replace=False,
             regroup=True,
             format=True,
