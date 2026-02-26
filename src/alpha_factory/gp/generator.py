@@ -49,7 +49,7 @@ from alpha_factory.gp.base import (
 from alpha_factory.gp.base import RET_TYPE, Expr
 from alpha_factory.gp.dependence import DependenceManager
 from alpha_factory.gp.ea import eaMuPlusLambda_NSGA2
-from alpha_factory.gp.label import label_OO_for_IC, label_OO_for_tradable
+from alpha_factory.data_provider.label import label_OO_for_IC, label_OO_for_tradable
 from alpha_factory.patch.deap_patch import apply_deap_patches
 from alpha_factory.patch.expr_codegen_patch import apply_expr_codegen_patches
 from alpha_factory.polars.utils import CUSTOM_OPERATORS

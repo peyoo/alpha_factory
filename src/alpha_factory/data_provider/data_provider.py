@@ -13,6 +13,7 @@ from expr_codegen import codegen_exec
 
 
 from alpha_factory.data_provider import TushareDataService
+from alpha_factory.data_provider.pool import PoolUniverse
 from alpha_factory.data_provider.stock_assets_manager import StockAssetsManager
 from alpha_factory.config.base import settings
 from alpha_factory.utils.schema import F
@@ -41,9 +42,20 @@ class DataProvider:
         logger.debug("✓ DataProvider (Enhanced) 初始化完成")
 
     def load_pool_data(
-        self, pool, start_date: str, end_date: Optional[str] = None
+        self,
+        pool: PoolUniverse,
+        start_date: str,
+        end_date: Optional[str] = None,
+        exprs: Optional[List] = None,
     ) -> pl.LazyFrame:
-        pass
+        return self.load_data(
+            start_date,
+            end_date,
+            column_exprs=exprs,
+            funcs=[pool.pool, pool.extra_cols, *pool.label_col_funcs],
+            select_cols=pool.needed_cols(),
+            cache_path="md5",
+        )
 
     def load_data(
         self,
@@ -111,7 +123,7 @@ class DataProvider:
             if cache_path == "md5":
                 # 1. 准备需要哈希的内容字符串
                 # 建议将列表/字典等对象先 str() 化
-                hash_content = f"{start_date}_{end_date}_{lookback_window}_{column_blocks}_{column_exprs}_{select_cols}"
+                hash_content = f"{start_date}_{end_date}_{lookback_window}_{funcs}_{column_blocks}_{column_exprs}_{select_cols}"
 
                 # 2. 使用标准 hashlib 计算 MD5
                 # hex digest 返回的是标准的 32 位 16 进制字符串
@@ -288,8 +300,8 @@ class DataProvider:
                 ),
                 # 计算截面市值百分位
                 (
-                    pl.col("TOTAL_MV").rank().over("DATE")
-                    / pl.col(F.ASSET).count().over("DATE")
+                    pl.col("TOTAL_MV").rank().over(F.DATE)
+                    / pl.col(F.ASSET).count().over(F.DATE)
                 ).alias("TOTAL_MV_PCT"),
                 # 关键修复：在此处转换，避免后续 filter 中的严格类型检查
                 pl.col("exchange").alias("EXCHANGE"),
@@ -303,8 +315,8 @@ class DataProvider:
         """动态感知列空间并执行投影下压"""
         # 默认始终保留的 ID 和状态列
         essential = [
-            "DATE",
-            "ASSET",
+            F.DATE,
+            F.ASSET,
         ]
 
         # 汇总所有请求的列

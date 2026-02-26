@@ -8,7 +8,7 @@ from alpha_factory.evaluation.batch.full_metrics import batch_full_metrics
 from alpha_factory.gp.base import Expr, dummy
 from alpha_factory.gp.extra_terminal import add_extra_terminals
 from alpha_factory.gp.generator import GPDeapGenerator
-from alpha_factory.gp.label import label_OO_for_IC, label_OO_for_tradable
+from alpha_factory.data_provider.label import label_OO_for_IC, label_OO_for_tradable
 
 
 def _random_window_int():
