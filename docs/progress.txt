@@ -252,7 +252,7 @@ inspector.print_report(report)
 - [√] 在 CLI 中新增 `data` 子命令（`src/alpha_factory/cli/data.py`），包含 `sync` 与 `update`，默认将异常直接抛给用户以便手动处理环境/依赖问题；并将 `data_app` 注册到主命令行（`cli/main.py`）。
 - [√] 优化依赖：`pyproject.toml` 添加/确认 `pyarrow>=14.0.0` 并将 HDF5 后端依赖指定为 `tables>=3.8.0`（便于本地/CI 环境安装）。
 - [√] 增加 CLI 工具辅助文件 `src/alpha_factory/cli/utils.py`（提供 `get_tushare_token` 与 Typer 日期回调 `validate_date_str`）。
-- [Test] 已在本地运行 smoke test：`uv run quant data sync 20240101 --end-date 20240105`，数据分片同步与 Parquet 因子构建顺利完成（短区间验证通过）。
+- [Test] 已在本地运行 smoke test：`uv run quant sync 20240101 --end-date 20240105`，数据分片同步与 Parquet 因子构建顺利完成（短区间验证通过）。
 
 
 ```text

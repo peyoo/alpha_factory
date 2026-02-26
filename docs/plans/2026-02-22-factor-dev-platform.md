@@ -32,7 +32,7 @@
 - 步骤 1：编写失败测试 `tests/test_sync_data.py::test_sync_incremental`
 - 步骤 2：实现增量读取与写入（使用 `polars` 读取 HDF5 或转换为 parquet）
 - 步骤 3：运行测试并修正
-- 步骤 4：添加 CLI 入口 `quant data sync`（`typer`）
+- 步骤 4：添加 CLI 入口 `quant sync`（`typer`）
 
 任务 B：遗传算法因子挖掘（`src/alpha_factory/gp_mining.py`）
 - 文件：创建 `src/alpha_factory/gp_mining.py`，示例配置 `examples/gp_config.yaml`

@@ -1,5 +1,5 @@
 import typer
-from alpha_factory.cli.data import data_app
+from alpha_factory.cli.data import sync
 
 # 创建 Typer 实例，这会让 AI 自动生成完美的 --help 文档
 app = typer.Typer(
@@ -8,8 +8,8 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
-# 注册 data 子命令
-app.add_typer(data_app, name="data", help="数据子命令：包含数据同步/更新相关的命令。")
+# 注册顶级 sync 命令（原 data sync / update 合并）
+app.command(name="sync")(sync)
 
 
 @app.command()
