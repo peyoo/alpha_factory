@@ -42,7 +42,16 @@ class PoolUniverse:
 
 class MainSmallPool(PoolUniverse):
     def needed_cols(self) -> list[str]:
-        return [F.POOL_MASK, F.LABEL_FOR_IC, F.LABEL_FOR_RET]
+        return [
+            F.POOL_MASK,
+            F.OPEN,
+            F.CLOSE,
+            F.IS_UP_LIMIT,
+            F.IS_DOWN_LIMIT,
+            F.IS_SUSPENDED,
+            F.LABEL_FOR_IC,
+            F.LABEL_FOR_RET,
+        ]
 
     def pool(
         self, lf: pl.LazyFrame, small_num: int = 800, production=False
