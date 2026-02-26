@@ -184,7 +184,7 @@ class DataProvider:
                 *column_blocks,
                 over_null=codegen_over_null,
                 template_file=template_path,
-                date="DATE",  # 这里不能使用F.DATE，因为 codegen_exec 内部是通过字符串解析的，必须保持一致的字符串参数
+                date="DATE",  # 这里不能使用F.DATE，因为 codegen_exec 因为 codegen_exec 内部是通过模版渲染的
                 asset="ASSET",  # 同上，保持字符串一致
             )
 
@@ -203,7 +203,7 @@ class DataProvider:
                     *batch,
                     over_null=codegen_over_null,
                     template_file=template_path,
-                    date="DATE",  # 这里不能使用F.DATE，因为 codegen_exec 内部是通过字符串解析的，必须保持一致的字符串参数
+                    date="DATE",  # 这里不能使用F.DATE，因为 codegen_exec 内部是通过模版渲染的
                     asset="ASSET",  # 同上，保持字符串一致
                 )
 
