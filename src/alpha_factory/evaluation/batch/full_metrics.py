@@ -18,7 +18,7 @@ def batch_full_metrics(
     n_bins: int = 10,
     mode: Literal["long_only", "long_short", "active"] = "long_only",
     annual_days: int = 252,
-    fee: float = 0.0025,
+    fee: float = 0.003,
 ) -> pl.DataFrame:
     """
     批量因子评估（基于目标股票池）

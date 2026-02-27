@@ -25,7 +25,7 @@ def single_factor_alpha_analysis(
     mode: Literal["long_only", "long_short", "active"] = "long_only",
     n_bins: int = 5,
     period: int = 1,
-    cost: float = 0.0015,  # 默认单边费率（如印花税+佣金）
+    cost: float = 0.003,  # 默认单边费率（如印花税+佣金）
 ) -> dict:
     """
     【工业级】单因子全能体检报告：
