@@ -50,6 +50,7 @@ class PoolUniverse:
 
 
 class MainSmallPool(PoolUniverse):
+    @property
     def name(self):
         return "main_small_pool"
 

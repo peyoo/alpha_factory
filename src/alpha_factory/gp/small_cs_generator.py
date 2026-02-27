@@ -29,6 +29,19 @@ class SmallCSGenerator(GPDeapGenerator):
         self.random_window_func = config.get(
             "random_window_func", _random_window_int
         )  # 随机窗口函数
+        self.terminals = config.get(
+            "terminals",
+            [
+                "OPEN",
+                "HIGH",
+                "LOW",
+                "CLOSE",
+                "TURNOVER_RATE",
+                "VWAP",
+                "RET",
+                "VWAP_RET",
+            ],
+        )
 
         self.opt_names = config.get("opt_names", ("ann_ret",))  # 多目标优化因子名称
         self.opt_weights = config.get("opt_weights", (1.0,))  # 多目标优化权重

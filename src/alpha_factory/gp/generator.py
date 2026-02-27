@@ -101,11 +101,13 @@ class GPDeapGenerator(object):
         """
         # --- 1. 基础信息配置 ---
         self.config = config
-        self.pool: PoolUniverse = config.get("pool", MainSmallPool)
-        if self.pool is None:
+        _pool = config.get("pool", MainSmallPool)
+        if _pool is None:
             raise Exception(
                 "股票池类没有提供，请在配置中通过 'pool' 键提供一个股票池类"
             )
+        # 支持传入类或实例：若传入的是类则实例化
+        self.pool: PoolUniverse = _pool() if isinstance(_pool, type) else _pool
 
         self.name = self.pool.name
 
@@ -176,7 +178,7 @@ class GPDeapGenerator(object):
     def save_dir(self):
         """获取结果保存目录"""
         if self._save_dir is None:
-            self._save_dir = Path(settings.OUTPUT_DIR) / self.pool_func.__name__
+            self._save_dir = Path(settings.OUTPUT_DIR) / self.name
             self._save_dir.mkdir(parents=True, exist_ok=True)
         return self._save_dir
 
