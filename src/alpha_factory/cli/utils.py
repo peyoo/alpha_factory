@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 import sys
 from typing import Any, Optional
 
@@ -8,8 +9,13 @@ import typer
 from rich.console import Console
 
 from alpha_factory.config.base import settings
+from alpha_factory.data_provider.pool import MainSmallPool
 
 console = Console()
+
+
+class PoolUniverseEnum(Enum):
+    main_small = MainSmallPool
 
 
 def get_tushare_token() -> str:
@@ -57,4 +63,4 @@ def validate_date_str(
         sys.exit(1)
 
 
-__all__ = ["get_tushare_token", "validate_date_str"]
+__all__ = ["get_tushare_token", "validate_date_str", "PoolUniverseEnum"]

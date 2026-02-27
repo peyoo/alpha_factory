@@ -6,7 +6,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from alpha_factory.cli.eval import PoolUniverseEnum
+from alpha_factory.cli.utils import PoolUniverseEnum
 from alpha_factory.data_provider.data_provider import DataProvider
 from alpha_factory.evaluation.backtest.daily_evolving import backtest_daily_evolving
 from alpha_factory.evaluation.backtest.utils import generate_and_open_report

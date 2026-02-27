@@ -1,22 +1,17 @@
 from __future__ import annotations
 
-from enum import Enum
 from typing import Optional
 
 import typer
 from rich.console import Console
 
+from alpha_factory.cli.utils import PoolUniverseEnum
 from alpha_factory.data_provider.data_provider import DataProvider
-from alpha_factory.data_provider.pool import MainSmallPool
 from alpha_factory.evaluation.single.single import single_factor_alpha_analysis
 from alpha_factory.evaluation.backtest.utils import generate_and_open_report
 from alpha_factory.utils.schema import F
 
 console = Console()
-
-
-class PoolUniverseEnum(Enum):
-    main_small = MainSmallPool
 
 
 def quant_eval(

@@ -1,6 +1,7 @@
 import typer
 from alpha_factory.cli.data import sync
 from alpha_factory.cli.eval import quant_eval
+from alpha_factory.cli.evals import quant_evals
 from alpha_factory.cli.backtest import quant_bt
 
 # 创建 Typer 实例，这会让 AI 自动生成完美的 --help 文档
@@ -13,6 +14,7 @@ app = typer.Typer(
 # 注册顶级 sync 命令（原 data sync / update 合并）
 app.command(name="sync")(sync)
 app.command(name="eval")(quant_eval)
+app.command(name="evals")(quant_evals)
 app.command(name="bt")(quant_bt)
 
 
