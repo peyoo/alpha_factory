@@ -11,6 +11,7 @@
 
 import polars as pl
 
+from alpha_factory.config.base import settings
 from alpha_factory.data_provider.label import label_OO_for_IC, label_OO_for_tradable
 from alpha_factory.utils.schema import F
 
@@ -47,6 +48,10 @@ class PoolUniverse:
         :return:
         """
         return [F.POOL_MASK, F.LABEL_FOR_IC, F.LABEL_FOR_RET]
+
+    @property
+    def pool_dir(self):
+        return settings.OUTPUT_DIR / self.name
 
 
 class MainSmallPool(PoolUniverse):

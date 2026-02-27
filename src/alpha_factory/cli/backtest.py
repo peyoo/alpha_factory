@@ -22,7 +22,9 @@ _EXEC_PRICE_MAP: dict[str, str] = {
 
 
 def quant_bt(
-    start_date: str = typer.Option(..., "-s", "--start-date", help="开始日期 YYYYMMDD"),
+    start_date: str = typer.Option(
+        "20190101", "-s", "--start-date", help="开始日期 YYYYMMDD"
+    ),
     end_date: Optional[str] = typer.Option(
         None, "-e", "--end-date", help="结束日期 YYYYMMDD（默认至最新）"
     ),

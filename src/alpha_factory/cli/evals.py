@@ -1,11 +1,17 @@
 """quant evals —— 批量因子评估命令。
 
-支持两种输入方式：
-  1. --expr "factor1=ts_mean(AMOUNT,40)" --expr "factor2=rank(CLOSE)"  （可重复传入）
-  2. --csv-file factors.csv --name-col name --expr-col expression       （CSV 文件）
-两种方式可同时使用，结果合并去重（以因子名为 key）。
+支持两种输入方式（可同时使用，结果合并去重）：
+  1. --expr "factor1=ts_mean(AMOUNT,40)" --expr "factor2=cs_rank(CLOSE)"  （可重复传入）
+  2. --csv factors.csv                                                      （CSV 文件）
 
-输出：Rich 终端表格（前 --top-n 行） + 可选 --output CSV 落盘。
+路径解析规则（适用于 --csv 和 --output）：
+  - 相对路径 → 自动解析到当前股票池目录（如 output/main_small_pool/）
+  - 绝对路径 → 原样使用
+
+输出落盘规则：
+  - 指定 --output → 写入该路径
+  - 未指定 --output 且提供了 --csv → 覆盖源 CSV
+  - 未指定 --output 且仅用 --expr → 只打印终端表格，不落盘
 """
 
 from __future__ import annotations
@@ -161,7 +167,10 @@ def quant_evals(
         help="因子表达式，格式: 'factor1=ts_mean(AMOUNT,40)'，可重复传入多次",
     ),
     csv_file: Optional[Path] = typer.Option(
-        None, "--csv-file", help="CSV 文件路径，包含因子名与表达式列"
+        None,
+        "--csv",
+        "--csv-file",
+        help="CSV 文件路径，包含因子名与表达式列（相对路径解析到股票池目录）",
     ),
     name_col: str = typer.Option("name", "--name-col", help="CSV 中因子名所在列名"),
     expr_col: str = typer.Option(
@@ -181,17 +190,21 @@ def quant_evals(
     ),
 ):
     """
-    批量因子评估（多因子并行）。
+    批量因子评估（多因子并行），结果按 sharpe 降序排列。
 
-    示例（命令行表达式）：
+    [bold]示例 1[/bold] — 命令行表达式：
 
       quant evals -s 20220101 \\
-        --expr "factor1=ts_mean(AMOUNT,40)" \\
-        --expr "factor2=rank(CLOSE)"
+        --expr "f1=ts_mean(AMOUNT,40)" \\
+        --expr "f2=cs_rank(CLOSE)"
 
-    示例（CSV 文件）：
+    [bold]示例 2[/bold] — 从 CSV 读取（相对路径自动定位到股票池目录）：
 
-      quant evals -s 20220101 --csv-file factors.csv
+      quant evals -s 20220101 --csv best_factors.csv
+
+    [bold]示例 3[/bold] — 读取 CSV 并将结果写入新文件：
+
+      quant evals -s 20220101 --csv best_factors.csv --output evals_result.csv
     """
     # ── 1. 收集所有因子对 ────────────────────────────────────────────────────
     factor_pairs: list[tuple[str, str]] = []
@@ -200,6 +213,8 @@ def quant_evals(
         factor_pairs.extend(_parse_exprs(list(expr)))
 
     if csv_file:
+        if not csv_file.is_absolute():
+            csv_file = pool.value().pool_dir / csv_file
         factor_pairs.extend(_load_from_csv(csv_file, name_col, expr_col))
 
     if not factor_pairs:
@@ -267,10 +282,17 @@ def quant_evals(
     # ── 4. 输出 ──────────────────────────────────────────────────────────────
     _print_rich_table(result_df, top_n)
 
-    if output:
-        output.parent.mkdir(parents=True, exist_ok=True)
-        result_df.write_csv(output)
-        console.print(f"[green]✅ 完整结果已写入: {output}[/green]")
+    # 确定落盘路径：--output 优先，否则覆盖源 CSV，均无则跳过
+    effective_output: Optional[Path] = output
+    if effective_output is not None and not effective_output.is_absolute():
+        effective_output = pool.value().pool_dir / effective_output
+    elif effective_output is None:
+        effective_output = csv_file  # csv_file 已在步骤 1 中解析为绝对路径或 None
+
+    if effective_output:
+        effective_output.parent.mkdir(parents=True, exist_ok=True)
+        result_df.write_csv(effective_output)
+        console.print(f"[green]✅ 完整结果已写入: {effective_output}[/green]")
 
     console.print(f"✅ 批量评估完成，共 {len(result_df)} 个因子")
 
