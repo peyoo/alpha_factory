@@ -108,8 +108,8 @@ class SmallCSGenerator(GPDeapGenerator):
             pset.addPrimitive(dummy, [Expr], Expr, name=op)
 
         # 6. 数值变换 (改善线性模型的特征分布)
-        # 可选:sigmoid / tanh (软截断)
-        # for op in ['abs_', 'log','sqrt']:
-        #     pset.addPrimitive(dummy, [Expr], Expr, name=op)
+        # 可选:sigmoid / tanh (软截断),'abs_', 'log','sqrt'
+        for op in ["reverse"]:
+            pset.addPrimitive(dummy, [Expr], Expr, name=op)
 
         return pset

@@ -127,9 +127,11 @@ class StockAssetsManager:
                 existing_base = self._df.select(F.ASSET).with_row_index("__pos__")
 
                 # 更新已有资产属性
-                updated_existing = existing_base.join(
-                    snap, on=F.ASSET, how="left"
-                ).cast(self.schema)  # 此时 snap 里的新属性被带入旧位置
+                updated_existing = (
+                    existing_base.join(snap, on=F.ASSET, how="left")
+                    .drop("__pos__")  # 去掉辅助列，保持与 new_assets 同宽
+                    .cast(self.schema)
+                )  # 此时 snap 里的新属性被带入旧位置
 
                 # 获取真正的新资产
                 new_assets = snap.join(existing_base, on=F.ASSET, how="anti")
