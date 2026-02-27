@@ -47,6 +47,7 @@ class DataProvider:
         start_date: str,
         end_date: Optional[str] = None,
         exprs: Optional[List] = None,
+        cache: Optional[Union[str, Path]] = None,
     ) -> pl.LazyFrame:
         return self.load_data(
             start_date,
@@ -54,7 +55,7 @@ class DataProvider:
             column_exprs=exprs,
             funcs=[pool.pool, pool.extra_cols, *pool.label_col_funcs],
             select_cols=pool.needed_cols(),
-            cache_path="md5",
+            cache_path=cache,
         )
 
     def load_data(

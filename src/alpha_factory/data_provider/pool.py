@@ -16,6 +16,10 @@ from alpha_factory.utils.schema import F
 
 
 class PoolUniverse:
+    @property
+    def name(self):
+        return self.__class__.__name__
+
     def __init__(self):
         self.label_col_funcs = [label_OO_for_IC, label_OO_for_tradable]
 
@@ -37,15 +41,29 @@ class PoolUniverse:
         return lf
 
     def needed_cols(self):
+        """
+        用于计算股票池的必要列，必须包含这些列才能正确计算股票池掩码
+        ic，收益率计算，回测，遗传因子计算等都需要这些列（不需要列入ASSET，DATE）
+        :return:
+        """
         return [F.POOL_MASK, F.LABEL_FOR_IC, F.LABEL_FOR_RET]
 
 
 class MainSmallPool(PoolUniverse):
+    def name(self):
+        return "main_small_pool"
+
     def needed_cols(self) -> list[str]:
         return [
             F.POOL_MASK,
             F.OPEN,
             F.CLOSE,
+            F.HIGH,
+            F.LOW,
+            F.TURNOVER_RATE,
+            F.VWAP,
+            F.RET,
+            F.VWAP_RET,
             F.IS_UP_LIMIT,
             F.IS_DOWN_LIMIT,
             F.IS_SUSPENDED,

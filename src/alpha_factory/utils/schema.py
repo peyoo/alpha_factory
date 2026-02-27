@@ -39,6 +39,9 @@ class F(str, Enum):
     PS = "PS"  # 市销率
     TURNOVER_RATE = "TURNOVER_RATE"  # 换手率(基于总市值)
 
+    RET = "RET"  # 收益率
+    VWAP_RET = "VWAP_RET"  # 基于成交均价的收益率
+
     # 交易限制 (容易拼错的)
     UP_LIMIT = "UP_LIMIT"  # 涨停价
     DOWN_LIMIT = "DOWN_LIMIT"  # 跌停价

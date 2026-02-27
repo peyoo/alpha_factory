@@ -38,6 +38,8 @@ from loguru import logger
 import more_itertools
 
 from alpha_factory.data_provider import DataProvider
+from alpha_factory.data_provider.pool import PoolUniverse, MainSmallPool
+from alpha_factory.evaluation.batch.full_metrics import batch_full_metrics
 
 # 导入打过补丁的组件和基础工具
 from alpha_factory.gp.base import (
@@ -49,12 +51,10 @@ from alpha_factory.gp.base import (
 from alpha_factory.gp.base import RET_TYPE, Expr
 from alpha_factory.gp.dependence import DependenceManager
 from alpha_factory.gp.ea import eaMuPlusLambda_NSGA2
-from alpha_factory.data_provider.label import label_OO_for_IC, label_OO_for_tradable
 from alpha_factory.patch.deap_patch import apply_deap_patches
 from alpha_factory.patch.expr_codegen_patch import apply_expr_codegen_patches
 from alpha_factory.polars.utils import CUSTOM_OPERATORS
 from alpha_factory.config.base import settings
-from alpha_factory.utils.schema import F
 
 from typing import TypeVar
 from polars import DataFrame as _pl_DataFrame
@@ -101,7 +101,13 @@ class GPDeapGenerator(object):
         """
         # --- 1. 基础信息配置 ---
         self.config = config
-        self.name = config.get("name", self.__class__.__name__)
+        self.pool: PoolUniverse = config.get("pool", MainSmallPool)
+        if self.pool is None:
+            raise Exception(
+                "股票池类没有提供，请在配置中通过 'pool' 键提供一个股票池类"
+            )
+
+        self.name = self.pool.name
 
         # --- 2. 数据与日期配置 ---
         self.start_date = config.get("start_date", "20190101")
@@ -120,17 +126,19 @@ class GPDeapGenerator(object):
         # 整体种群fitness函数,
         # 输入参数为:df,factors（所有的因子列名）,split_date(可以没有，训练集与验证集的分割日期),其它参数采用默认值
         # 输出数据格式为: pl.DataFrame，必须包含列factor,以及opt_names所包含的列
-        self.fitness_population_func = config.get("fitness_population_func", None)
-
-        self.pool_func = config.get("pool_func", None)  # 股票池函数
-        # 标签计算函数，提供fitness_population_func计算所需的标签列，
-        # 生成的标签列名必须和函数所需列名一致，一般为 F.LABEL_FOR_IC 和 F.LABEL_FOR_RET
-        self.label_funcs = config.get(
-            "label_funcs", [label_OO_for_IC, label_OO_for_tradable]
+        self.fitness_population_func = config.get(
+            "fitness_population_func", batch_full_metrics
         )
-        self.extra_terminal_func = config.get(
-            "extra_terminal_func", []
-        )  # 额外终端因子计算函数
+
+        # self.pool_func = config.get("pool_func", None)  # 股票池函数
+        # # 标签计算函数，提供fitness_population_func计算所需的标签列，
+        # # 生成的标签列名必须和函数所需列名一致，一般为 F.LABEL_FOR_IC 和 F.LABEL_FOR_RET
+        # self.label_funcs = config.get(
+        #     "label_funcs", [label_OO_for_IC, label_OO_for_tradable]
+        # )
+        # self.extra_terminal_func = config.get(
+        #     "extra_terminal_func", []
+        # )  # 额外终端因子计算函数
 
         self.terminals = config.get("terminals", [])  # 终端因子列表
         self.random_window_func = config.get("random_window_func", None)  # 随机窗口函数
@@ -345,12 +353,11 @@ class GPDeapGenerator(object):
 
         # 2. 载入原始数据
         # 挖掘因子通常需要 OHLCV，计算 OO 收益率需要 OPEN
-        input_data = DataProvider().load_data(
+        input_data = DataProvider().load_pool_data(
             start_date=self.start_date,
             end_date=self.end_date,
-            funcs=[self.pool_func, *self.label_funcs, self.extra_terminal_func],
-            select_cols=[F.POOL_MASK, F.LABEL_FOR_IC, F.LABEL_FOR_RET, *self.terminals],
-            cache_path=self.save_dir / f"{self.pool_func.__name__}.parquet",
+            pool=self.pool,
+            cache=self.save_dir / f"{self.name}.parquet",
         )
         logger.info("💾 标签数据已就绪")
 

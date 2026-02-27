@@ -3,12 +3,8 @@ from typing import Dict, Any
 
 from deap import gp
 
-from alpha_factory.data_provider.pool import main_small_pool
-from alpha_factory.evaluation.batch.full_metrics import batch_full_metrics
 from alpha_factory.gp.base import Expr, dummy
-from alpha_factory.gp.extra_terminal import add_extra_terminals
 from alpha_factory.gp.generator import GPDeapGenerator
-from alpha_factory.data_provider.label import label_OO_for_IC, label_OO_for_tradable
 
 
 def _random_window_int():
@@ -30,33 +26,10 @@ class SmallCSGenerator(GPDeapGenerator):
         self.cxpb = config.get("cxpb", 0.5)  # 交叉概率
         self.mutpb = config.get("mutpb", 0.3)  # 变异概率
 
-        self.pool_func = config.get("pool_func", main_small_pool)  # 小微盘股票池函数
-        self.label_funcs = config.get(
-            "label_funcs", [label_OO_for_IC, label_OO_for_tradable]
-        )
         self.random_window_func = config.get(
             "random_window_func", _random_window_int
         )  # 随机窗口函数
-        self.extra_terminal_func = config.get(
-            "extra_terminal_func", add_extra_terminals
-        )  # 额外终端因子计算函数
-        self.terminals = config.get(
-            "terminals",
-            [
-                "OPEN",
-                "HIGH",
-                "LOW",
-                "CLOSE",
-                "TURNOVER_RATE",
-                "VWAP",
-                "RET",
-                "VWAP_RET",
-            ],
-        )
 
-        self.fitness_population_func = config.get(
-            "fitness_population_func", batch_full_metrics
-        )
         self.opt_names = config.get("opt_names", ("ann_ret",))  # 多目标优化因子名称
         self.opt_weights = config.get("opt_weights", (1.0,))  # 多目标优化权重
 
