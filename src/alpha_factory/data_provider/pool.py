@@ -143,11 +143,16 @@ class MainSmallPool(PoolUniverse):
             )
             lf = lf.join(candidate_assets, on="ASSET", how="semi")
 
-        # ✨ --- 第三阶段改进：先动态过滤"坏数据"，再排名（关键改动） ---
-        # 将停牌、涨跌停等过滤提前到排名之前
-        # 这确保排名是基于"有效可交易"的股票，避免了"稀疏日期"问题
-        # 导致嵌套因子（如 ts_rank(cs_rank_mask(...))）在特定日期失效
-        lf = lf.filter(
+        # --- 第三阶段：软过滤（保留行，仅打 POOL_MASK 标记）---
+        # 不再硬删除 ST/停牌/新股等行，而是只将其 POOL_MASK 置为 False。
+        # 原因：硬过滤会破坏时序完整性——持仓股票变 ST 后从 DataFrame 中物理消失，
+        # 导致回测引擎的 day_info.get(asset) 返回 None，进而把"变 ST"误判为"临时停牌"，
+        # 造成死持、零收益、NAV 曲线凝固的 bug。
+        #
+        # 排名质量保证：仅对可交易股票计算市值排名（非可交易股票的 TOTAL_MV 置 None），
+        # polars rank 将 None 排到最末，fill_null(999999) 确保其 POOL_MASK=False。
+        # 这与之前"先过滤再排名"的效果等价，但保留了完整的行数据供时序使用。
+        tradable = (
             ~pl.col("IS_ST")
             & ~pl.col("IS_SUSPENDED")
             & (pl.col("LIST_DAYS") >= 180)
@@ -155,17 +160,22 @@ class MainSmallPool(PoolUniverse):
             & ~pl.col("IS_DOWN_LIMIT")
         )
 
-        # 现在对"干净数据"进行排名
         return (
             lf.with_columns(
                 [
-                    # 计算每一天的实时排名（仅基于有效交易的股票）
-                    pl.col("TOTAL_MV").rank("ordinal").over(F.DATE).alias("mv_rank")
+                    # 仅对可交易股票参与市值排名；不可交易的置 None → 排到最末
+                    pl.when(tradable)
+                    .then(pl.col("TOTAL_MV"))
+                    .otherwise(None)
+                    .rank("ordinal")
+                    .over(F.DATE)
+                    .fill_null(999999)
+                    .alias("mv_rank")
                 ]
             )
             .with_columns(
                 [
-                    # 预定义可交易池：简化的核心逻辑（因为坏数据已提前过滤）
+                    # 可交易 + 市值前 small_num 名 → 入池
                     (pl.col("mv_rank") <= small_num).alias(F.POOL_MASK)
                 ]
             )

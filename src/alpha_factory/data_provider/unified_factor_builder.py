@@ -340,8 +340,14 @@ class UnifiedFactorBuilder:
                         pl.col("_TMP_SUSPEND_").fill_null(False)
                         | pl.col(F.CLOSE_RAW).is_null()
                     ).alias(F.IS_SUSPENDED),
-                    # ST 状态填充
-                    pl.col(F.IS_ST).fill_null(False).forward_fill().over(F.ASSET),
+                    # ST 状态传递：若上一交易日为 True，则当前交易日保持 True
+                    pl.col(F.IS_ST)
+                    .fill_null(False)
+                    .cast(pl.Int8)
+                    .cum_max()
+                    .over(F.ASSET)
+                    .cast(pl.Boolean)
+                    .alias(F.IS_ST),
                     # 时序填充
                     pl.col(ffill_cols).forward_fill().over(F.ASSET),
                     pl.col([F.VOLUME, F.AMOUNT]).fill_null(0.0),
@@ -353,7 +359,7 @@ class UnifiedFactorBuilder:
                     pl.col(F.OPEN_RAW).fill_null(pl.col(F.CLOSE_RAW)),
                     pl.col(F.HIGH_RAW).fill_null(pl.col(F.CLOSE_RAW)),
                     pl.col(F.LOW_RAW).fill_null(pl.col(F.CLOSE_RAW)),
-                    pl.col(F.VWAP_RAW).fill_null(pl.col(F.VWAP_RAW)),
+                    pl.col(F.VWAP_RAW).fill_null(pl.col(F.CLOSE_RAW)),
                 ]
             )
             .with_columns(

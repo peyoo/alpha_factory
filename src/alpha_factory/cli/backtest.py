@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
 
 import typer
@@ -53,6 +54,13 @@ def quant_bt(
     ),
     report: bool = typer.Option(
         True, "--report/--no-report", help="是否生成 HTML 报告并打开"
+    ),
+    save_trades: Optional[Path] = typer.Option(
+        None,
+        "--save-trades",
+        help="保存交易明细到文件，按扩展名自动选格式（.csv 或 .parquet），"
+        "例如 --save-trades output/trades.csv",
+        show_default=False,
     ),
 ):
     """
@@ -112,6 +120,10 @@ def quant_bt(
 
     # --- 4. 摘要统计 ---
     _print_summary(daily_df, trade_df, factor_col)
+
+    # --- 4b. 保存交易明细 ---
+    if save_trades is not None:
+        _save_trades(trade_df, save_trades)
 
     # --- 5. HTML 报告 ---
     if report:
@@ -233,3 +245,25 @@ def _print_summary(daily_df, trade_df, factor_col: str) -> None:
         table.add_row("盈亏比", "N/A")
 
     console.print(table)
+
+
+def _save_trades(trade_df, path: Path) -> None:
+    """将交易明细保存到文件，按扩展名自动选择格式（csv / parquet）。"""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    suffix = path.suffix.lower()
+    if suffix == ".parquet":
+        trade_df.write_parquet(path)
+        fmt = "Parquet"
+    else:
+        # 默认 CSV（包括 .csv 或无扩展名等情况）
+        if suffix not in (".csv",):
+            path = path.with_suffix(".csv")
+        trade_df.write_csv(path)
+        fmt = "CSV"
+
+    n = len(trade_df)
+    console.print(
+        f"[bold green]💾 交易明细已保存[/bold green] → {path}  ({fmt}, {n} 条记录)"
+    )

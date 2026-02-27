@@ -97,15 +97,24 @@ def backtest_daily_evolving(
             price_today_exec = info[exec_price]
             price_yesterday_close = hold_info["last_price"]
 
+            # 价格为 null（真实停牌/数据缺失）：跳过收益计算，保留持仓
+            if price_today_exec is None or price_yesterday_close is None:
+                new_holdings[asset] = hold_info
+                continue
+
             # 无论卖不卖，都要计算从“昨收”到“今日执行价”的收益贡献
             day_raw_ret += ((price_today_exec / price_yesterday_close) - 1) / n_buy
 
             # 判定卖出信号
             if asset not in must_hold_list and asset not in can_hold_list:
                 if info[F.IS_DOWN_LIMIT] or info[F.IS_SUSPENDED]:
-                    # 卖不掉，更新价格继续持有
-                    hold_info["last_price"] = info[F.CLOSE]
-                    day_raw_ret += ((info[F.CLOSE] / price_today_exec) - 1) / n_buy
+                    # 卖不掉，更新价格继续持有（防止 close 为 null）
+                    new_close = info[F.CLOSE]
+                    if new_close is not None:
+                        day_raw_ret += ((new_close / price_today_exec) - 1) / n_buy
+                        hold_info["last_price"] = new_close
+                    else:
+                        hold_info["last_price"] = price_today_exec
                     new_holdings[asset] = hold_info
                 else:
                     # 成功卖出：记录闭环交易
@@ -122,9 +131,13 @@ def backtest_daily_evolving(
                     )
                     num_sold += 1
             else:
-                # 继续持有：累加“执行价到今日收盘”的收益
-                day_raw_ret += ((info[F.CLOSE] / price_today_exec) - 1) / n_buy
-                hold_info["last_price"] = info[F.CLOSE]
+                # 继续持有：累加“执行价到今日收盘”的收益（防止 close 为 null）
+                new_close = info[F.CLOSE]
+                if new_close is not None:
+                    day_raw_ret += ((new_close / price_today_exec) - 1) / n_buy
+                    hold_info["last_price"] = new_close
+                else:
+                    hold_info["last_price"] = price_today_exec
                 new_holdings[asset] = hold_info
 
         # 2. 处理新标的买入
