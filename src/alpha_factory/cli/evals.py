@@ -1,8 +1,9 @@
 """quant evals —— 批量因子评估命令。
 
-支持两种输入方式（可同时使用，结果合并去重）：
+支持三种输入方式（可同时使用，结果合并去重）：
   1. --expr "factor1=ts_mean(AMOUNT,40)" --expr "factor2=cs_rank(CLOSE)"  （可重复传入）
   2. --csv factors.csv                                                      （CSV 文件）
+  3. 不提供任何参数 → 自动扫描 pool 目录下所有 CSV，提取全部表达式，合并去重后评估
 
 路径解析规则（适用于 --csv 和 --output）：
   - 相对路径 → 自动解析到当前股票池目录（如 output/main_small_pool/）
@@ -12,6 +13,7 @@
   - 指定 --output → 写入该路径
   - 未指定 --output 且提供了 --csv → 覆盖源 CSV
   - 未指定 --output 且仅用 --expr → 只打印终端表格，不落盘
+  - 自动扫描模式（未指定 --csv / --expr）→ 写入 <pool_dir>/<pool_name>.csv
 """
 
 from __future__ import annotations
@@ -231,6 +233,7 @@ def quant_evals(
     """
     # ── 1. 收集所有因子对 ────────────────────────────────────────────────────
     factor_pairs: list[tuple[str, str]] = []
+    _auto_pool_mode = False  # 标记是否进入自动扫描模式
 
     if expr:
         factor_pairs.extend(_parse_exprs(list(expr)))
@@ -240,17 +243,53 @@ def quant_evals(
             csv_file = pool.value().pool_dir / csv_file
         factor_pairs.extend(_load_from_csv(csv_file, name_col, expr_col))
 
+    # ── 1a. 自动模式：未指定 --csv / --expr 时，扫描 pool 目录下所有 CSV ──────
+    if not factor_pairs and not expr and csv_file is None:
+        pool_dir = pool.value().pool_dir
+        discovered_csvs = sorted(pool_dir.glob("*.csv"))
+        if discovered_csvs:
+            _auto_pool_mode = True
+            console.print(
+                f"[cyan]🔍 未指定 --csv / --expr，自动扫描池目录: {pool_dir}[/cyan]"
+            )
+            for disc_csv in discovered_csvs:
+                try:
+                    pairs = _load_from_csv(disc_csv, name_col, expr_col)
+                    factor_pairs.extend(pairs)
+                    console.print(
+                        f"  [dim]读取 {disc_csv.name}：{len(pairs)} 条表达式[/dim]"
+                    )
+                except Exception:
+                    console.print(
+                        f"  [yellow]⚠️ 跳过 {disc_csv.name}（缺少 '{name_col}' 或 '{expr_col}' 列）[/yellow]"
+                    )
+
     if not factor_pairs:
         console.print(
             "[red]❌ 请通过 --expr 或 --csv-file 至少提供一个因子表达式。[/red]"
         )
         raise typer.Exit(code=1)
 
-    # 去重（保留最后出现的）
+    # 去重（保留最后出现的同名因子）
     seen: dict[str, str] = {}
     for name, expression in factor_pairs:
         seen[name] = expression
     factor_pairs = list(seen.items())
+
+    # 自动扫描模式：额外按表达式去重（不同名但相同表达式视为同一因子），
+    # 去重后按 f1, f2, ... 统一重命名
+    if _auto_pool_mode:
+        expr_seen: dict[str, str] = {}  # expression -> name
+        for name, expression in factor_pairs:
+            if expression not in expr_seen:
+                expr_seen[expression] = name
+        factor_pairs = [
+            (f"f{i + 1}", expression) for i, expression in enumerate(expr_seen.keys())
+        ]
+        console.print(
+            f"[dim]自动模式去重后共 {len(factor_pairs)} 个唯一表达式，"
+            f"已重命名为 f1~f{len(factor_pairs)}[/dim]"
+        )
 
     factor_names = [name for name, _ in factor_pairs]
     eval_start_ts = perf_counter()
@@ -358,12 +397,16 @@ def quant_evals(
     # ── 4. 输出 ──────────────────────────────────────────────────────────────
     _print_rich_table(result_df, top_n)
 
-    # 确定落盘路径：--output 优先，否则覆盖源 CSV，均无则跳过
+    # 确定落盘路径：--output 优先，否则覆盖源 CSV，
+    # 自动扫描模式下写入 <pool_dir>/<pool_name>.csv，均无则跳过
     effective_output: Optional[Path] = output
     if effective_output is not None and not effective_output.is_absolute():
         effective_output = pool.value().pool_dir / effective_output
     elif effective_output is None:
-        effective_output = csv_file  # csv_file 已在步骤 1 中解析为绝对路径或 None
+        if _auto_pool_mode:
+            effective_output = pool.value().pool_dir / f"{pool.value().name}.csv"
+        else:
+            effective_output = csv_file  # csv_file 已在步骤 1 中解析为绝对路径或 None
 
     if effective_output:
         effective_output.parent.mkdir(parents=True, exist_ok=True)

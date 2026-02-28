@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, PropertyMock
 
 import polars as pl
 from typer.testing import CliRunner
@@ -184,13 +184,75 @@ def test_evals_csv_missing_col(tmp_path: Path):
     assert "未找到列" in result.output
 
 
-# ── 测试：无输入报错 ──────────────────────────────────────────────────────────
+# ── 测试：无输入且 pool 目录为空时报错 ────────────────────────────────
 
 
-def test_evals_no_input_errors():
-    result = runner.invoke(app, ["evals", "-s", "20220101"])
+def test_evals_no_input_errors(tmp_path: Path):
+    """pool 目录为空 + 无 --expr / --csv 时应内退并打印提示。"""
+    from alpha_factory.data_provider.pool import MainSmallPool
+
+    with patch.object(
+        MainSmallPool, "pool_dir", new_callable=PropertyMock, return_value=tmp_path
+    ):
+        result = runner.invoke(app, ["evals", "-s", "20220101"])
     assert result.exit_code != 0
     assert "--expr" in result.output or "至少提供" in result.output
+
+
+# ── 测试：自动扫描 pool 目录模式 ────────────────────────────────────
+
+
+def test_evals_auto_pool_mode(tmp_path: Path):
+    """未指定 --csv / --expr 时，自动扫描 pool 目录内所有 CSV，合并去重后评估并落盘。"""
+    from alpha_factory.data_provider.pool import MainSmallPool
+    import polars as pl
+
+    # 在 tmp_path 下创建两个 CSV
+    csv_a = tmp_path / "pool_a.csv"
+    csv_b = tmp_path / "pool_b.csv"
+    pl.DataFrame(
+        {"factor": ["f1", "f2"], "expression": ["ts_mean(AMOUNT,5)", "cs_rank(CLOSE)"]}
+    ).write_csv(csv_a)
+    pl.DataFrame(
+        {
+            "factor": ["f2", "f3"],
+            "expression": ["cs_rank(CLOSE_other)", "ts_std_dev(CLOSE,10)"],
+        }
+    ).write_csv(csv_b)
+    # f2 在两个文件中都有，加载后应去重为 3 个因子
+
+    dp_ctx, bm_ctx = _patch_dp_and_metrics(
+        mock_result=pl.DataFrame(
+            {
+                "factor": ["f1", "f2", "f3"],
+                "ic_mean": [0.05, 0.04, 0.03],
+                "ic_mean_abs": [0.05, 0.04, 0.03],
+                "ic_ir": [0.8, 0.7, 0.6],
+                "ic_ir_abs": [0.8, 0.7, 0.6],
+                "ann_ret": [0.30, 0.25, 0.22],
+                "sharpe": [1.8, 1.5, 1.2],
+                "turnover_est": [0.28, 0.30, 0.25],
+                "direction": [1, 1, 1],
+            }
+        )
+    )
+    with (
+        patch.object(
+            MainSmallPool, "pool_dir", new_callable=PropertyMock, return_value=tmp_path
+        ),
+        dp_ctx,
+        bm_ctx,
+    ):
+        result = runner.invoke(app, ["evals", "-s", "20220101"])
+
+    assert result.exit_code == 0, result.output
+    # 应自动扫描提示
+    assert "扫描池目录" in result.output or "自动" in result.output
+    # 输出文件应为 <pool_dir>/main_small_pool.csv
+    expected_out = tmp_path / "main_small_pool.csv"
+    assert expected_out.exists(), f"期望输出文件不存在: {expected_out}"
+    saved = pl.read_csv(expected_out)
+    assert "factor" in saved.columns
 
 
 # ── 测试：--output CSV 落盘 ───────────────────────────────────────────────────
