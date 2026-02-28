@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from time import perf_counter
 from typing import List, Optional
 
 import polars as pl
@@ -166,7 +167,9 @@ def _diagnose_exprs(
 
 
 def quant_evals(
-    start_date: str = typer.Option(..., "-s", "--start-date", help="开始日期 YYYYMMDD"),
+    start_date: str = typer.Option(
+        "20190101", "-s", "--start-date", help="开始日期 YYYYMMDD"
+    ),
     end_date: Optional[str] = typer.Option(
         None, "-e", "--end-date", help="结束日期 YYYYMMDD"
     ),
@@ -193,6 +196,17 @@ def quant_evals(
     ),
     n_bins: int = typer.Option(10, "--n-bins", help="分层数量"),
     fee: float = typer.Option(0.0025, "--fee", help="单边交易费率"),
+    min_sharpe: float = typer.Option(
+        1.0, "--min-sharpe", help="最小夏普阈值（低于该值的因子将被过滤）"
+    ),
+    min_ann_ret: float = typer.Option(
+        0.2,
+        "--min-ann-ret",
+        help="最小年化收益阈值（低于该值的因子将被过滤，例如 0.2=20%）",
+    ),
+    batch_size: int = typer.Option(
+        100, "--batch-size", min=1, help="评估批大小（默认 100）"
+    ),
     top_n: int = typer.Option(20, "--top-n", help="终端展示前 N 条"),
     output: Optional[Path] = typer.Option(
         None, "-o", "--output", help="将完整结果写入 CSV 文件"
@@ -239,6 +253,7 @@ def quant_evals(
     factor_pairs = list(seen.items())
 
     factor_names = [name for name, _ in factor_pairs]
+    eval_start_ts = perf_counter()
     # DataProvider 的 exprs 接受 'name=expr' 格式字符串
     exprs_for_loader = [f"{name}={expression}" for name, expression in factor_pairs]
 
@@ -265,12 +280,43 @@ def quant_evals(
 
     # ── 3. 批量评估 ──────────────────────────────────────────────────────────
     try:
-        result_df = batch_full_metrics(
-            lf,
-            factors=factor_names,
-            n_bins=n_bins,
-            mode=mode,
-            fee=fee,
+        batches = [
+            factor_names[i : i + batch_size]
+            for i in range(0, len(factor_names), batch_size)
+        ]
+        console.print(
+            f"[dim]评估将分 {len(batches)} 批执行（batch_size={batch_size}）[/dim]"
+        )
+
+        result_parts: list[pl.DataFrame] = []
+        total_batch_eval_seconds = 0.0
+        evaluated_factor_count = 0
+        for idx, batch_factors in enumerate(batches, start=1):
+            batch_start_ts = perf_counter()
+            console.print(
+                f"[dim]  - 批次 {idx}/{len(batches)}: {len(batch_factors)} 个因子[/dim]"
+            )
+            part_df = batch_full_metrics(
+                lf,
+                factors=batch_factors,
+                n_bins=n_bins,
+                mode=mode,
+                fee=fee,
+            )
+            batch_elapsed = perf_counter() - batch_start_ts
+            per_factor_elapsed = batch_elapsed / max(len(batch_factors), 1)
+            total_batch_eval_seconds += batch_elapsed
+            evaluated_factor_count += len(batch_factors)
+            console.print(
+                f"[dim]    耗时 {batch_elapsed:.3f}s，单因子 {per_factor_elapsed:.3f}s[/dim]"
+            )
+            if not part_df.is_empty():
+                result_parts.append(part_df)
+
+        result_df = (
+            pl.concat(result_parts, how="vertical_relaxed")
+            if result_parts
+            else pl.DataFrame()
         )
     except Exception as e:
         console.print(f"[red]❌ 评估执行失败: {e}[/red]")
@@ -280,6 +326,8 @@ def quant_evals(
         console.print("[yellow]⚠️ 评估结果为空，请检查因子表达式或数据范围。[/yellow]")
         raise typer.Exit(code=0)
 
+    total_eval_seconds = perf_counter() - eval_start_ts
+
     # 将表达式附加到结果中，方便对照
     expr_map = pl.DataFrame(
         {"factor": factor_names, "expression": [e for _, e in factor_pairs]}
@@ -287,6 +335,25 @@ def quant_evals(
     result_df = result_df.join(expr_map, on="factor", how="left").select(
         ["factor", "expression", *[c for c in result_df.columns if c != "factor"]]
     )
+
+    # 默认质量过滤：剔除低夏普、低年化因子
+    before_count = len(result_df)
+    if "sharpe" in result_df.columns and "ann_ret" in result_df.columns:
+        result_df = result_df.filter(
+            (pl.col("sharpe") >= min_sharpe) & (pl.col("ann_ret") >= min_ann_ret)
+        )
+        removed = before_count - len(result_df)
+        if removed > 0:
+            console.print(
+                f"[dim]质量过滤已生效: 移除 {removed} 个因子 "
+                f"(sharpe < {min_sharpe} 或 ann_ret < {min_ann_ret:.2%})[/dim]"
+            )
+
+    if result_df.is_empty():
+        console.print(
+            "[yellow]⚠️ 过滤后无可用因子，请放宽 --min-sharpe / --min-ann-ret 或调整表达式。[/yellow]"
+        )
+        raise typer.Exit(code=0)
 
     # ── 4. 输出 ──────────────────────────────────────────────────────────────
     _print_rich_table(result_df, top_n)
@@ -303,6 +370,15 @@ def quant_evals(
         result_df.write_csv(effective_output)
         console.print(f"[green]✅ 完整结果已写入: {effective_output}[/green]")
 
+    avg_factor_seconds = (
+        total_batch_eval_seconds / evaluated_factor_count
+        if evaluated_factor_count > 0
+        else 0.0
+    )
+    console.print(
+        f"[bold cyan]时间统计[/bold cyan] 总耗时 {total_eval_seconds:.3f}s | "
+        f"单因子平均耗时 {avg_factor_seconds:.3f}s"
+    )
     console.print(f"✅ 批量评估完成，共 {len(result_df)} 个因子")
 
 

@@ -21,7 +21,7 @@ MOCK_RESULT = pl.DataFrame(
         "ic_mean_abs": [0.045, 0.031],
         "ic_ir": [0.72, 0.50],
         "ic_ir_abs": [0.72, 0.50],
-        "ann_ret": [0.18, 0.12],
+        "ann_ret": [0.28, 0.22],
         "sharpe": [1.5, 1.1],
         "turnover_est": [0.30, 0.25],
         "direction": [1, 1],
@@ -58,6 +58,17 @@ def test_evals_single_expr():
     assert result.exit_code == 0, result.output
     assert "factor1" in result.output
     assert "批量评估完成" in result.output
+
+
+def test_evals_single_expr_without_start_date():
+    dp_ctx, bm_ctx = _patch_dp_and_metrics()
+    with dp_ctx, bm_ctx:
+        result = runner.invoke(
+            app,
+            ["evals", "--expr", "factor1=ts_mean(AMOUNT,40)"],
+        )
+    assert result.exit_code == 0, result.output
+    assert "factor1" in result.output
 
 
 def test_evals_multiple_exprs():
@@ -208,6 +219,30 @@ def test_evals_output_csv(tmp_path: Path):
     assert len(saved) == 2
 
 
+def test_evals_output_csv_does_not_contain_timing_columns(tmp_path: Path):
+    out_file = tmp_path / "result_with_timing.csv"
+    dp_ctx, bm_ctx = _patch_dp_and_metrics()
+    with dp_ctx, bm_ctx:
+        result = runner.invoke(
+            app,
+            [
+                "evals",
+                "-s",
+                "20220101",
+                "--expr",
+                "factor1=ts_mean(AMOUNT,40)",
+                "--output",
+                str(out_file),
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    saved = pl.read_csv(out_file)
+    assert "factor_eval_seconds" not in saved.columns
+    assert "total_eval_seconds" not in saved.columns
+    assert "时间统计" in result.output
+
+
 # ── 测试：--top-n 参数 ────────────────────────────────────────────────────────
 
 
@@ -227,3 +262,130 @@ def test_evals_top_n(tmp_path: Path):
             ],
         )
     assert result.exit_code == 0, result.output
+
+
+def test_evals_default_quality_filter(tmp_path: Path):
+    low_quality = pl.DataFrame(
+        {
+            "factor": ["factor1", "factor2"],
+            "ic_mean": [0.02, 0.01],
+            "ic_mean_abs": [0.02, 0.01],
+            "ic_ir": [0.3, 0.2],
+            "ic_ir_abs": [0.3, 0.2],
+            "ann_ret": [0.19, 0.12],
+            "sharpe": [0.9, 0.8],
+            "turnover_est": [0.30, 0.25],
+            "direction": [1, 1],
+        }
+    )
+    dp_ctx, bm_ctx = _patch_dp_and_metrics(low_quality)
+    with dp_ctx, bm_ctx:
+        result = runner.invoke(
+            app,
+            [
+                "evals",
+                "-s",
+                "20220101",
+                "--expr",
+                "factor1=ts_mean(AMOUNT,40)",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    assert "过滤后无可用因子" in result.output
+
+
+def test_evals_relaxed_quality_filter(tmp_path: Path):
+    low_quality = pl.DataFrame(
+        {
+            "factor": ["factor1"],
+            "ic_mean": [0.02],
+            "ic_mean_abs": [0.02],
+            "ic_ir": [0.3],
+            "ic_ir_abs": [0.3],
+            "ann_ret": [0.12],
+            "sharpe": [0.8],
+            "turnover_est": [0.30],
+            "direction": [1],
+        }
+    )
+    dp_ctx, bm_ctx = _patch_dp_and_metrics(low_quality)
+    with dp_ctx, bm_ctx:
+        result = runner.invoke(
+            app,
+            [
+                "evals",
+                "-s",
+                "20220101",
+                "--expr",
+                "factor1=ts_mean(AMOUNT,40)",
+                "--min-sharpe",
+                "0.5",
+                "--min-ann-ret",
+                "0.1",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    assert "factor1" in result.output
+
+
+def test_evals_batch_size_chunking():
+    dp_ctx, _ = _patch_dp_and_metrics()
+    side_effect_results = [
+        pl.DataFrame(
+            {
+                "factor": ["f1", "f2"],
+                "ic_mean": [0.05, 0.04],
+                "ic_mean_abs": [0.05, 0.04],
+                "ic_ir": [0.7, 0.6],
+                "ic_ir_abs": [0.7, 0.6],
+                "ann_ret": [0.3, 0.25],
+                "sharpe": [1.4, 1.2],
+                "turnover_est": [0.2, 0.2],
+                "direction": [1, 1],
+            }
+        ),
+        pl.DataFrame(
+            {
+                "factor": ["f3"],
+                "ic_mean": [0.03],
+                "ic_mean_abs": [0.03],
+                "ic_ir": [0.5],
+                "ic_ir_abs": [0.5],
+                "ann_ret": [0.22],
+                "sharpe": [1.1],
+                "turnover_est": [0.2],
+                "direction": [1],
+            }
+        ),
+    ]
+
+    with (
+        dp_ctx,
+        patch(
+            "alpha_factory.cli.evals.batch_full_metrics",
+            side_effect=side_effect_results,
+        ) as mocked_metrics,
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "evals",
+                "--expr",
+                "f1=ts_mean(AMOUNT,5)",
+                "--expr",
+                "f2=ts_mean(AMOUNT,10)",
+                "--expr",
+                "f3=ts_mean(AMOUNT,20)",
+                "--batch-size",
+                "2",
+                "--min-sharpe",
+                "0",
+                "--min-ann-ret",
+                "0",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert mocked_metrics.call_count == 2
+    assert mocked_metrics.call_args_list[0].kwargs["factors"] == ["f1", "f2"]
+    assert mocked_metrics.call_args_list[1].kwargs["factors"] == ["f3"]
