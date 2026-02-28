@@ -10,7 +10,7 @@ def backtest_daily_evolving(
     n_buy: int = 10,
     sell_rank: int = 30,
     cost_rate: float = 0.003,
-    exec_price: str = F.OPEN,
+    exec_price: str = F.VWAP,
     ascending: bool = False,
 ) -> Dict[str, pl.DataFrame]:
     """

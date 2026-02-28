@@ -19,6 +19,7 @@ console = Console()
 _EXEC_PRICE_MAP: dict[str, str] = {
     "open": F.OPEN,
     "close": F.CLOSE,
+    "vwap": F.VWAP,
 }
 
 
@@ -43,7 +44,7 @@ def quant_bt(
     ),
     cost: float = typer.Option(0.003, "--cost", help="单边交易成本率"),
     exec_price: str = typer.Option(
-        "open",
+        "vwap",
         "--exec-price",
         help="执行价字段: open（默认，后复权开盘价）| close（后复权收盘价）",
     ),

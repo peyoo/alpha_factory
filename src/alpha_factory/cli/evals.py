@@ -58,7 +58,16 @@ def _load_from_csv(
         console.print(f"[red]❌ 读取 CSV 文件失败: {e}[/red]")
         raise typer.Exit(code=1)
 
-    if name_col not in df.columns:
+    resolved_name_col = name_col
+    if resolved_name_col not in df.columns:
+        # 兼容常见列名：在用户未显式指定时自动回退，避免破坏旧 CSV。
+        if name_col == "factor":
+            for alias in ["name", "factor_name", "因子名"]:
+                if alias in df.columns:
+                    resolved_name_col = alias
+                    break
+
+    if resolved_name_col not in df.columns:
         console.print(
             f"[red]❌ CSV 中未找到列 '{name_col}'，可用列: {df.columns}[/red]"
         )
@@ -70,8 +79,8 @@ def _load_from_csv(
         raise typer.Exit(code=1)
 
     return [
-        (row[name_col], row[expr_col])
-        for row in df.select([name_col, expr_col]).to_dicts()
+        (row[resolved_name_col], row[expr_col])
+        for row in df.select([resolved_name_col, expr_col]).to_dicts()
     ]
 
 
@@ -172,7 +181,7 @@ def quant_evals(
         "--csv-file",
         help="CSV 文件路径，包含因子名与表达式列（相对路径解析到股票池目录）",
     ),
-    name_col: str = typer.Option("name", "--name-col", help="CSV 中因子名所在列名"),
+    name_col: str = typer.Option("factor", "--name-col", help="CSV 中因子名所在列名"),
     expr_col: str = typer.Option(
         "expression", "--expr-col", help="CSV 中表达式所在列名"
     ),
