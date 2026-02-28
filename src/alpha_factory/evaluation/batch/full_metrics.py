@@ -269,10 +269,10 @@ def batch_full_metrics(
 
         # 因子方向：ic_mean > 0 → 正向（top 为多头），否则反向（btm 为多头）
         direction = 1 if ic_mean >= 0 else -1
-        logger.debug(
-            f"    [{f}] ic_mean={ic_mean:.4f} | ic_std={ic_std:.4f} "
-            f"| direction={direction}"
-        )
+        # logger.debug(
+        #     f"    [{f}] ic_mean={ic_mean:.4f} | ic_std={ic_std:.4f} "
+        #     f"| direction={direction}"
+        # )
 
         if mode == "long_short":
             # 多空对冲：top 收益 - btm 收益，换手为两侧均值
@@ -286,10 +286,10 @@ def batch_full_metrics(
                 (float(raw_to_top) if raw_to_top is not None else 0.0)
                 + (float(raw_to_btm) if raw_to_btm is not None else 0.0)
             ) / 2
-            logger.debug(
-                f"    [{f}] long_short 换手率均值: top={raw_to_top:.4f}, "
-                f"btm={raw_to_btm:.4f}"
-            )
+            # logger.debug(
+            #     f"    [{f}] long_short 换手率均值: top={raw_to_top:.4f}, "
+            #     f"btm={raw_to_btm:.4f}"
+            # )
 
         else:
             # long_only 或 active：根据 direction 选择多头方向
@@ -308,15 +308,15 @@ def batch_full_metrics(
             if mode == "active":
                 # 超额收益 = 多头收益 - 全池市场平均收益
                 raw_ret = raw_ret - market_avg_np
-                logger.debug(f"    [{f}] active 模式：已扣除市场均值")
+                # logger.debug(f"    [{f}] active 模式：已扣除市场均值")
 
         # 扣除双边交易费用（buy + sell 各一次）
         # net_daily_ret[i] = raw_ret[i] - turnover * fee * 2
         net_daily_ret = raw_ret - (turnover_val * fee * 2)
-        logger.debug(
-            f"    [{f}] 换手率估计={turnover_val:.4f} | "
-            f"单日费用={turnover_val * fee * 2:.6f}"
-        )
+        # logger.debug(
+        #     f"    [{f}] 换手率估计={turnover_val:.4f} | "
+        #     f"单日费用={turnover_val * fee * 2:.6f}"
+        # )
 
         # 累乘 NAV（净资产价值序列）
         nav = np.cumprod(1.0 + net_daily_ret)
@@ -331,9 +331,9 @@ def batch_full_metrics(
         # 夏普比率：年化收益 / 年化波动率，加 1e-9 防除零
         sharpe = ann_ret / (vol + 1e-9)
 
-        logger.debug(
-            f"    [{f}] ann_ret={ann_ret:.4f} | vol={vol:.4f} | sharpe={sharpe:.4f}"
-        )
+        # logger.debug(
+        #     f"    [{f}] ann_ret={ann_ret:.4f} | vol={vol:.4f} | sharpe={sharpe:.4f}"
+        # )
 
         final_results.append(
             {
