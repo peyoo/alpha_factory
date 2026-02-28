@@ -222,15 +222,15 @@ class DataProvider:
 
         # 3. 💾 持久化缓存 (如果指定了 cache_path)
         if cache_path:
-            # 注意：LazyFrame 必须 collect 之后才能 write_parquet
-            # 或者使用 sink_parquet (如果是流式支持的操作)
-            # 为了稳健性，这里先 collect
             cache_path.parent.mkdir(parents=True, exist_ok=True)
             logger.info(f"📥 正在将计算结果写入缓存: {cache_path}")
 
-            # 执行计算并保存
-            df = lf.collect()
-            # df.shrink_dtype()  # 类型压缩
+            # 先统一数值列为 Float64，避免 Float32/Float64 混合导致 collect panic
+            lf = lf.with_columns(cs.numeric().cast(pl.Float64))
+
+            # 禁用优化器 collect，绕开 Polars 在 Float32/Float64 混合列上的
+            # 优化器 bug (cannot get ref Float64 from Float32)
+            df = lf.collect(no_optimization=True)
             df.write_parquet(cache_path, compression="zstd")
 
             # 返回保存后的 Lazy 视图，确保后续链路统一
