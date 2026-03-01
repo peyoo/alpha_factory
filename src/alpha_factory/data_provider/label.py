@@ -139,3 +139,65 @@ def label_OO_for_tradable(
     lf = lf.with_columns(pl.col(label_y).clip(-0.2, 0.2).alias(label_y))
 
     return lf.drop(["_is_limit_T1", "_at_limit_T1"])
+
+
+def label_CC_for_tradable(
+    lf: pl.LazyFrame, label_window: int = 1, mask_col: str = F.POOL_MASK
+) -> pl.LazyFrame:
+    """
+    Close-to-Close 收益率标签：close[T+2] / close[T+1] - 1
+
+    与 LABEL_FOR_RET 时序完全一致（T 日信号 → T+1 日开盘执行），
+    但以收盘价衡量持仓期收益。
+
+    优势：
+    - 对续持股票每日贡献可直接累加，N 日持仓总收益 = Σ 各日 CC 标签
+    - 消除 open-to-open 每日重置对均值回归因子的系统性高估
+    - eval 结果与 bt period 更一致，更能反映可实现收益
+    """
+    label_y = F.LABEL_FOR_RET_CC
+
+    # 1. close[T+1] → close[T+2]（T 日信号、T+1 持入、T+2 持出）
+    lf = lf.with_columns(
+        [
+            (
+                pl.col("CLOSE").shift(-(label_window + 1)).over(F.ASSET)
+                / pl.col("CLOSE").shift(-1).over(F.ASSET)
+                - 1
+            ).alias(label_y),
+            # T+1 日是否一字涨停（买不到）
+            (
+                pl.col("LOW").shift(-1).over(F.ASSET)
+                == pl.col("HIGH").shift(-1).over(F.ASSET)
+            ).alias("_cc_limit_T1"),
+            (
+                (
+                    pl.col("CLOSE").shift(-1).over(F.ASSET)
+                    / pl.col("CLOSE").over(F.ASSET)
+                    - 1
+                )
+                > 0.098
+            ).alias("_cc_at_limit_T1"),
+        ]
+    )
+
+    # 2. 不在池内或一字涨停买不到 → 收益为 0
+    lf = lf.with_columns(
+        [
+            pl.when(
+                (~pl.col(mask_col))
+                | (pl.col("_cc_limit_T1") & pl.col("_cc_at_limit_T1"))
+            )
+            .then(0.0)
+            .otherwise(pl.col(label_y))
+            .alias(label_y)
+        ]
+    )
+
+    # 3. 极端值截断（与 LABEL_FOR_RET 保持一致）
+    lf = lf.with_columns(pl.col(label_y).clip(-0.2, 0.2).alias(label_y))
+
+    return lf.drop(["_cc_limit_T1", "_cc_at_limit_T1"])
+
+
+label_CC_1 = partial(label_CC_for_tradable, label_window=1)

@@ -11,7 +11,7 @@ def batch_full_metrics(
     df: Union[pl.DataFrame, pl.LazyFrame],
     factors: Union[str, List[str]] = r"^factor_.*",
     label_ic_col: str = F.LABEL_FOR_IC,
-    label_ret_col: str = F.LABEL_FOR_RET,
+    label_ret_col: str = F.LABEL_FOR_RET_CC,
     date_col: str = F.DATE,
     asset_col: str = F.ASSET,
     pool_mask_col: str = F.POOL_MASK,

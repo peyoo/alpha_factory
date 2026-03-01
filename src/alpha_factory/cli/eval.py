@@ -69,7 +69,7 @@ def quant_eval(
         result = single_factor_alpha_analysis(
             lf,
             factor_col=factor_col,
-            ret_col=F.LABEL_FOR_RET,
+            ret_col=F.LABEL_FOR_RET_CC,
             date_col=F.DATE,
             asset_col=F.ASSET,
             pool_mask_col=F.POOL_MASK,

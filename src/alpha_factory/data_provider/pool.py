@@ -12,7 +12,11 @@
 import polars as pl
 
 from alpha_factory.config.base import settings
-from alpha_factory.data_provider.label import label_OO_for_IC, label_OO_for_tradable
+from alpha_factory.data_provider.label import (
+    label_OO_for_IC,
+    label_OO_for_tradable,
+    label_CC_for_tradable,
+)
 from alpha_factory.utils.schema import F
 
 
@@ -22,7 +26,11 @@ class PoolUniverse:
         return self.__class__.__name__
 
     def __init__(self):
-        self.label_col_funcs = [label_OO_for_IC, label_OO_for_tradable]
+        self.label_col_funcs = [
+            label_OO_for_IC,
+            label_OO_for_tradable,
+            label_CC_for_tradable,
+        ]
 
     def pool(self, lf: pl.LazyFrame) -> pl.LazyFrame:
         """
@@ -47,7 +55,7 @@ class PoolUniverse:
         ic，收益率计算，回测，遗传因子计算等都需要这些列（不需要列入ASSET，DATE）
         :return:
         """
-        return [F.POOL_MASK, F.LABEL_FOR_IC, F.LABEL_FOR_RET]
+        return [F.POOL_MASK, F.LABEL_FOR_IC, F.LABEL_FOR_RET, F.LABEL_FOR_RET_CC]
 
     @property
     def pool_dir(self):
@@ -75,6 +83,7 @@ class MainSmallPool(PoolUniverse):
             F.IS_SUSPENDED,
             F.LABEL_FOR_IC,
             F.LABEL_FOR_RET,
+            F.LABEL_FOR_RET_CC,
         ]
 
     def pool(

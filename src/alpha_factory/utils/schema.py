@@ -65,6 +65,9 @@ class F(str, Enum):
 
     LABEL_FOR_IC = "LABEL_FOR_IC"
     LABEL_FOR_RET = "LABEL_FOR_RET"
+    # close-to-close 收益标签：close[T+2]/close[T+1]-1
+    # 与 LABEL_FOR_RET 时序一致，但对续持股票可直接链式累加，消除每日开盘重置偏差
+    LABEL_FOR_RET_CC = "LABEL_FOR_RET_CC"
 
 
 class DataSchema:

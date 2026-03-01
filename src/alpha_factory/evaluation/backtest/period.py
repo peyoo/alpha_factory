@@ -67,7 +67,9 @@ def backtest_periodic_rebalance(
     target_holdings = set()
     daily_records = []
     trades_records = []
-    last_rebalance_idx = -rebalance_period  # 强制第一次交易
+    # 初始化为 -rebalance_period，使第 0 日循环末尾触发首次目标更新，
+    # 确保信号在 T 日收盘后计算、T+1 日开盘才生效（与 eval 的 LABEL_FOR_RET 对齐）
+    last_rebalance_idx = -rebalance_period
 
     logger.info(
         f"🚀 周期换股回测 | 因子: {factor_col} | 持股数: {hold_num} | 周期: {rebalance_period} 天 | 费率: {cost_rate:.4f}"
@@ -94,17 +96,11 @@ def backtest_periodic_rebalance(
         num_sold = 0
         day_raw_ret = 0.0
 
-        # A. 判断是否需要换股
-        need_rebalance = (i - last_rebalance_idx) >= rebalance_period
+        # A. 今日交易基于上一期确定的 target_holdings（非当日信号）
+        # 注意：target_holdings 在本日循环末尾才更新，确保与 eval 对齐：
+        # T 日收盘信号 → T+1 日开盘执行，与 LABEL_FOR_RET = open[T+2]/open[T+1] 一致
 
-        # B. 更新目标持仓
-        if need_rebalance:
-            target_holdings = {
-                a for a, info in day_info.items() if info["RANK"] <= hold_num
-            }
-            last_rebalance_idx = i
-
-        # C. 处理现有持仓
+        # B. 处理现有持仓
         for asset, hold_info in current_holdings.items():
             info = day_info.get(asset)
             if not info:
@@ -113,10 +109,16 @@ def backtest_periodic_rebalance(
                 continue
 
             price_yesterday_close = hold_info["last_price"]
+            # last_price 为 None（停牌链式传播），跳过收益计算，保持持仓
+            if price_yesterday_close is None:
+                new_holdings[asset] = hold_info
+                continue
 
             # 停牌：无法交易，当日收益视为 0，用收盘价更新 last_price
             if info[F.IS_SUSPENDED]:
-                hold_info["last_price"] = info[F.CLOSE]
+                new_close = info[F.CLOSE]
+                if new_close is not None:
+                    hold_info["last_price"] = new_close
                 new_holdings[asset] = hold_info
                 continue
 
@@ -149,12 +151,14 @@ def backtest_periodic_rebalance(
                     )
                     num_sold += 1
             else:
-                # 继续持有：用乘法精确计算 prev_close → close 全天收益，避免两段加法的近似误差
-                day_raw_ret += (info[F.CLOSE] / price_yesterday_close - 1) / hold_num
-                hold_info["last_price"] = info[F.CLOSE]
+                # 继续持有：prev_close → close 全天收益
+                new_close = info[F.CLOSE]
+                if new_close is not None:
+                    day_raw_ret += (new_close / price_yesterday_close - 1) / hold_num
+                    hold_info["last_price"] = new_close
                 new_holdings[asset] = hold_info
 
-        # D. 处理新股票买入
+        # C. 处理新股票买入
         potential_buys = [a for a in target_holdings if a not in new_holdings]
         potential_buys.sort(
             key=lambda x: day_info[x]["RANK"] if x in day_info else 999999
@@ -175,7 +179,7 @@ def backtest_periodic_rebalance(
                     }
                     num_bought += 1
 
-        # E. 记录流水
+        # D. 记录流水
         turnover = (num_bought + num_sold) / hold_num if hold_num > 0 else 0.0
         current_holdings = new_holdings
         daily_records.append(
@@ -186,6 +190,14 @@ def backtest_periodic_rebalance(
                 "COUNT": len(current_holdings),
             }
         )
+
+        # E. 信号更新（循环末尾，T 日收盘后计算新目标，T+1 日才生效）
+        need_rebalance = (i - last_rebalance_idx) >= rebalance_period
+        if need_rebalance:
+            target_holdings = {
+                a for a, info in day_info.items() if info["RANK"] <= hold_num
+            }
+            last_rebalance_idx = i
 
     # --- 4. 结算 ---
     res_daily = (
