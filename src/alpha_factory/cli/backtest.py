@@ -29,10 +29,11 @@ def quant_bt(
         "20190101", "-s", "--start-date", help="开始日期 YYYYMMDD"
     ),
     end_date: Optional[str] = typer.Option(
-        None, "-e", "--end-date", help="结束日期 YYYYMMDD（默认至最新）"
+        None, "--end", "--end-date", help="结束日期 YYYYMMDD（默认至最新）"
     ),
     expr: str = typer.Option(
         ...,
+        "-e",
         "--expr",
         help="因子表达式，格式: FACTOR_NAME = <polars-ta 表达式>，例如 F1 = CLOSE.rolling_mean(5)",
     ),
