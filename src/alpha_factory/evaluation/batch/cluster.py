@@ -13,7 +13,7 @@ def batch_clustering(
     factors: Union[str, List[str]] = r"^factor_.*",
     threshold: float = 0.8,
     method: str = "average",
-    sample_n: Optional[int] = None,
+    sample_n: Optional[int] = 50000,
 ) -> dict[str, int] | dict[Any, Any] | tuple[dict[str, int], dict[int, list]]:
     """
     因子聚类分析核心函数：识别并归类逻辑冗余的因子。
