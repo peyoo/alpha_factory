@@ -6,8 +6,9 @@
      （行 = 日期×标的，列 = 因子）。
   3. 调用 batch_clustering 计算斯皮尔曼秩相关距离并层次聚类。
   4. 将聚类结果（cluster_id）写回 CSV 的 group 列。
-  5. 若指定 --select N，则在每个聚类内按综合评分（sharpe/ic_ir/ann_ret）
-     取前 N 名并输出。
+  5. 若指定 --select N，则在每个聚类内按各指标分别取前 N 名，取并集输出。
+     - ic / ic_ir  取绝对值最大的前 N 名
+     - ann_ret / sharpe 取原值最大的前 N 名
 
 路径规则：
   - --csv  未指定 → 自动使用 <pool_dir>/<pool_name>.csv
@@ -37,17 +38,14 @@ from alpha_factory.evaluation.batch.cluster import batch_clustering
 
 console = Console()
 
-# 综合评分权重（用于 --select 时在簇内排序）
-_METRIC_WEIGHTS: dict[str, float] = {
-    "sharpe": 0.35,
-    "ic_ir_abs": 0.30,
-    "ann_ret": 0.25,
-    "ic_mean_abs": 0.10,
-}
-_METRIC_FALLBACK: dict[str, str] = {
-    "ic_ir_abs": "ic_ir",
-    "ic_mean_abs": "ic_mean",
-}
+# 每个指标的配置：(优先列名, 备用列名, 是否取绝对值排序)
+# ic/ic_ir 取绝对值最大；ann_ret/sharpe 取原值最大
+_SELECT_METRIC_CONFIGS: list[tuple[str, str | None, bool]] = [
+    ("ic_mean_abs", "ic_mean", True),
+    ("ic_ir_abs", "ic_ir", True),
+    ("ann_ret", None, False),
+    ("sharpe", None, False),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -55,29 +53,41 @@ _METRIC_FALLBACK: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
-def _compute_score(df: pl.DataFrame, available_metrics: list[str]) -> pl.DataFrame:
-    """对指标做 min-max 归一化后加权求和，返回含 score 列的 DataFrame。"""
-    score_expr = pl.lit(0.0)
-    total_weight = 0.0
+def _select_top_n_per_cluster(
+    df: pl.DataFrame,
+    n: int,
+) -> pl.DataFrame:
+    """每个聚类内，按各指标分别取前 N 名，返回并集（去重）。
 
-    for col_name, weight in _METRIC_WEIGHTS.items():
-        actual = (
-            col_name
-            if col_name in available_metrics
-            else _METRIC_FALLBACK.get(col_name)
+    - ic / ic_ir  系列：按绝对值降序取 Top N
+    - ann_ret / sharpe：按原值降序取 Top N
+    """
+    selected_factors: set[str] = set()
+
+    for preferred, fallback, use_abs in _SELECT_METRIC_CONFIGS:
+        col = (
+            preferred
+            if preferred in df.columns
+            else (fallback if fallback and fallback in df.columns else None)
         )
-        if actual is None or actual not in available_metrics:
+        if col is None:
             continue
-        col_min = float(df[actual].abs().min() or 0.0)
-        col_max = float(df[actual].abs().max() or 0.0)
-        denom = col_max - col_min if col_max != col_min else 1.0
-        score_expr = score_expr + ((pl.col(actual).abs() - col_min) / denom) * weight
-        total_weight += weight
 
-    if total_weight == 0:
-        return df.with_columns(pl.lit(0.0).alias("score"))
-    score_expr = score_expr / total_weight
-    return df.with_columns(score_expr.alias("score"))
+        sort_col = f"__abs_{col}" if use_abs else col
+        work = df.with_columns(pl.col(col).abs().alias(sort_col)) if use_abs else df
+
+        top_factors = (
+            work.sort(sort_col, descending=True)
+            .group_by("group", maintain_order=False)
+            .head(n)["factor"]
+            .to_list()
+        )
+        selected_factors.update(top_factors)
+
+    return df.filter(pl.col("factor").is_in(selected_factors)).sort(
+        ["group", "sharpe" if "sharpe" in df.columns else "factor"],
+        descending=[False, True],
+    )
 
 
 def _load_factor_values(
@@ -104,44 +114,27 @@ def _load_factor_values(
 
 
 def _print_cluster_summary(df: pl.DataFrame) -> None:
-    """打印每个聚类的因子数量与均分摘要。"""
-    summary = (
-        df.group_by("group")
-        .agg(
-            pl.len().alias("count"),
-            pl.col("score").mean().round(4).alias("avg_score"),
-            pl.col("score").max().round(4).alias("max_score"),
-            pl.col("score").min().round(4).alias("min_score"),
-        )
-        .sort("group")
-    )
+    """打印每个聚类的因子数量摘要。"""
+    summary = df.group_by("group").agg(pl.len().alias("count")).sort("group")
     table = Table(title="📊 聚类分组摘要", show_lines=True)
     table.add_column("cluster_id", style="bold yellow", justify="center")
     table.add_column("因子数", justify="right")
-    table.add_column("均分", justify="right")
-    table.add_column("最高分", justify="right")
-    table.add_column("最低分", justify="right")
 
     for row in summary.iter_rows(named=True):
-        table.add_row(
-            str(row["group"]),
-            str(row["count"]),
-            f"{row['avg_score']:.4f}",
-            f"{row['max_score']:.4f}",
-            f"{row['min_score']:.4f}",
-        )
+        table.add_row(str(row["group"]), str(row["count"]))
     console.print(table)
 
 
-def _print_factor_table(df: pl.DataFrame, available_metrics: list[str]) -> None:
-    """打印因子详情表（factor / group / score 及可用指标列）。"""
-    priority = ["factor", "group", "score"] + [
-        c for c in available_metrics if c in df.columns
-    ]
-    display_cols = [c for c in priority if c in df.columns]
+def _print_factor_table(df: pl.DataFrame) -> None:
+    """打印因子详情表（factor / group 及可用指标列）。"""
+    metric_cols = [c for _, c, _ in _SELECT_METRIC_CONFIGS if c and c in df.columns]
+    preferred_cols = [p for p, _, _ in _SELECT_METRIC_CONFIGS if p in df.columns]
+    metric_display = list(dict.fromkeys(preferred_cols + metric_cols))  # 去重保序
+
+    display_cols = [c for c in ["factor", "group"] + metric_display if c in df.columns]
     sub = df.select(display_cols)
 
-    col_styles = {"factor": "cyan", "group": "bold yellow", "score": "bold green"}
+    col_styles = {"factor": "cyan", "group": "bold yellow"}
     table = Table(show_lines=True)
     for col in sub.columns:
         table.add_column(
@@ -185,7 +178,7 @@ def quant_group(
         None, "-e", "--end-date", help="因子时序数据结束日期 YYYYMMDD（默认至最新）"
     ),
     threshold: float = typer.Option(
-        0.8,
+        0.9,
         "--threshold",
         help="聚类相关性阈值（0~1）。越高阈值越严格，簇数越多",
     ),
@@ -201,9 +194,12 @@ def quant_group(
         show_default=False,
     ),
     select: Optional[int] = typer.Option(
-        None,
+        2,
         "--select",
-        help="每个聚类取综合评分前 N 名输出（不指定则输出全部）",
+        help=(
+            "每簇内各指标（ic/ic_ir 取绝对值，ann_ret/sharpe 取原值）"
+            "分别取前 N 名，输出并集"
+        ),
     ),
     output: Optional[Path] = typer.Option(
         None,
@@ -255,13 +251,18 @@ def quant_group(
     ]
     factor_names = [p[0] for p in factor_pairs]
 
-    # --- 3. 检测可用评分指标 ---
-    candidate_metrics = list(_METRIC_WEIGHTS.keys()) + list(_METRIC_FALLBACK.values())
-    available_metrics = [c for c in candidate_metrics if c in df_meta.columns]
+    # --- 3. 检测可用指标列 ---
+    all_metric_cols = [
+        col
+        for preferred, fallback, _ in _SELECT_METRIC_CONFIGS
+        for col in (preferred, fallback)
+        if col and col in df_meta.columns
+    ]
+    available_metrics = list(dict.fromkeys(all_metric_cols))  # 去重保序
     if not available_metrics:
         console.print(
-            "[yellow]⚠️  CSV 中未找到评分指标列（sharpe/ic_ir/ann_ret 等），"
-            "score 将以 0 填充，--select 结果仅按聚类顺序排列。[/yellow]"
+            "[yellow]⚠️  CSV 中未找到指标列（sharpe/ic_ir/ann_ret 等），"
+            "--select 将无法筛选。[/yellow]"
         )
 
     # --- 4. 加载因子时序值 ---
@@ -295,50 +296,45 @@ def quant_group(
     n_clusters = len(cluster_to_names)
     console.print(f"[green]✅ 聚类完成，共 {n_clusters} 个簇[/green]")
 
-    # --- 6. 计算综合评分 ---
-    df_scored = df_meta.clone()
-    cols_to_drop = [c for c in ("score", "group") if c in df_scored.columns]
+    # --- 6. 写回 group 列（cluster_id），移除旧的 score/group 列 ---
+    df_result = df_meta.clone()
+    cols_to_drop = [c for c in ("group",) if c in df_result.columns]
     if cols_to_drop:
-        df_scored = df_scored.drop(cols_to_drop)
+        df_result = df_result.drop(cols_to_drop)
 
-    if available_metrics:
-        df_scored = _compute_score(df_scored, available_metrics)
-    else:
-        df_scored = df_scored.with_columns(pl.lit(0.0).alias("score"))
-
-    # --- 7. 写回 group 列（cluster_id） ---
     group_col = pl.Series(
         "group",
-        [name_to_cluster.get(n, 0) for n in df_scored["factor"].to_list()],
+        [name_to_cluster.get(n, 0) for n in df_result["factor"].to_list()],
     )
-    df_scored = df_scored.with_columns(group_col)
+    df_result = df_result.with_columns(group_col)
 
-    # --- 8. 保存到 CSV ---
+    # --- 7. 打印聚类摘要 ---
+    _print_cluster_summary(df_result)
+
+    # --- 8. --select：每簇按各指标分别取前 N 名，取并集 ---
+    elapsed = perf_counter() - t0
+    if select is not None and select > 0:
+        if not available_metrics:
+            console.print("[yellow]⚠️  无指标列，--select 无法筛选。[/yellow]")
+            df_to_save = df_result
+        else:
+            df_to_save = _select_top_n_per_cluster(df_result, select)
+            console.print(
+                f"\n[bold cyan]🏆 每簇各指标 Top {select} 并集（共 {df_to_save.height} 条）[/bold cyan]"
+            )
+            _print_factor_table(df_to_save)
+    else:
+        df_to_save = df_result.sort(["group", "factor"])
+        _print_factor_table(df_to_save)
+
+    # --- 9. 保存到 CSV（含 group 列；--select 时仅保存筛选后的因子）---
     effective_output = output or csv
     if effective_output is not None and not effective_output.is_absolute():
         effective_output = pool_inst.pool_dir / effective_output
     effective_output.parent.mkdir(parents=True, exist_ok=True)
-    df_scored.write_csv(effective_output)
-    console.print(f"[bold green]💾 已保存分组结果[/bold green] → {effective_output}")
-
-    # --- 9. 打印摘要 ---
-    _print_cluster_summary(df_scored)
-
-    # --- 10. --select：每簇取前 N 名 ---
-    elapsed = perf_counter() - t0
-    if select is not None and select > 0:
-        selected = (
-            df_scored.sort("score", descending=True)
-            .group_by("group", maintain_order=False)
-            .head(select)
-            .sort(["group", "score"], descending=[False, True])
-        )
-        console.print(
-            f"\n[bold cyan]🏆 每簇 Top {select} 因子（共 {selected.height} 条）[/bold cyan]"
-        )
-        _print_factor_table(selected, available_metrics)
-    else:
-        df_display = df_scored.sort(["group", "score"], descending=[False, True])
-        _print_factor_table(df_display, available_metrics)
+    df_to_save.write_csv(effective_output)
+    console.print(
+        f"[bold green]💾 已保存结果[/bold green] → {effective_output}（{df_to_save.height} 条）"
+    )
 
     console.print(f"[dim]总耗时 {elapsed:.2f}s[/dim]")
