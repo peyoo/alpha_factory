@@ -45,8 +45,10 @@ def single_factor_alpha_analysis(
 
     logger.info("🔍 正在计算因子预测效力指标 (IC Summary)...")
     # 2. 基础 IC 统计 (预测效力)
+    # 注意：IC 必须使用截面标准化标签 LABEL_FOR_IC，而非可交易收益 LABEL_FOR_RET
+    # 与 batch_full_metrics（evals）保持一致口径
     ic_summary = batch_ic_summary(
-        df, factors=f"^{factor_col}$", label_for_ic=ret_col, date_col=date_col
+        df, factors=f"^{factor_col}$", label_for_ic=F.LABEL_FOR_IC, date_col=date_col
     )
     ic_mean = ic_summary["ic_mean"][0]
     logger.info(f"    > IC 均值: {ic_mean:.4f}, ICIR: {ic_summary['ic_ir'][0]:.4f}")
@@ -85,15 +87,19 @@ def single_factor_alpha_analysis(
     # --- 第二部分：实盘表现 ---
     print("\n【2. 实盘表现 - 模拟真实交易扣费后的收益】")
     print(f"  > 净年化收益: {m['annual_return']:.2%}")
-    print("    [解释]: 考虑调仓周期和基于自相关性估算的换手扣费后的年化。")
+    print(
+        "    [解释]: 考虑调仓周期和实测调仓换手后的年化（扣费基于真实 top bin 进出比例）。"
+    )
     print(f"  > 净夏普比率: {m['sharpe_ratio']:.2f}")
     print(f"  > 最大回撤: {m['max_drawdown']:.2%}")
 
     # --- 第三部分：执行成本 ---
     print("\n【3. 执行成本 - 衡量因子在实盘中落地的难易度】")
-    print(f"  > 估算日均换手率: {est_turnover:.2%}")
     print(
-        f"    [解释]: 基于因子秩自相关性(AC={decay_stats['autocorr']:.3f})推导出的每日头寸变动。"
+        f"  > 实测调仓换手率: {m['avg_daily_turnover']:.2%}  (自相关估算: {est_turnover:.2%}, AC={decay_stats['autocorr']:.3f})"
+    )
+    print(
+        "    [解释]: 每次调仓时实际进入多头仓位的股票比例（直接统计，与 evals 口径一致）。"
     )
     print(f"  > 调仓周期: {period} 交易日")
     print(f"  > 摩擦成本系数: {cost * 10000:.1f} bps (基点)")

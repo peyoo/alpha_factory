@@ -18,7 +18,7 @@ def single_calc_quantile_metrics(
     period: int = 1,
     cost: float = 0.0025,
     est_turnover: float = 0.2,
-    annual_days: int = 251,
+    annual_days: int = 252,
     direction: Literal[1, -1] = 1,  # 🆕 新增方向参数
 ) -> dict:
     """
@@ -121,9 +121,7 @@ def single_calc_quantile_metrics(
         .sort(date_col)
     )
 
-    # --- 4. 扣除成本 ---
-    reb_cost = est_turnover * period * cost
-    # --- 根据方向确定多头和空头桶 ---
+    # --- 4. 确定多头 / 空头桶 ---
     if direction == 1:
         long_col = f"Q{n_bins}"  # 因子值最大为多头
         short_col = "Q1"
@@ -132,14 +130,57 @@ def single_calc_quantile_metrics(
         short_col = f"Q{n_bins}"
     all_q_cols = [f"Q{i + 1}" for i in range(n_bins)]
 
+    # --- 5. 实测调仓换手率（与 batch_full_metrics 一致）---
+    # 在每个调仓日统计新进入多头 / 空头桶的股票占比，作为扣费的真实依据
+    # 不需要乘 period：直接测量每次调仓事件的换手量，而非日均换手的累加
+    to_df = (
+        df_with_q.sort([asset_col, date_col])
+        .with_columns(pl.col("quantile").shift(1).over(asset_col).alias("_prev_q"))
+        .filter(pl.col(date_col).is_in(rebalance_dates))
+        .group_by(date_col)
+        .agg(
+            [
+                ((pl.col("quantile") == long_col) & (pl.col("_prev_q") != long_col))
+                .sum()
+                .alias("_new_long"),
+                ((pl.col("quantile") == short_col) & (pl.col("_prev_q") != short_col))
+                .sum()
+                .alias("_new_short"),
+                pl.len().alias("_cnt"),
+            ]
+        )
+        .with_columns(
+            [
+                (
+                    pl.col("_new_long") / (pl.col("_cnt") / n_bins).clip(lower_bound=1)
+                ).alias("_to_long"),
+                (
+                    pl.col("_new_short") / (pl.col("_cnt") / n_bins).clip(lower_bound=1)
+                ).alias("_to_short"),
+            ]
+        )
+        .collect()
+    )
+    raw_to_long = to_df.get_column("_to_long").mean()
+    raw_to_short = to_df.get_column("_to_short").mean()
+    to_long = float(raw_to_long) if raw_to_long is not None else est_turnover
+    to_short = float(raw_to_short) if raw_to_short is not None else est_turnover
+
+    # long_short：多空两侧各自计入换手成本；其他模式只计多头侧
+    if mode == "long_short":
+        measured_turnover = (to_long + to_short) / 2
+        reb_cost = (to_long + to_short) * cost * 2
+    else:
+        measured_turnover = to_long
+        reb_cost = to_long * cost * 2
+
+    # --- 6. 构建 raw_ret ---
     if mode == "long_only":
         res_series = res_series.with_columns(pl.col(long_col).alias("raw_ret"))
     elif mode == "long_short":
-        # 此时如果是 direction=-1，会自动变成 Q1 - Q10
         res_series = res_series.with_columns(
             (pl.col(long_col) - pl.col(short_col)).alias("raw_ret")
         )
-        reb_cost = reb_cost * 2
     elif mode == "active":
         # 使用 long_col 减去截面平均
         res_series = res_series.with_columns(
@@ -192,7 +233,7 @@ def single_calc_quantile_metrics(
             "avg_count_per_bin": q_rets_df.get_column("count").mean(),
             "total_obs": q_rets_df.get_column("count").sum(),
             "rebalance_period": period,
-            "avg_daily_turnover": est_turnover,
+            "avg_daily_turnover": measured_turnover,  # 实测调仓换手率（每次调仓事件）
         },
     }
 
