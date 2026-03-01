@@ -9,10 +9,10 @@ from alpha_factory.utils.schema import F
 def backtest_periodic_rebalance(
     df_input: Union[pl.DataFrame, pl.LazyFrame],
     factor_col: str,
-    hold_num: int = 10,
-    rebalance_period: int = 20,
-    cost_rate: float = 0.0025,
-    exec_price: str = F.OPEN,
+    hold_num: int = 100,
+    rebalance_period: int = 5,
+    cost_rate: float = 0.003,
+    exec_price: str = F.VWAP,
     ascending: bool = False,
 ) -> Dict[str, pl.DataFrame]:
     """
@@ -108,20 +108,34 @@ def backtest_periodic_rebalance(
         for asset, hold_info in current_holdings.items():
             info = day_info.get(asset)
             if not info:
+                # 无当日行情数据（数据缺失），保持持仓，收益计为 0
+                new_holdings[asset] = hold_info
+                continue
+
+            price_yesterday_close = hold_info["last_price"]
+
+            # 停牌：无法交易，当日收益视为 0，用收盘价更新 last_price
+            if info[F.IS_SUSPENDED]:
+                hold_info["last_price"] = info[F.CLOSE]
                 new_holdings[asset] = hold_info
                 continue
 
             price_today_exec = info[exec_price]
-            price_yesterday_close = hold_info["last_price"]
-            day_raw_ret += ((price_today_exec / price_yesterday_close) - 1) / hold_num
 
             # 判定卖出
             if asset not in target_holdings:
-                if info[F.IS_DOWN_LIMIT] or info[F.IS_SUSPENDED]:
+                if info[F.IS_DOWN_LIMIT]:
+                    # 收盘跌停，保守假设无法卖出；用乘法精确计算当日收益
+                    day_raw_ret += (
+                        info[F.CLOSE] / price_yesterday_close - 1
+                    ) / hold_num
                     hold_info["last_price"] = info[F.CLOSE]
-                    day_raw_ret += ((info[F.CLOSE] / price_today_exec) - 1) / hold_num
                     new_holdings[asset] = hold_info
                 else:
+                    # 以执行价卖出：prev_close → exec_price 的收益
+                    day_raw_ret += (
+                        price_today_exec / price_yesterday_close - 1
+                    ) / hold_num
                     trades_records.append(
                         {
                             F.ASSET: asset,
@@ -135,7 +149,8 @@ def backtest_periodic_rebalance(
                     )
                     num_sold += 1
             else:
-                day_raw_ret += ((info[F.CLOSE] / price_today_exec) - 1) / hold_num
+                # 继续持有：用乘法精确计算 prev_close → close 全天收益，避免两段加法的近似误差
+                day_raw_ret += (info[F.CLOSE] / price_yesterday_close - 1) / hold_num
                 hold_info["last_price"] = info[F.CLOSE]
                 new_holdings[asset] = hold_info
 

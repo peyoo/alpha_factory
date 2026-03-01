@@ -10,6 +10,7 @@ from rich.table import Table
 from alpha_factory.cli.utils import PoolUniverseEnum
 from alpha_factory.data_provider.data_provider import DataProvider
 from alpha_factory.evaluation.backtest.daily_evolving import backtest_daily_evolving
+from alpha_factory.evaluation.backtest.period import backtest_periodic_rebalance
 from alpha_factory.evaluation.backtest.utils import generate_and_open_report
 from alpha_factory.utils.schema import F
 
@@ -38,9 +39,21 @@ def quant_bt(
     pool: PoolUniverseEnum = typer.Option(
         PoolUniverseEnum.main_small, "--pool", help="股票池"
     ),
-    n_buy: int = typer.Option(10, "--n-buy", help="最大持仓数（买入线）"),
+    mode: str = typer.Option(
+        "daily",
+        "--mode",
+        help="回测模式: daily（逐日演进，默认）| period（周期换股）",
+    ),
+    n_buy: int = typer.Option(
+        10, "--n-buy", help="最大持仓数（daily: 买入线；period: 持股数量）"
+    ),
     sell_rank: int = typer.Option(
-        30, "--sell-rank", help="卖出线：排名超过此值时触发卖出"
+        30, "--sell-rank", help="卖出线：排名超过此值时触发卖出（仅 daily 模式）"
+    ),
+    rebalance_period: int = typer.Option(
+        5,
+        "--period",
+        help="换股周期（天数），如 5 表示每 5 天换股一次（仅 period 模式）",
     ),
     cost: float = typer.Option(0.003, "--cost", help="单边交易成本率"),
     exec_price: str = typer.Option(
@@ -65,14 +78,28 @@ def quant_bt(
     ),
 ):
     """
-    逐日演进回测 (T+1 精准收益闭环)。
+    因子回测框架，支持两种模式。
+
+    \b
+    模式说明:
+      daily   逐日演进回测（T+1 精准收益闭环），支持动态调仓
+      period  周期换股回测，按固定周期整体换仓
 
     \b
     示例:
       quant bt -s 20200101 -e 20231231 --expr "F1 = -ts_mean(AMOUNT, 30)"
       quant bt -s 20200101 --expr "MOM = CLOSE / CLOSE.shift(20) - 1" --n-buy 20 --sell-rank 50
+      quant bt --mode period -s 20200101 --expr "F1 = -CLOSE.shift(1)" --n-buy 10 --period 5
     """
     # --- 1. 参数校验 ---
+    mode_lower = mode.strip().lower()
+    if mode_lower not in ("daily", "period"):
+        typer.echo(
+            f"❌ --mode 无效值 '{mode}'，仅支持: daily | period",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
     exec_price_lower = exec_price.strip().lower()
     if exec_price_lower not in _EXEC_PRICE_MAP:
         typer.echo(
@@ -82,9 +109,16 @@ def quant_bt(
         raise typer.Exit(code=1)
     exec_price_col = _EXEC_PRICE_MAP[exec_price_lower]
 
-    if sell_rank < n_buy:
+    if mode_lower == "daily" and sell_rank < n_buy:
         typer.echo(
             f"❌ --sell-rank ({sell_rank}) 必须 >= --n-buy ({n_buy})",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    if mode_lower == "period" and rebalance_period < 1:
+        typer.echo(
+            f"❌ --period ({rebalance_period}) 必须 >= 1",
             err=True,
         )
         raise typer.Exit(code=1)
@@ -100,21 +134,36 @@ def quant_bt(
     lf = dp.load_pool_data(pool.value(), start_date, end_date, exprs=[expr])
 
     # --- 3. 回测执行 ---
-    console.print(
-        f"[bold cyan]🚀 启动逐日演进回测[/bold cyan] | "
-        f"因子={factor_col} | 持仓={n_buy} | 卖出线={sell_rank} | "
-        f"费率={cost:.4f} | 执行价={exec_price_col}"
-    )
-
-    result = backtest_daily_evolving(
-        df_input=lf,
-        factor_col=factor_col,
-        n_buy=n_buy,
-        sell_rank=sell_rank,
-        cost_rate=cost,
-        exec_price=exec_price_col,
-        ascending=ascending,
-    )
+    if mode_lower == "period":
+        console.print(
+            f"[bold cyan]🚀 启动周期换股回测[/bold cyan] | "
+            f"因子={factor_col} | 持股={n_buy} | 换仓周期={rebalance_period}天 | "
+            f"费率={cost:.4f} | 执行价={exec_price_col}"
+        )
+        result = backtest_periodic_rebalance(
+            df_input=lf,
+            factor_col=factor_col,
+            hold_num=n_buy,
+            rebalance_period=rebalance_period,
+            cost_rate=cost,
+            exec_price=exec_price_col,
+            ascending=ascending,
+        )
+    else:
+        console.print(
+            f"[bold cyan]🚀 启动逐日演进回测[/bold cyan] | "
+            f"因子={factor_col} | 持仓={n_buy} | 卖出线={sell_rank} | "
+            f"费率={cost:.4f} | 执行价={exec_price_col}"
+        )
+        result = backtest_daily_evolving(
+            df_input=lf,
+            factor_col=factor_col,
+            n_buy=n_buy,
+            sell_rank=sell_rank,
+            cost_rate=cost,
+            exec_price=exec_price_col,
+            ascending=ascending,
+        )
 
     daily_df = result["daily_results"]
     trade_df = result["trade_details"]

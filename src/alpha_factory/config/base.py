@@ -97,7 +97,7 @@ class Settings(BaseSettings):
 
     def make_dirs(self):
         """初始化必要的物理目录"""
-        paths = [self.RAW_DATA_DIR, self.WAREHOUSE_DIR, self.LOG_DIR]
+        paths = [self.RAW_DATA_DIR, self.WAREHOUSE_DIR]
         for path in paths:
             path.mkdir(parents=True, exist_ok=True)
 
