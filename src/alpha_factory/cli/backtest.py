@@ -124,7 +124,10 @@ def quant_bt(
         raise typer.Exit(code=1)
 
     # --- 2. 数据加载 ---
-    factor_col = expr.split("=")[0].strip() if "=" in expr else expr.strip()
+    # 若表达式中不含 '='，视为纯表达式，自动添加默认因子名 f1
+    if "=" not in expr:
+        expr = f"f1 = {expr.strip()}"
+    factor_col = expr.split("=")[0].strip()
     console.print(
         f"[bold cyan]📦 加载数据[/bold cyan] pool={pool.name} | "
         f"{start_date} ~ {end_date or '最新'} | expr={expr!r}"
