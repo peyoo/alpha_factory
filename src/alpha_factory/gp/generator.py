@@ -132,16 +132,6 @@ class GPDeapGenerator(object):
             "fitness_population_func", batch_full_metrics
         )
 
-        # self.pool_func = config.get("pool_func", None)  # 股票池函数
-        # # 标签计算函数，提供fitness_population_func计算所需的标签列，
-        # # 生成的标签列名必须和函数所需列名一致，一般为 F.LABEL_FOR_IC 和 F.LABEL_FOR_RET
-        # self.label_funcs = config.get(
-        #     "label_funcs", [label_OO_for_IC, label_OO_for_tradable]
-        # )
-        # self.extra_terminal_func = config.get(
-        #     "extra_terminal_func", []
-        # )  # 额外终端因子计算函数
-
         self.terminals = config.get("terminals", [])  # 终端因子列表
         self.random_window_func = config.get("random_window_func", None)  # 随机窗口函数
 
