@@ -229,14 +229,14 @@ def quant_ml(
         method_tag = method.replace("-", "_")
         save_path = output_dir / f"ml_{method_tag}_{target}_{ts}.csv"
         rows = []
-        for fname in result.factor_names:
+        for fname in result.selected_factors:
             coef = result.factor_coefs[fname]
             rows.append(
                 {
                     "factor": fname,
                     "expression": expr_map.get(fname, ""),
                     "coefficient": coef,
-                    "selected": abs(coef) > 1e-10,
+                    "selected": True,
                 }
             )
         pl.DataFrame(rows).write_csv(save_path)

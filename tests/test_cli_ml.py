@@ -408,7 +408,9 @@ def test_cli_ml_lasso_runs(tmp_path: Path):
     assert "factor" in loaded.columns
     assert "coefficient" in loaded.columns
     assert "selected" in loaded.columns
-    assert len(loaded) == n_factors
+    assert len(loaded) <= n_factors
+    assert all(abs(c) > 1e-10 for c in loaded["coefficient"].to_list())
+    assert all(bool(v) for v in loaded["selected"].to_list())
 
 
 def test_cli_ml_elastic_net_runs(tmp_path: Path):
@@ -459,3 +461,10 @@ def test_cli_ml_elastic_net_runs(tmp_path: Path):
     assert result.exit_code == 0, f"CLI 退出码非 0:\n{result.output}"
     saved_files = list(tmp_path.glob("ml_elastic_net_*.csv"))
     assert len(saved_files) == 1
+    loaded = pl.read_csv(saved_files[0])
+    assert "factor" in loaded.columns
+    assert "coefficient" in loaded.columns
+    assert "selected" in loaded.columns
+    assert len(loaded) <= n_factors
+    assert all(abs(c) > 1e-10 for c in loaded["coefficient"].to_list())
+    assert all(bool(v) for v in loaded["selected"].to_list())
