@@ -15,7 +15,9 @@ console = Console()
 
 
 def quant_eval(
-    start_date: str = typer.Option(..., "-s", "--start-date", help="开始日期 YYYYMMDD"),
+    start_date: str = typer.Option(
+        "20190101", "-s", "--start-date", help="开始日期 YYYYMMDD"
+    ),
     end_date: Optional[str] = typer.Option(
         None, "-e", "--end-date", help="结束日期 YYYYMMDD"
     ),
@@ -35,7 +37,7 @@ def quant_eval(
     ),
     period: int = typer.Option(1, "--period", help="调仓周期（交易日）"),
     cost: float = typer.Option(
-        0.0025, "--cost", help="单边交易成本率（默认0.0025与evals一致）"
+        0.003, "--cost", help="单边交易成本率（默认0.0025与evals一致）"
     ),
     pool: PoolUniverseEnum = typer.Option(
         PoolUniverseEnum.main_small, "--pool", help="股票池"

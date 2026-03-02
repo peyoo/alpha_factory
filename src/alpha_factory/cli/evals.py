@@ -197,7 +197,7 @@ def quant_evals(
         "long_only", "--mode", help="评估模式: long_only|long_short|active"
     ),
     n_bins: int = typer.Option(10, "--n-bins", help="分层数量"),
-    fee: float = typer.Option(0.0025, "--fee", help="单边交易费率"),
+    fee: float = typer.Option(0.003, "--fee", help="单边交易费率"),
     min_sharpe: float = typer.Option(
         1.0, "--min-sharpe", help="最小夏普阈值（低于该值的因子将被过滤）"
     ),

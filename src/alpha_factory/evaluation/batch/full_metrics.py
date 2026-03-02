@@ -18,7 +18,7 @@ def batch_full_metrics(
     n_bins: int = 10,
     mode: Literal["long_only", "long_short", "active"] = "long_only",
     annual_days: int = 252,
-    fee: float = 0.0025,
+    fee: float = 0.003,
 ) -> pl.DataFrame:
     """
     批量因子评估（基于目标股票池）
@@ -100,7 +100,7 @@ def batch_full_metrics(
         logger.error(f"  ✗ 未匹配到任何因子列，选择器: {factors}，返回空 DataFrame")
         return pl.DataFrame()
 
-    logger.info(f"  ✓ 匹配到 {len(factor_cols)} 个因子列")
+    logger.info(f"  ✓ 匹配到 {len(factor_cols)} 个因子列: {factor_cols}")
 
     # ─────────────────────────────────────────────
     # Step 4: 计算每日截面内的因子 Rank
