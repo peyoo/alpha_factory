@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+import polars as pl
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -23,6 +24,13 @@ _EXEC_PRICE_MAP: dict[str, str] = {
     "vwap": F.VWAP,
 }
 
+# 因子表达式预处理映射：对表达式右侧包裹函数
+_PREPROCESS_EXPR_WRAPPER_MAP: dict[str, str] = {
+    "rank": "cs_rank_mask",
+    "demean": "cs_demean_mask",
+    "zscore": "cs_mad_zscore_mask",
+}
+
 
 def quant_bt(
     start_date: str = typer.Option(
@@ -31,11 +39,16 @@ def quant_bt(
     end_date: Optional[str] = typer.Option(
         None, "--end", "--end-date", help="结束日期 YYYYMMDD（默认至最新）"
     ),
-    expr: str = typer.Option(
-        ...,
+    expr: Optional[str] = typer.Option(
+        None,
         "-e",
         "--expr",
         help="因子表达式，格式: FACTOR_NAME = <polars-ta 表达式>，例如 F1 = CLOSE.rolling_mean(5)",
+    ),
+    csv_file: Optional[Path] = typer.Option(
+        None,
+        "--csv",
+        help="CSV 文件路径：读取其中表达式并等权组合成一个因子回测",
     ),
     pool: PoolUniverseEnum = typer.Option(
         PoolUniverseEnum.main_small, "--pool", help="股票池"
@@ -45,11 +58,17 @@ def quant_bt(
         "--mode",
         help="回测模式: daily（逐日演进，默认）| period（周期换股）",
     ),
+    preprocess_mode: str = typer.Option(
+        "none",
+        "--preprocess-mode",
+        "-p",
+        help="因子预处理: none | rank（截面排名）| demean（截面去均值）| zscore（截面标准化）",
+    ),
     n_buy: int = typer.Option(
-        10, "--n-buy", help="最大持仓数（daily: 买入线；period: 持股数量）"
+        80, "--n-buy", help="最大持仓数（daily: 买入线；period: 持股数量）"
     ),
     sell_rank: int = typer.Option(
-        30, "--sell-rank", help="卖出线：排名超过此值时触发卖出（仅 daily 模式）"
+        120, "--sell-rank", help="卖出线：排名超过此值时触发卖出（仅 daily 模式）"
     ),
     rebalance_period: int = typer.Option(
         5,
@@ -101,6 +120,20 @@ def quant_bt(
         )
         raise typer.Exit(code=1)
 
+    if (expr is None and csv_file is None) or (
+        expr is not None and csv_file is not None
+    ):
+        typer.echo("❌ 请且仅请提供一个输入源：--expr 或 --csv", err=True)
+        raise typer.Exit(code=1)
+
+    preprocess_mode_lower = preprocess_mode.strip().lower()
+    if preprocess_mode_lower not in ("none", "rank", "demean", "zscore"):
+        typer.echo(
+            f"❌ --preprocess-mode 无效值 '{preprocess_mode}'，仅支持: none | rank | demean | zscore",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
     exec_price_lower = exec_price.strip().lower()
     if exec_price_lower not in _EXEC_PRICE_MAP:
         typer.echo(
@@ -124,25 +157,34 @@ def quant_bt(
         )
         raise typer.Exit(code=1)
 
+    if csv_file is not None and not csv_file.is_absolute():
+        csv_file = pool.value().pool_dir / csv_file
+
     # --- 2. 数据加载 ---
-    # 若表达式中不含 '='，视为纯表达式，自动添加默认因子名 f1
-    if "=" not in expr:
-        expr = f"f1 = {expr.strip()}"
-    factor_col = expr.split("=")[0].strip()
+    preprocess_wrapper = _PREPROCESS_EXPR_WRAPPER_MAP.get(preprocess_mode_lower)
+    factor_col, factor_expr = _resolve_factor_expr(
+        expr,
+        csv_file,
+        preprocess_wrapper=preprocess_wrapper if csv_file is not None else None,
+    )
+    if expr is not None and preprocess_wrapper is not None:
+        factor_expr = f"{preprocess_wrapper}({factor_expr})"
+    expr_for_loader = f"{factor_col} = {factor_expr}"
+
     console.print(
         f"[bold cyan]📦 加载数据[/bold cyan] pool={pool.name} | "
-        f"{start_date} ~ {end_date or '最新'} | expr={expr!r}"
+        f"{start_date} ~ {end_date or '最新'} | expr={expr_for_loader!r}"
     )
 
     dp = DataProvider()
-    lf = dp.load_pool_data(pool.value(), start_date, end_date, exprs=[expr])
+    lf = dp.load_pool_data(pool.value(), start_date, end_date, exprs=[expr_for_loader])
 
     # --- 3. 回测执行 ---
     if mode_lower == "period":
         console.print(
             f"[bold cyan]🚀 启动周期换股回测[/bold cyan] | "
             f"因子={factor_col} | 持股={n_buy} | 换仓周期={rebalance_period}天 | "
-            f"费率={cost:.4f} | 执行价={exec_price_col}"
+            f"费率={cost:.4f} | 执行价={exec_price_col} | 预处理={preprocess_mode_lower}"
         )
         result = backtest_periodic_rebalance(
             df_input=lf,
@@ -157,7 +199,7 @@ def quant_bt(
         console.print(
             f"[bold cyan]🚀 启动逐日演进回测[/bold cyan] | "
             f"因子={factor_col} | 持仓={n_buy} | 卖出线={sell_rank} | "
-            f"费率={cost:.4f} | 执行价={exec_price_col}"
+            f"费率={cost:.4f} | 执行价={exec_price_col} | 预处理={preprocess_mode_lower}"
         )
         result = backtest_daily_evolving(
             df_input=lf,
@@ -299,6 +341,119 @@ def _print_summary(daily_df, trade_df, factor_col: str) -> None:
         table.add_row("盈亏比", "N/A")
 
     console.print(table)
+
+
+def _resolve_factor_expr(
+    expr: Optional[str],
+    csv_file: Optional[Path],
+    preprocess_wrapper: Optional[str] = None,
+) -> tuple[str, str]:
+    """解析输入源，返回 (factor_col, factor_expr)。"""
+    if expr is not None:
+        expr_str = expr.strip()
+        if "=" in expr_str:
+            factor_col, factor_expr = [part.strip() for part in expr_str.split("=", 1)]
+            return factor_col, factor_expr
+        return "f1", expr_str
+
+    assert csv_file is not None
+    expr_and_direction = _load_exprs_from_csv(csv_file)
+    terms: list[str] = []
+    for single_expr, direction in expr_and_direction:
+        normalized_expr = single_expr
+        if preprocess_wrapper is not None:
+            normalized_expr = f"{preprocess_wrapper}({normalized_expr})"
+        if direction > 0:
+            terms.append(f"({normalized_expr})")
+        else:
+            terms.append(f"-({normalized_expr})")
+
+    composite_sum = " + ".join(terms)
+    composite_expr = f"({composite_sum}) / {len(expr_and_direction)}"
+    return "f_csv", composite_expr
+
+
+def _load_exprs_from_csv(csv_file: Path) -> list[tuple[str, int]]:
+    """从 CSV 中读取表达式与方向，返回 (表达式右侧, direction) 列表。"""
+    try:
+        df = pl.read_csv(csv_file)
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"❌ 读取 --csv 文件失败: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    expr_col = None
+    for candidate in ("expression", "expr", "公式"):
+        if candidate in df.columns:
+            expr_col = candidate
+            break
+    if expr_col is None:
+        typer.echo(
+            f"❌ --csv 文件缺少表达式列，需包含 expression/expr/公式 之一；可用列: {df.columns}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    direction_col = None
+    for candidate in ("direction", "dir", "方向"):
+        if candidate in df.columns:
+            direction_col = candidate
+            break
+
+    expr_values = [str(item).strip() for item in df.get_column(expr_col).to_list()]
+    if not any(expr_values):
+        typer.echo("❌ --csv 文件表达式为空", err=True)
+        raise typer.Exit(code=1)
+
+    if direction_col is None:
+        direction_values = [1] * len(expr_values)
+    else:
+        direction_values = [
+            _parse_direction_value(raw_direction, row_idx=i + 1)
+            for i, raw_direction in enumerate(df.get_column(direction_col).to_list())
+        ]
+
+    parsed_exprs: list[tuple[str, int]] = []
+    for item, direction in zip(expr_values, direction_values):
+        if not item:
+            continue
+        if "=" in item:
+            parsed_exprs.append((item.split("=", 1)[1].strip(), direction))
+        else:
+            parsed_exprs.append((item, direction))
+
+    if not parsed_exprs:
+        typer.echo("❌ --csv 文件表达式为空", err=True)
+        raise typer.Exit(code=1)
+
+    return parsed_exprs
+
+
+def _parse_direction_value(raw_direction: object, row_idx: int) -> int:
+    """解析 CSV direction，合法值仅支持 1/-1（空值默认 1）。"""
+    if raw_direction is None:
+        return 1
+
+    text = str(raw_direction).strip()
+    if text == "":
+        return 1
+
+    try:
+        val = int(float(text))
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(
+            f"❌ --csv 第 {row_idx} 行 direction 非法: {raw_direction!r}，仅支持 1 或 -1",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+
+    if val not in (1, -1):
+        typer.echo(
+            f"❌ --csv 第 {row_idx} 行 direction 非法: {raw_direction!r}，仅支持 1 或 -1",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    return val
 
 
 def _save_trades(trade_df, path: Path) -> None:
