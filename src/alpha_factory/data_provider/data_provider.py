@@ -152,7 +152,7 @@ class DataProvider:
 
         return self._cast_numeric_float64(lf)
 
-    def clean_old_caches(self, days=7):
+    def clean_old_caches(self, days=1):
         """清理旧缓存文件。
 
         参数:

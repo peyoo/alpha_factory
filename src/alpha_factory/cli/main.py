@@ -1,5 +1,6 @@
 import typer
 from alpha_factory.cli.backtest import quant_bt
+from alpha_factory.cli.clean import clean
 from alpha_factory.cli.data import sync
 from alpha_factory.cli.eval import quant_eval
 from alpha_factory.cli.evals import quant_evals
@@ -22,6 +23,7 @@ app.command(name="bt")(quant_bt)
 app.command(name="gp")(quant_gp)
 app.command(name="group")(quant_group)
 app.command(name="ml")(quant_ml)
+app.command(name="clean")(clean)
 
 
 @app.command()
