@@ -40,6 +40,8 @@ class SmallCSGenerator(GPDeapGenerator):
                 "VWAP",
                 "RET",
                 "VWAP_RET",
+                "AMOUNT",
+                "VOLUME",
             ],
         )
 
