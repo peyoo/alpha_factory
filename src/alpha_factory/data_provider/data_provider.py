@@ -113,18 +113,7 @@ class DataProvider:
         select_cols: Optional[List] = None,
         cache_path: Optional[Path] = None,
     ) -> pl.LazyFrame:
-        """构建股票池基础数据层（不含 expr 因子生成）。
 
-        参数:
-            start_date: 起始日期 YYYYMMDD。
-            end_date: 结束日期 YYYYMMDD（已解析）。
-            funcs: 股票池函数链，按顺序作用于 LazyFrame。
-            select_cols: 最终投影列（会自动补 `DATE`/`ASSET`）。
-            cache_path: 基础层缓存路径；存在则直接命中返回。
-
-        返回:
-            仅包含股票池基础列的 LazyFrame。
-        """
         cached_lf = self._load_cached_lazyframe(cache_path)
         if cached_lf is not None:
             return cached_lf
@@ -306,6 +295,7 @@ class DataProvider:
 
     def _build_factor_view(
         self,
+        # pool: PoolUniverse,
         base_lf: pl.LazyFrame,
         exprs: Optional[List],
         select_cols: List[str],
@@ -317,6 +307,8 @@ class DataProvider:
 
         lf, generated_expr_cols = self._apply_column_exprs(base_lf, exprs)
         lf = self._finalize_projection(lf, select_cols, generated_expr_cols)
+
+        # lf = pool.preprocessor(lf, generated_expr_cols)
 
         if final_cache_path:
             return self._persist_cache_and_reload(lf, final_cache_path)

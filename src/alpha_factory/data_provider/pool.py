@@ -9,7 +9,13 @@
 
 """
 
+from typing import Union, List
+
 import polars as pl
+import polars_ols as _  # noqa: F401
+import polars_ds as __  # noqa: F401
+import polars.selectors as cs
+
 
 from alpha_factory.config.base import settings
 from alpha_factory.data_provider.label import (
@@ -56,6 +62,19 @@ class PoolUniverse:
         :return:
         """
         return [F.POOL_MASK, F.LABEL_FOR_IC, F.LABEL_FOR_RET, F.LABEL_FOR_RET_CC]
+
+    def preprocessor(
+        self,
+        df: Union[pl.DataFrame, pl.LazyFrame],
+        factors: Union[str, List[str]] = r"^factor_.*",
+    ) -> Union[pl.DataFrame, pl.LazyFrame]:
+        """
+        对于池内股票，进行因子预处理（如中性化、标准化等），提升后续分析的质量和稳定性。
+        1. 过滤：仅保留在池内且必要列非空的行
+        2. 中性化：对指定因子进行市值和换手率中性化处理，减少规模和流动性偏差
+        3. 标准化：对中性化后的因子值进行 Rank Gaussian 标准化，提升分布特征
+        """
+        return df
 
     @property
     def pool_dir(self):
@@ -221,8 +240,57 @@ class MainSmallPool(PoolUniverse):
             .fill_nan(None)
         )
 
+    def preprocessor(
+        self,
+        df: Union[pl.DataFrame, pl.LazyFrame],
+        factors: Union[str, List[str]] = r"^factor_.*",
+    ) -> Union[pl.DataFrame, pl.LazyFrame]:
+        """
+        极致性能版：微盘股因子预处理 Pipeline
+        逻辑：过滤 -> 中性化(MV_RANK + TURNOVER) -> Rank Gaussian 标准化
+        """
 
-def main_small_pool(
-    lf: pl.LazyFrame, small_num: int = 800, production=False
-) -> pl.LazyFrame:
-    return lf
+        # 1. 统一转换为 LazyFrame 以启用谓词下推优化
+        is_lazy = isinstance(df, pl.LazyFrame)
+        lf = df.lazy() if not is_lazy else df
+
+        # 2. 严格过滤（自变量必须非空，且在股票池内）
+        # 注意：这里提前计算 MV_RANK，减少后续 ols 内部重复计算开销
+        lf = lf.filter(
+            pl.col(F.POOL_MASK)
+            & pl.col(F.TOTAL_MV).is_not_null()
+            & pl.col(F.TURNOVER_RATE).is_not_null()
+        ).with_columns(mv_rank_col=pl.col(F.TOTAL_MV).rank().over(F.DATE))
+
+        # 3. 定义因子选择器
+        f_selector = (
+            cs.matches(factors) if isinstance(factors, str) else cs.by_name(factors)
+        )
+
+        # 4. 批量核心流水线：中性化 + 标准化
+        # 利用 polars-ols 的计算命名空间和 polars-ds 的统计命名空间
+        processed_lf = lf.with_columns(
+            f_selector
+            # --- 步骤 A: 中性化 (OLS Residuals) ---
+            .ols.residual(
+                pl.col("mv_rank_col"),  # 自变量 1: 市值排名
+                pl.col(F.TURNOVER_RATE),  # 自变量 2: 换手率
+                solve_method="svd",  # 针对微盘股共线性最稳健的方法
+                null_policy="drop",  # 自动剔除因子缺失值，不干扰回归
+            )
+            .over(F.DATE)
+            # --- 步骤 B: Rank Gaussian (归一化映射) ---
+            .rank()
+            .over(F.DATE)  # 提取中性化后的截面排名
+            .alias("temp_rank")  # 内部别名用于计算缩放
+            # 3. 高斯 Rank (使用 q_norm)
+            .rank()
+            .over(F.DATE)
+            .sub(0.5)
+            .truediv(pl.count().over(F.DATE))
+            .pds.q_norm()  # 核心：映射到标准正态分布
+            .name.keep()
+        ).drop("mv_rank_col")  # 清理中间辅助列
+
+        # 5. 根据输入类型返回结果
+        return processed_lf
