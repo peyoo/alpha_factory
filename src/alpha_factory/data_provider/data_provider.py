@@ -98,13 +98,17 @@ class DataProvider:
             select_cols=select_cols,
             cache_path=base_cache_path,
         )
-        return self._build_factor_view(
+        lf = self._build_factor_view(
             pool,
             base_lf,
             exprs=exprs,
             select_cols=select_cols,
             final_cache_path=final_cache_path,
         )
+
+        # 在最后阶段过滤到 start_date 及以后（表达式计算已完成，可以安全过滤）
+        s_dt = datetime.strptime(start_date, "%Y%m%d").date()
+        return lf.filter(pl.col("DATE") >= s_dt)
 
     def _build_pool_base_data(
         self,
@@ -121,7 +125,7 @@ class DataProvider:
 
         logger.info(f"⚙️ 构建股票池基础数据 [{start_date} -> {end_date}]...")
 
-        lf = self._scan_with_lookback(start_date, end_date, lookback=0)
+        lf = self._scan_with_lookback(start_date, end_date, lookback=200)
         lf = self._enrich_context(lf)
 
         for i, func in enumerate(funcs):
@@ -131,8 +135,8 @@ class DataProvider:
                 logger.error(f"❌ 自定义函数 #{i} 执行失败: {e}")
                 raise
 
-        s_dt = datetime.strptime(start_date, "%Y%m%d").date()
-        lf = lf.filter(pl.col("DATE") >= s_dt)
+        # 注意：不在这里过滤时间，保留 lookback 数据用于表达式计算（如 ts_mean）
+        # 时间过滤延后到 load_pool_data 最后阶段
 
         if select_cols:
             lf = self._finalize_projection(lf, select_cols, generated_cols=[])
@@ -309,7 +313,7 @@ class DataProvider:
         lf, generated_expr_cols = self._apply_column_exprs(base_lf, exprs)
         lf = self._finalize_projection(lf, select_cols, generated_expr_cols)
 
-        lf = pool.preprocessor(lf, generated_expr_cols)
+        # lf = pool.preprocessor(lf, generated_expr_cols)
 
         if final_cache_path:
             return self._persist_cache_and_reload(lf, final_cache_path)

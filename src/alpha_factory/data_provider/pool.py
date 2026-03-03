@@ -94,6 +94,7 @@ class MainSmallPool(PoolUniverse):
             F.POOL_MASK,
             F.OPEN,
             F.CLOSE,
+            F.CLOSE_RAW,
             F.HIGH,
             F.LOW,
             F.AMOUNT,
@@ -188,11 +189,9 @@ class MainSmallPool(PoolUniverse):
         # polars rank 将 None 排到最末，fill_null(999999) 确保其 POOL_MASK=False。
         # 这与之前"先过滤再排名"的效果等价，但保留了完整的行数据供时序使用。
         tradable = (
-            ~pl.col("IS_ST")
-            & ~pl.col("IS_SUSPENDED")
-            & (pl.col("LIST_DAYS") >= 180)
-            & ~pl.col("IS_UP_LIMIT")
-            & ~pl.col("IS_DOWN_LIMIT")
+            ~pl.col("IS_ST") & ~pl.col("IS_SUSPENDED") & (pl.col("LIST_DAYS") >= 300)
+            # & ~pl.col("IS_UP_LIMIT")
+            # & ~pl.col("IS_DOWN_LIMIT")
         )
 
         return (
@@ -280,7 +279,7 @@ class MainSmallPool(PoolUniverse):
                 pls.compute_least_squares(
                     pl.col(c),
                     pl.col("mv_rank_col"),
-                    pl.col(F.TURNOVER_RATE),
+                    # pl.col(F.TURNOVER_RATE),
                     mode="residuals",
                     ols_kwargs=_ols_kwargs,
                 )
