@@ -99,6 +99,7 @@ class DataProvider:
             cache_path=base_cache_path,
         )
         return self._build_factor_view(
+            pool,
             base_lf,
             exprs=exprs,
             select_cols=select_cols,
@@ -295,7 +296,7 @@ class DataProvider:
 
     def _build_factor_view(
         self,
-        # pool: PoolUniverse,
+        pool: PoolUniverse,
         base_lf: pl.LazyFrame,
         exprs: Optional[List],
         select_cols: List[str],
@@ -308,7 +309,7 @@ class DataProvider:
         lf, generated_expr_cols = self._apply_column_exprs(base_lf, exprs)
         lf = self._finalize_projection(lf, select_cols, generated_expr_cols)
 
-        # lf = pool.preprocessor(lf, generated_expr_cols)
+        lf = pool.preprocessor(lf, generated_expr_cols)
 
         if final_cache_path:
             return self._persist_cache_and_reload(lf, final_cache_path)

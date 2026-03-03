@@ -27,6 +27,13 @@ class DummyPoolA:
     def needed_cols(self) -> list[str]:
         return ["POOL_MASK"]
 
+    def preprocessor(
+        self,
+        df: pl.LazyFrame,
+        factors: list[str],
+    ) -> pl.LazyFrame:
+        return df
+
 
 class DummyPoolB:
     def __init__(self) -> None:
@@ -40,6 +47,13 @@ class DummyPoolB:
 
     def needed_cols(self) -> list[str]:
         return ["POOL_MASK"]
+
+    def preprocessor(
+        self,
+        df: pl.LazyFrame,
+        factors: list[str],
+    ) -> pl.LazyFrame:
+        return df
 
 
 def _make_provider() -> DataProvider:

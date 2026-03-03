@@ -12,9 +12,9 @@
 from typing import Union, List
 
 import polars as pl
-import polars_ols as _  # noqa: F401
-import polars_ds as __  # noqa: F401
-import polars.selectors as cs
+import polars_ols as pls
+import polars_ds as pds
+from polars_ols.least_squares import OLSKwargs
 
 
 from alpha_factory.config.base import settings
@@ -24,6 +24,9 @@ from alpha_factory.data_provider.label import (
     label_CC_for_tradable,
 )
 from alpha_factory.utils.schema import F
+
+
+_ols_kwargs = OLSKwargs(null_policy="drop", solve_method="svd")
 
 
 class PoolUniverse:
@@ -247,50 +250,48 @@ class MainSmallPool(PoolUniverse):
     ) -> Union[pl.DataFrame, pl.LazyFrame]:
         """
         极致性能版：微盘股因子预处理 Pipeline
-        逻辑：过滤 -> 中性化(MV_RANK + TURNOVER) -> Rank Gaussian 标准化
+        修复了 Selector 无法直接调用插件的 Bug
         """
-
-        # 1. 统一转换为 LazyFrame 以启用谓词下推优化
         is_lazy = isinstance(df, pl.LazyFrame)
         lf = df.lazy() if not is_lazy else df
 
-        # 2. 严格过滤（自变量必须非空，且在股票池内）
-        # 注意：这里提前计算 MV_RANK，减少后续 ols 内部重复计算开销
+        # 1. 严格过滤并预计算辅助列
         lf = lf.filter(
             pl.col(F.POOL_MASK)
             & pl.col(F.TOTAL_MV).is_not_null()
             & pl.col(F.TURNOVER_RATE).is_not_null()
         ).with_columns(mv_rank_col=pl.col(F.TOTAL_MV).rank().over(F.DATE))
 
-        # 3. 定义因子选择器
-        f_selector = (
-            cs.matches(factors) if isinstance(factors, str) else cs.by_name(factors)
-        )
+        # 2. 解析因子列名
+        # 使用 selector 选中当前 schema 中的所有因子列
+        target_cols = lf.collect_schema().names()
+        if isinstance(factors, str):
+            import re
 
-        # 4. 批量核心流水线：中性化 + 标准化
-        # 利用 polars-ols 的计算命名空间和 polars-ds 的统计命名空间
-        processed_lf = lf.with_columns(
-            f_selector
-            # --- 步骤 A: 中性化 (OLS Residuals) ---
-            .ols.residual(
-                pl.col("mv_rank_col"),  # 自变量 1: 市值排名
-                pl.col(F.TURNOVER_RATE),  # 自变量 2: 换手率
-                solve_method="svd",  # 针对微盘股共线性最稳健的方法
-                null_policy="drop",  # 自动剔除因子缺失值，不干扰回归
+            factor_cols = [c for c in target_cols if re.match(factors, c)]
+        else:
+            factor_cols = factors
+
+        # 3. 构造处理表达式
+        # 注意：不再直接在 f_selector 上调用，而是在循环中对每个 pl.col(c) 调用
+        exprs = [
+            (
+                # --- 步骤 A: 中性化 ---
+                pls.compute_least_squares(
+                    pl.col(c),
+                    pl.col("mv_rank_col"),
+                    pl.col(F.TURNOVER_RATE),
+                    mode="residuals",
+                    ols_kwargs=_ols_kwargs,
+                )
+                .over(F.DATE)
+                # --- 步骤 B: Rank Gaussian ---
+                .pipe(lambda x: pds.z_normalize(x.rank().over(F.DATE)))
+                .alias(c)
             )
-            .over(F.DATE)
-            # --- 步骤 B: Rank Gaussian (归一化映射) ---
-            .rank()
-            .over(F.DATE)  # 提取中性化后的截面排名
-            .alias("temp_rank")  # 内部别名用于计算缩放
-            # 3. 高斯 Rank (使用 q_norm)
-            .rank()
-            .over(F.DATE)
-            .sub(0.5)
-            .truediv(pl.count().over(F.DATE))
-            .pds.q_norm()  # 核心：映射到标准正态分布
-            .name.keep()
-        ).drop("mv_rank_col")  # 清理中间辅助列
+            for c in factor_cols
+        ]
 
-        # 5. 根据输入类型返回结果
+        processed_lf = lf.with_columns(exprs).drop("mv_rank_col")
+
         return processed_lf
