@@ -202,7 +202,7 @@ def quant_evals(
         1.0, "--min-sharpe", help="最小夏普阈值（低于该值的因子将被过滤）"
     ),
     min_ann_ret: float = typer.Option(
-        0.2,
+        0.20,
         "--min-ann-ret",
         help="最小年化收益阈值（低于该值的因子将被过滤，例如 0.2=20%）",
     ),

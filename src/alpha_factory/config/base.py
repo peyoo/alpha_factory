@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     # --- Codegen / template settings ---
     # TEMPLATE_DIR: str = Field(default_factory=lambda: str(get_default_base() / "expression"))
     # 代码生成批处理大小
-    CODEGEN_BATCH_SIZE: int = 100
+    CODEGEN_BATCH_SIZE: int = 200
 
     # 向后兼容：部分模块期望字符串字段名 `template_path_str`
     @property

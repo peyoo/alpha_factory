@@ -346,7 +346,7 @@ class DataProvider:
                 generated_expr_cols.append(expr_str.split("=")[0].strip())
 
         template_path = settings.template_path_str
-        batch_size = getattr(settings, "CODEGEN_BATCH_SIZE", 100)
+        batch_size = getattr(settings, "CODEGEN_BATCH_SIZE", 200)
         for i in range(0, len(normalized_exprs), batch_size):
             batch = normalized_exprs[i : i + batch_size]
             lf = codegen_exec(
