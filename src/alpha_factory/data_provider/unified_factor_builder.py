@@ -139,11 +139,30 @@ class UnifiedFactorBuilder:
                 logger.warning(f"⚠️ {year} 年过滤后数据为空，不进行保存。")
                 return
 
+            # 💡 增量合并逻辑：检查文件是否存在，若存在则合并而非覆盖
+            # 这解决了分次同步时数据被覆盖的问题
+            if output_path.exists():
+                # 读取现有数据
+                df_existing = pl.read_parquet(output_path)
+                # 删除新数据中已存在的 (DATE, ASSET) 组合，避免重复
+                existing_dates = df_existing.select([F.DATE, F.ASSET]).unique()
+                new_data = df_year.join(
+                    existing_dates, on=[F.DATE, F.ASSET], how="anti"
+                )
+                # 合并：保留现有数据 + 新数据
+                if not new_data.is_empty():
+                    df_final = pl.concat([df_existing, new_data])
+                else:
+                    df_final = df_existing
+                    logger.info(f"ℹ️ {year}.parquet 中该时间段数据已存在，无需重复写入")
+            else:
+                df_final = df_year
+
             # 写入 Parquet（保留 ASSET 为 String 类型以支持动态资产）
-            df_year.write_parquet(output_path, compression="snappy")
+            df_final.write_parquet(output_path, compression="snappy")
 
             logger.info(
-                f"💾 {year}.parquet 已保存 | 包含日期: {df_year['DATE'].min()} ~ {df_year['DATE'].max()} | 行数: {df_year.height}"
+                f"💾 {year}.parquet 已保存 | 包含日期: {df_final['DATE'].min()} ~ {df_final['DATE'].max()} | 行数: {df_final.height}"
             )
         finally:
             # 💡 每次年度任务完成后手动清理一下 HDF5 句柄

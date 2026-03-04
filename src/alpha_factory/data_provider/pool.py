@@ -279,7 +279,7 @@ class MainSmallPool(PoolUniverse):
                 pls.compute_least_squares(
                     pl.col(c),
                     pl.col("mv_rank_col"),
-                    # pl.col(F.TURNOVER_RATE),
+                    pl.col(F.TURNOVER_RATE),
                     mode="residuals",
                     ols_kwargs=_ols_kwargs,
                 )

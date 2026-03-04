@@ -313,7 +313,7 @@ class DataProvider:
         lf, generated_expr_cols = self._apply_column_exprs(base_lf, exprs)
         lf = self._finalize_projection(lf, select_cols, generated_expr_cols)
 
-        # lf = pool.preprocessor(lf, generated_expr_cols)
+        lf = pool.preprocessor(lf, generated_expr_cols)
 
         if final_cache_path:
             return self._persist_cache_and_reload(lf, final_cache_path)
