@@ -9,6 +9,8 @@
 
 """
 
+import re
+from functools import lru_cache
 from typing import Union, List
 
 import polars as pl
@@ -27,6 +29,11 @@ from alpha_factory.utils.schema import F
 
 
 _ols_kwargs = OLSKwargs(null_policy="drop", solve_method="svd")
+
+
+@lru_cache(maxsize=64)
+def _compile_factor_pattern(pattern: str) -> re.Pattern[str]:
+    return re.compile(pattern)
 
 
 class PoolUniverse:
@@ -256,30 +263,33 @@ class MainSmallPool(PoolUniverse):
         3. 在单个with_columns中完成所有转换（减少数据遍历次数）
         4. 保持LazyFrame直到最后（避免不必要的collect）
         """
-        import re
-
         is_lazy = isinstance(df, pl.LazyFrame)
         lf = df.lazy() if not is_lazy else df
 
-        # 1. 严格过滤并预计算辅助列（单次操作）
-        lf = lf.filter(
+        # 1. 严格过滤（单次操作）
+        filtered_lf = lf.filter(
             pl.col(F.POOL_MASK)
             & pl.col(F.TOTAL_MV).is_not_null()
             & pl.col(F.TURNOVER_RATE).is_not_null()
-        ).with_columns(
-            # 使用 "ordinal" 方法显式指定排名策略，性能优于默认方法
-            _mv_rank=pl.col(F.TOTAL_MV).rank("ordinal").over(F.DATE)
         )
 
-        # 2. 解析因子列名（预编译正则表达式，避免循环中反复编译）
+        # 2. 解析因子列名（缓存编译后的正则，避免重复编译）
         if isinstance(factors, str):
-            pattern = re.compile(factors)
-            target_cols = lf.collect_schema().names()
+            pattern = _compile_factor_pattern(factors)
+            target_cols = filtered_lf.collect_schema().names()
             factor_cols = [c for c in target_cols if pattern.match(c)]
         else:
             factor_cols = list(factors)
 
-        # 3. 构造处理表达式（批量处理，单次with_columns调用）
+        # 无因子时直接返回过滤结果，避免额外排名开销
+        if not factor_cols:
+            return filtered_lf if is_lazy else filtered_lf.collect()
+
+        # 3. 预计算辅助列 + 构造处理表达式
+        ranked_lf = filtered_lf.with_columns(
+            _mv_rank=pl.col(F.TOTAL_MV).rank("ordinal").over(F.DATE)
+        )
+
         exprs = [
             pls.compute_least_squares(
                 pl.col(c),
@@ -292,12 +302,12 @@ class MainSmallPool(PoolUniverse):
             # 优化：rank + z_normalize 合并，避免中间结果物化
             .rank("ordinal")
             .over(F.DATE)
-            .pipe(lambda x: pds.z_normalize(x))
+            .pipe(pds.z_normalize)
             .alias(c)
             for c in factor_cols
         ]
 
         # 批量应用所有转换，单次遍历数据
-        processed_lf = lf.with_columns(exprs).drop("_mv_rank")
+        processed_lf = ranked_lf.with_columns(exprs).drop("_mv_rank")
 
         return processed_lf if is_lazy else processed_lf.collect()
