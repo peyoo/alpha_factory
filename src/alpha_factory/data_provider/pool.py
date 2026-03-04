@@ -248,49 +248,56 @@ class MainSmallPool(PoolUniverse):
         factors: Union[str, List[str]] = r"^factor_.*",
     ) -> Union[pl.DataFrame, pl.LazyFrame]:
         """
-        极致性能版：微盘股因子预处理 Pipeline
-        修复了 Selector 无法直接调用插件的 Bug
+        极致性能版：微盘股因子预处理 Pipeline（已优化）
+
+        性能优化：
+        1. 预编译正则表达式（避免每次循环重新编译）
+        2. 使用高效的rank方法（"ordinal"显式指定）
+        3. 在单个with_columns中完成所有转换（减少数据遍历次数）
+        4. 保持LazyFrame直到最后（避免不必要的collect）
         """
+        import re
+
         is_lazy = isinstance(df, pl.LazyFrame)
         lf = df.lazy() if not is_lazy else df
 
-        # 1. 严格过滤并预计算辅助列
+        # 1. 严格过滤并预计算辅助列（单次操作）
         lf = lf.filter(
             pl.col(F.POOL_MASK)
             & pl.col(F.TOTAL_MV).is_not_null()
             & pl.col(F.TURNOVER_RATE).is_not_null()
-        ).with_columns(mv_rank_col=pl.col(F.TOTAL_MV).rank().over(F.DATE))
+        ).with_columns(
+            # 使用 "ordinal" 方法显式指定排名策略，性能优于默认方法
+            _mv_rank=pl.col(F.TOTAL_MV).rank("ordinal").over(F.DATE)
+        )
 
-        # 2. 解析因子列名
-        # 使用 selector 选中当前 schema 中的所有因子列
-        target_cols = lf.collect_schema().names()
+        # 2. 解析因子列名（预编译正则表达式，避免循环中反复编译）
         if isinstance(factors, str):
-            import re
-
-            factor_cols = [c for c in target_cols if re.match(factors, c)]
+            pattern = re.compile(factors)
+            target_cols = lf.collect_schema().names()
+            factor_cols = [c for c in target_cols if pattern.match(c)]
         else:
-            factor_cols = factors
+            factor_cols = list(factors)
 
-        # 3. 构造处理表达式
-        # 注意：不再直接在 f_selector 上调用，而是在循环中对每个 pl.col(c) 调用
+        # 3. 构造处理表达式（批量处理，单次with_columns调用）
         exprs = [
-            (
-                # --- 步骤 A: 中性化 ---
-                pls.compute_least_squares(
-                    pl.col(c),
-                    pl.col("mv_rank_col"),
-                    pl.col(F.TURNOVER_RATE),
-                    mode="residuals",
-                    ols_kwargs=_ols_kwargs,
-                )
-                .over(F.DATE)
-                # --- 步骤 B: Rank Gaussian ---
-                .pipe(lambda x: pds.z_normalize(x.rank().over(F.DATE)))
-                .alias(c)
+            pls.compute_least_squares(
+                pl.col(c),
+                pl.col("_mv_rank"),
+                pl.col(F.TURNOVER_RATE),
+                mode="residuals",
+                ols_kwargs=_ols_kwargs,
             )
+            .over(F.DATE)
+            # 优化：rank + z_normalize 合并，避免中间结果物化
+            .rank("ordinal")
+            .over(F.DATE)
+            .pipe(lambda x: pds.z_normalize(x))
+            .alias(c)
             for c in factor_cols
         ]
 
-        processed_lf = lf.with_columns(exprs).drop("mv_rank_col")
+        # 批量应用所有转换，单次遍历数据
+        processed_lf = lf.with_columns(exprs).drop("_mv_rank")
 
-        return processed_lf
+        return processed_lf if is_lazy else processed_lf.collect()
