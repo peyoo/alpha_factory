@@ -100,7 +100,7 @@ def batch_full_metrics(
         logger.error(f"  ✗ 未匹配到任何因子列，选择器: {factors}，返回空 DataFrame")
         return pl.DataFrame()
 
-    logger.info(f"  ✓ 匹配到 {len(factor_cols)} 个因子列: {factor_cols}")
+    logger.info(f"  ✓ 匹配到 {len(factor_cols)} 个因子列")
 
     # ─────────────────────────────────────────────
     # Step 4: 计算每日截面内的因子 Rank

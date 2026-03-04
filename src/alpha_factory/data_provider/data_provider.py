@@ -98,11 +98,11 @@ class DataProvider:
             select_cols=select_cols,
             cache_path=base_cache_path,
         )
-        lf = self._build_factor_view(
+        lf = self.build_factors_view(
             pool,
             base_lf,
             exprs=exprs,
-            select_cols=select_cols,
+            # select_cols=select_cols,
             final_cache_path=final_cache_path,
         )
 
@@ -298,18 +298,17 @@ class DataProvider:
         df.write_parquet(cache_path, compression="zstd")
         return pl.scan_parquet(cache_path)
 
-    def _build_factor_view(
+    def build_factors_view(
         self,
         pool: PoolUniverse,
         base_lf: pl.LazyFrame,
         exprs: Optional[List],
-        select_cols: List[str],
         final_cache_path: Optional[Path] = None,
     ) -> pl.LazyFrame:
         """在基础层数据上生成表达式列，并按需缓存最终结果。"""
         if not exprs:
             return base_lf
-
+        select_cols: List[str] = pool.needed_cols()
         lf, generated_expr_cols = self._apply_column_exprs(base_lf, exprs)
         lf = self._finalize_projection(lf, select_cols, generated_expr_cols)
 
