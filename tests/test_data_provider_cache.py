@@ -74,40 +74,45 @@ def _make_base_lf() -> pl.LazyFrame:
 
 def test_pool_cache_key_changes_when_pool_source_changes() -> None:
     provider = _make_provider()
+    start, end = date(2024, 1, 1), date(2024, 1, 31)
 
-    key_a = provider._build_pool_cache_key(DummyPoolA(), "20240101", "20240131")
-    key_b = provider._build_pool_cache_key(DummyPoolB(), "20240101", "20240131")
+    path_a = provider._build_pool_cache_path(DummyPoolA(), start, end)
+    path_b = provider._build_pool_cache_path(DummyPoolB(), start, end)
 
-    assert key_a != key_b
+    assert path_a != path_b
 
 
 def test_full_cache_key_is_order_independent() -> None:
     provider = _make_provider()
+    fake_pool_path = Path("/tmp/pool_base_abc.parquet")
 
-    key_1 = provider._build_full_factor_cache_key(
-        "pool_key", ["A = CLOSE", "B = OPEN", "A = CLOSE"]
+    path_1 = provider._build_factors_cache_path(
+        fake_pool_path, ["A = CLOSE", "B = OPEN", "A = CLOSE"], "md5"
     )
-    key_2 = provider._build_full_factor_cache_key(
-        "pool_key", ["B = OPEN", "  A = CLOSE  "]
+    path_2 = provider._build_factors_cache_path(
+        fake_pool_path, ["B = OPEN", "  A = CLOSE  "], "md5"
     )
 
-    assert key_1 == key_2
+    assert path_1 == path_2
 
 
 def test_load_pool_data_md5_uses_two_stage_and_no_final_cache() -> None:
     provider = _make_provider()
     pool = DummyPoolA()
-    calls: list[dict] = []
+    base_calls: list = []
+    factors_calls: list = []
+    fake_pool_path = Path("/tmp") / "pool_base_abc123.parquet"
 
-    def fake_build_pool_base_data(*args, **kwargs):
-        calls.append(kwargs)
-        return _make_base_lf()
+    def fake_build_pool_base_data(p, start, end):
+        base_calls.append((p, start, end))
+        return _make_base_lf(), fake_pool_path
 
-    def fake_apply_column_exprs(lf, exprs, codegen_over_null=None):
-        return lf.with_columns(pl.lit(1.0).alias("FACTOR_X")), ["FACTOR_X"]
+    def fake_build_factors_view(p, lf, exprs, final_cache_path=None):
+        factors_calls.append({"final_cache_path": final_cache_path})
+        return lf.with_columns(pl.lit(1.0).alias("FACTOR_X"))
 
     provider._build_pool_base_data = fake_build_pool_base_data  # type: ignore[method-assign]
-    provider._apply_column_exprs = fake_apply_column_exprs  # type: ignore[method-assign]
+    provider.build_factors_view = fake_build_factors_view  # type: ignore[method-assign]
 
     lf = provider.load_pool_data(
         pool=pool,
@@ -117,9 +122,11 @@ def test_load_pool_data_md5_uses_two_stage_and_no_final_cache() -> None:
         cache="md5",
     )
 
-    assert len(calls) == 1
-    assert str(calls[0]["cache_path"]).endswith(".parquet")
-    assert Path(calls[0]["cache_path"]).name.startswith("pool_base_")
+    assert len(base_calls) == 1
+    # cache="md5" → factors 缓存路径应自动合成且以 factor_data_ 开头
+    factors_cache = factors_calls[0]["final_cache_path"]
+    assert factors_cache is not None
+    assert factors_cache.name.startswith("factor_data_")
 
     columns = set(lf.collect_schema().names())
     assert {F.DATE, F.ASSET, "POOL_MASK", "FACTOR_X"}.issubset(columns)
@@ -131,12 +138,13 @@ def test_load_pool_data_explicit_cache_with_exprs_uses_final_key(
     provider = _make_provider()
     pool = DummyPoolA()
     captured: dict[str, Path] = {}
+    fake_pool_path = Path("/tmp") / "pool_base_abc123.parquet"
 
     def fake_load_cached_lazyframe(cache_path):
         return None
 
-    def fake_build_pool_base_data(*args, **kwargs):
-        return _make_base_lf()
+    def fake_build_pool_base_data(p, start, end):
+        return _make_base_lf(), fake_pool_path
 
     def fake_apply_column_exprs(lf, exprs, codegen_over_null=None):
         return lf.with_columns(pl.lit(1.0).alias("A")), ["A"]
@@ -159,8 +167,5 @@ def test_load_pool_data_explicit_cache_with_exprs_uses_final_key(
         cache=tmp_path,
     )
 
-    pool_key = provider._build_pool_cache_key(pool, "20240101", "20240131")
-    full_key = provider._build_full_factor_cache_key(pool_key, exprs)
-    expected = tmp_path / f"factor_data_{full_key}.parquet"
-
-    assert captured["cache_path"] == expected
+    # cache=显式路径 → 直接 resolve() 使用，不附加 hash 子目录
+    assert captured["cache_path"] == tmp_path.resolve()

@@ -7,8 +7,8 @@ import polars as pl
 from pathlib import Path
 
 from loguru import logger
-from typing import Optional, List, Union, Callable, Literal
-from datetime import datetime, timedelta
+from typing import Optional, List, Union, Literal
+from datetime import date, datetime, timedelta
 
 from expr_codegen import codegen_exec
 
@@ -18,6 +18,9 @@ from alpha_factory.data_provider.pool import PoolUniverse
 from alpha_factory.data_provider.stock_assets_manager import StockAssetsManager
 from alpha_factory.config.base import settings
 from alpha_factory.utils.schema import F
+
+# str（YYYYMMDD）或 datetime.date 均可接受
+DateLike = Union[str, date]
 
 
 class DataProvider:
@@ -55,75 +58,63 @@ class DataProvider:
     def load_pool_data(
         self,
         pool: PoolUniverse,
-        start_date: str,
-        end_date: Optional[str] = None,
+        start_date: DateLike,
+        end_date: Optional[DateLike] = None,
         exprs: Optional[List] = None,
-        cache: Optional[Union[str, Path]] = "md5",
+        cache: Optional[Union[str, Path]] = None,
     ) -> pl.LazyFrame:
         """按股票池加载数据，并支持两阶段缓存策略。
 
         参数:
             pool: 股票池对象，定义过滤逻辑与基础列需求。
-            start_date: 起始日期，格式 YYYYMMDD。
+            start_date: 起始日期，接受 str（YYYYMMDD）或 datetime.date。
             end_date: 结束日期，None 时自动推断仓库最新日期。
             exprs: 因子表达式列表，支持 `name = expr` 形式。
             cache: 缓存策略。
-                - `"md5"`: 默认两阶段缓存（仅缓存 pool 基础数据）。
-                - `Path/str`: 显式缓存路径；若有 exprs，则走最终结果缓存。
-                - `None`: 不启用缓存。
+                - `"md5"`: pool 基础数据缓存 + factors 结果按 MD5 自动合成路径缓存。
+                - `Path/str`: 显式 factors 缓存路径（相对路径转绝对路径）。
+                - `None`: 不缓存 factors 结果（pool 基础数据仍缓存）。
 
         返回:
             pl.LazyFrame，包含基础列与（可选）表达式生成列。
         """
-        end_date = self._resolve_end_date(end_date)
-        pool_funcs = [pool.pool, pool.extra_cols, *pool.label_col_funcs]
-        select_cols = pool.needed_cols()
-        pool_key = self._build_pool_cache_key(pool, start_date, end_date)
+        # 入口统一规范化为 date，内部全程使用 date 类型
+        start_dt: date = self._to_date(start_date)
+        end_dt: date = self._resolve_end_date(end_date)
 
-        base_cache_path, final_cache_path = self._resolve_cache_paths(
-            cache=cache,
-            pool_cache_key=pool_key,
-            exprs=exprs,
+        pool_data, pool_cache_path = self._build_pool_base_data(pool, start_dt, end_dt)
+        factors_cache_path = self._build_factors_cache_path(
+            pool_cache_path, exprs, cache
         )
 
-        if final_cache_path is not None:
-            cached_lf = self._load_cached_lazyframe(final_cache_path)
-            if cached_lf is not None:
-                return cached_lf
+        lf = self.build_factors_view(pool, pool_data, exprs, factors_cache_path)
 
-        base_lf = self._build_pool_base_data(
-            start_date,
-            end_date,
-            funcs=pool_funcs,
-            select_cols=select_cols,
-            cache_path=base_cache_path,
-        )
-        lf = self.build_factors_view(
-            pool,
-            base_lf,
-            exprs=exprs,
-            # select_cols=select_cols,
-            final_cache_path=final_cache_path,
-        )
-
-        # 在最后阶段过滤到 start_date 及以后（表达式计算已完成，可以安全过滤）
-        s_dt = datetime.strptime(start_date, "%Y%m%d").date()
-        return lf.filter(pl.col("DATE") >= s_dt)
+        # 在最后阶段过滤到 start_dt 及以后（表达式计算已完成，可以安全过滤）
+        return lf.filter(pl.col("DATE") >= start_dt)
 
     def _build_pool_base_data(
         self,
-        start_date: str,
-        end_date: str,
-        funcs: List[Callable[[pl.LazyFrame], pl.LazyFrame]],
-        select_cols: Optional[List] = None,
-        cache_path: Optional[Path] = None,
-    ) -> pl.LazyFrame:
+        pool: PoolUniverse,
+        start_date: date,
+        end_date: date,
+    ) -> tuple[pl.LazyFrame, Path]:
+        """构建并缓存 pool 基础数据。
 
-        cached_lf = self._load_cached_lazyframe(cache_path)
+        返回:
+            (pool_data_lf, pool_cache_path) — pool 级缓存始终生效。
+        """
+        pool_cache_path = self._build_pool_cache_path(pool, start_date, end_date)
+
+        cached_lf = self._load_cached_lazyframe(pool_cache_path)
         if cached_lf is not None:
-            return cached_lf
+            return cached_lf, pool_cache_path
 
-        logger.info(f"⚙️ 构建股票池基础数据 [{start_date} -> {end_date}]...")
+        logger.info(
+            f"⚙️ 构建股票池基础数据 [{start_date.strftime('%Y%m%d')} -> {end_date.strftime('%Y%m%d')}]..."
+        )
+
+        funcs = [pool.pool, pool.extra_cols, *pool.label_col_funcs]
+        select_cols = pool.needed_cols()
 
         lf = self._scan_with_lookback(start_date, end_date, lookback=200)
         lf = self._enrich_context(lf)
@@ -141,10 +132,8 @@ class DataProvider:
         if select_cols:
             lf = self._finalize_projection(lf, select_cols, generated_cols=[])
 
-        if cache_path:
-            return self._persist_cache_and_reload(lf, cache_path)
-
-        return self._cast_numeric_float64(lf)
+        lf = self._persist_cache_and_reload(lf, pool_cache_path)
+        return lf, pool_cache_path
 
     def clean_old_caches(self, days=1):
         """清理旧缓存文件。
@@ -159,54 +148,29 @@ class DataProvider:
                 if f.stat().st_mtime < (now - days * 86400):
                     f.unlink()
 
-    def _resolve_end_date(self, end_date: Optional[str]) -> str:
-        """解析结束日期。
+    @staticmethod
+    def _to_date(d: DateLike) -> date:
+        """将 str（YYYYMMDD）或 date 统一转换为 date 对象。"""
+        if isinstance(d, date):
+            return d
+        return datetime.strptime(d.strip(), "%Y%m%d").date()
+
+    def _resolve_end_date(self, end_date: Optional[DateLike]) -> date:
+        """解析结束日期，统一返回 date 对象。
 
         - `None` 时返回仓库最新可用交易日。
-        - 非空时做字符串清理后返回。
+        - 非空时规范化为 date。
         """
         if end_date is None:
-            return self.tushare_service.get_latest_date_from_warehouse()
-        return end_date.strip()
+            return self._to_date(self.tushare_service.get_latest_date_from_warehouse())
+        return self._to_date(end_date)
 
-    def _resolve_cache_paths(
-        self,
-        cache: Optional[Union[str, Path]],
-        pool_cache_key: str,
-        exprs: Optional[List],
-    ) -> tuple[Optional[Path], Optional[Path]]:
-        """统一决定基础缓存与最终缓存路径。
+    def _build_pool_cache_path(
+        self, pool: PoolUniverse, start_date: date, end_date: date
+    ) -> Path:
+        """生成 pool 基础数据的缓存文件路径（哈希键内聚到此方法）。
 
-        返回:
-            (base_cache_path, final_cache_path)
-
-        规则:
-            - 基础层（pool data）始终强制缓存到 `pool_base_<key>.parquet`。
-            - 最终层是否缓存由参数控制：
-              * cache is None 或 cache == "md5": 不缓存最终层。
-              * cache 且有 exprs: 缓存最终层（目录或 parquet 文件）。
-        """
-        base_cache_path = self._build_pool_base_cache_path(pool_cache_key)
-
-        if exprs and cache not in (None, "md5"):
-            return base_cache_path, self._resolve_full_cache_path(
-                cache, pool_cache_key, exprs
-            )
-
-        return base_cache_path, None
-
-    def _build_pool_cache_key(
-        self, pool: PoolUniverse, start_date: str, end_date: str
-    ) -> str:
-        """生成股票池基础缓存 key。
-
-        key 来源:
-            - pool 类源码（或可回退签名）
-            - start_date
-            - end_date
-
-        设计目的:
-            当股票池实现逻辑变化时，key 自动变化，避免脏缓存复用。
+        key 来源: pool 类源码 + start_date + end_date
         """
         try:
             pool_source = inspect.getsource(pool.__class__)
@@ -217,16 +181,43 @@ class DataProvider:
                 f"{class_obj.__module__}.{class_obj.__qualname__}:{class_signature}"
             )
 
-        hash_content = f"{pool_source}_{start_date}_{end_date}"
-        return hashlib.md5(hash_content.encode("utf-8")).hexdigest()
+        pool_key = hashlib.md5(
+            f"{pool_source}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}".encode(
+                "utf-8"
+            )
+        ).hexdigest()
+        return Path(settings.OUTPUT_DIR) / "tmp_data" / f"pool_base_{pool_key}.parquet"
 
-    def _build_pool_base_cache_path(self, pool_cache_key: str) -> Path:
-        """根据 pool cache key 生成基础缓存文件路径。"""
-        return (
-            Path(settings.OUTPUT_DIR)
-            / "tmp_data"
-            / f"pool_base_{pool_cache_key}.parquet"
-        )
+    def _build_factors_cache_path(
+        self,
+        pool_cache_path: Path,
+        exprs: Optional[List],
+        cache: Optional[Union[str, Path]],
+    ) -> Optional[Path]:
+        """根据 pool_cache_path、exprs 和 cache 策略合成 factors 缓存路径。
+
+        规则:
+            - exprs 为空时，始终返回 None。
+            - cache is None:      返回 None（不缓存 factors）。
+            - cache == "md5":     以 pool_cache_path 路径字符串 + sorted exprs
+                                  联合哈希，存入默认 tmp_data 目录。
+            - 其他（显式路径）:   直接使用该路径（相对路径转绝对路径）。
+        """
+        if not exprs or cache is None:
+            return None
+
+        if cache == "md5":
+            normalized_exprs = self._normalize_exprs(exprs)
+            factors_key = hashlib.md5(
+                f"{pool_cache_path}_{'|'.join(normalized_exprs)}".encode("utf-8")
+            ).hexdigest()
+            return (
+                Path(settings.OUTPUT_DIR)
+                / "tmp_data"
+                / f"factor_data_{factors_key}.parquet"
+            )
+
+        return Path(cache).resolve()
 
     def _normalize_exprs(self, exprs: Optional[List]) -> List[str]:
         """规范化表达式列表（去空白、去空值、去重、排序）。"""
@@ -234,34 +225,6 @@ class DataProvider:
             return []
         normalized = [str(expr).strip() for expr in exprs if str(expr).strip()]
         return sorted(set(normalized))
-
-    def _build_full_factor_cache_key(
-        self, pool_cache_key: str, exprs: Optional[List]
-    ) -> str:
-        """生成最终结果缓存 key。
-
-        规则:
-            MD5(pool_cache_key + 排序去重后的表达式列表)
-        """
-        normalized_exprs = self._normalize_exprs(exprs)
-        hash_content = f"{pool_cache_key}_{'|'.join(normalized_exprs)}"
-        return hashlib.md5(hash_content.encode("utf-8")).hexdigest()
-
-    def _resolve_full_cache_path(
-        self, cache: Union[str, Path], pool_cache_key: str, exprs: Optional[List]
-    ) -> Path:
-        """解析最终结果缓存路径。
-
-        规则:
-            - 若 cache 显式为 `.parquet` 文件，则直接使用该路径。
-            - 否则视为目录，在目录下按最终 key 生成文件名。
-        """
-        cache_path = Path(cache)
-        if cache_path.suffix.lower() == ".parquet":
-            return cache_path
-
-        full_cache_key = self._build_full_factor_cache_key(pool_cache_key, exprs)
-        return cache_path / f"factor_data_{full_cache_key}.parquet"
 
     def _load_cached_lazyframe(
         self, cache_path: Optional[Path]
@@ -305,7 +268,13 @@ class DataProvider:
         exprs: Optional[List],
         final_cache_path: Optional[Path] = None,
     ) -> pl.LazyFrame:
-        """在基础层数据上生成表达式列，并按需缓存最终结果。"""
+        """在基础层数据上生成表达式列，并按需缓存最终结果。
+
+        缓存命中时直接返回缓存数据，跳过计算。
+        """
+        if cached_lf := self._load_cached_lazyframe(final_cache_path):
+            return cached_lf
+
         if not exprs:
             return base_lf
         select_cols: List[str] = pool.needed_cols()
@@ -363,32 +332,31 @@ class DataProvider:
     # --- 内部核心组件 ---
 
     def _scan_with_lookback(
-        self, start_date: str, end_date: str, lookback: int
+        self, start_date: date, end_date: date, lookback: int
     ) -> pl.LazyFrame:
         """按年份扫描因子库，并基于 lookback 预热历史窗口。
 
         参数:
-            start_date: 起始日期 YYYYMMDD。
-            end_date: 结束日期 YYYYMMDD。
+            start_date: 起始日期（date 对象）。
+            end_date: 结束日期（date 对象）。
             lookback: 预热窗口（交易日近似转换为自然日）。
         """
-        s_dt = datetime.strptime(start_date, "%Y%m%d").date()
-        e_dt = datetime.strptime(end_date, "%Y%m%d").date()
-
         # 预估预热所需的起始日期（交易日天数 * 1.5 倍近似自然日）
-        effective_start = s_dt - timedelta(days=int(lookback * 1.5) + 7)
+        effective_start = start_date - timedelta(days=int(lookback * 1.5) + 7)
 
         scans = []
-        for year in range(effective_start.year, e_dt.year + 1):
+        for year in range(effective_start.year, end_date.year + 1):
             file_path = self.factor_dir / f"{year}.parquet"
             if file_path.exists():
                 scans.append(pl.scan_parquet(file_path))
 
         if not scans:
-            raise FileNotFoundError(f"数据区间 {start_date}-{end_date} 无可用文件")
+            raise FileNotFoundError(
+                f"数据区间 {start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')} 无可用文件"
+            )
 
         # 此时不过滤 start_date，只过滤 end_date，保留预热空间
-        return pl.concat(scans).filter(pl.col("DATE") <= e_dt)
+        return pl.concat(scans).filter(pl.col("DATE") <= end_date)
 
     def _enrich_context(self, lf: pl.LazyFrame) -> pl.LazyFrame:
         """

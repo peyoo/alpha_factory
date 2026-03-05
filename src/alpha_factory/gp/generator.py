@@ -464,27 +464,9 @@ class GPDeapGenerator(object):
         # 转换 (k, v, c) 元组列表为 "k=v" 字符串列表，以供 _apply_column_exprs 使用
         exprs_list_str = [f"{k}={v}" for k, v, c in exprs_list]
 
-        lf = self.data_provider.build_factors_view(self.pool, df_input, exprs_list_str)
-        # lf = df_input.lazy() if isinstance(df_input, pl.DataFrame) else df_input
-        #
-        # tool = ExprTool()
-        # codes, G = tool.all(
-        #     exprs_list_str,
-        #     style="polars",
-        #     template_file="template.py.j2",
-        #     replace=False,
-        #     regroup=True,
-        #     format=True,
-        #     date="DATE",
-        #     asset="ASSET",
-        #     over_null=None,
-        #     skip_simplify=True,
-        # )
-        #
-        # globals_ = {**CUSTOM_OPERATORS}
-        # exec(codes, globals_)
-        #
-        # df_output = globals_["main"](lf, ge_date_idx=0).collect()
+        lf = self.data_provider.load_pool_data(
+            self.pool, self.start_date, self.end_date, exprs=exprs_list_str
+        )
 
         df_output = lf.collect()
 
