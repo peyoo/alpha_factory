@@ -34,11 +34,22 @@ class DataProvider:
     4. 性能压榨：支持类型智能压缩 (shrink_dtype) 与 投影下压优化。
     """
 
-    def __init__(self, asset_manager: Optional[StockAssetsManager] = None):
+    def __init__(
+        self,
+        asset_manager: Optional[StockAssetsManager] = None,
+        look_back_window: int = 200,
+        pool_data_in_memory: bool = False,
+    ):
         """初始化 DataProvider。
 
         参数:
             asset_manager: 可选的资产元数据管理器。未提供时使用默认实现。
+            look_back_window: 时序算子预热窗口（交易日），默认 200。
+                用于向前追溯以解决 MA/STD 等时序算子的冷启动空值问题。
+            pool_data_in_memory: 是否将 pool 基础数据缓存到内存。
+                为 True 时，同一 pool+日期区间的基础数据将常驻内存，
+                后续调用 load_pool_data / build_factors_view 时可直接复用，
+                避免重复磁盘 I/O。适合在同一进程中对同一 pool 计算多组表达式的场景。
 
         说明:
             - 初始化仓库路径与因子目录。
@@ -49,6 +60,12 @@ class DataProvider:
         self.factor_dir = self.warehouse_dir / "unified_factors"
         self.asset_manager = asset_manager or StockAssetsManager()
         self.tushare_service = TushareDataService()
+        self.look_back_window: int = look_back_window
+        self.pool_data_in_memory: bool = pool_data_in_memory
+
+        # pool_data_in_memory=True 时缓存 (lf, pool_cache_path)（一个 DataProvider 绑定一个 pool，
+        # 同一运行会话内 pool_cache_path 不变，一并存储避免重复哈希计算）
+        self._pool_memory_cache: Optional[tuple[pl.LazyFrame, Path]] = None
 
         # 预加载静态元数据 LazyFrame
         # 提示：确保 asset 列在管理器中已设为 Categorical 或 Enum
@@ -87,7 +104,7 @@ class DataProvider:
             pool_cache_path, exprs, cache
         )
 
-        lf = self.build_factors_view(pool, pool_data, exprs, factors_cache_path)
+        lf = self._build_factors_view(pool, pool_data, exprs, factors_cache_path)
 
         # 在最后阶段过滤到 start_dt 及以后（表达式计算已完成，可以安全过滤）
         return lf.filter(pl.col("DATE") >= start_dt)
@@ -103,10 +120,17 @@ class DataProvider:
         返回:
             (pool_data_lf, pool_cache_path) — pool 级缓存始终生效。
         """
+        # 优先查询内存缓存（pool_data_in_memory=True 时生效，同时跳过哈希计算）
+        if self.pool_data_in_memory and self._pool_memory_cache is not None:
+            logger.info("⚡ 命中内存缓存，直接复用 pool 基础数据")
+            return self._pool_memory_cache
+
         pool_cache_path = self._build_pool_cache_path(pool, start_date, end_date)
 
         cached_lf = self._load_cached_lazyframe(pool_cache_path)
         if cached_lf is not None:
+            if self.pool_data_in_memory:
+                self._pool_memory_cache = (cached_lf, pool_cache_path)
             return cached_lf, pool_cache_path
 
         logger.info(
@@ -116,7 +140,9 @@ class DataProvider:
         funcs = [pool.pool, pool.extra_cols, *pool.label_col_funcs]
         select_cols = pool.needed_cols()
 
-        lf = self._scan_with_lookback(start_date, end_date, lookback=200)
+        lf = self._scan_with_lookback(
+            start_date, end_date, lookback=self.look_back_window
+        )
         lf = self._enrich_context(lf)
 
         for i, func in enumerate(funcs):
@@ -133,6 +159,8 @@ class DataProvider:
             lf = self._finalize_projection(lf, select_cols, generated_cols=[])
 
         lf = self._persist_cache_and_reload(lf, pool_cache_path)
+        if self.pool_data_in_memory:
+            self._pool_memory_cache = (lf, pool_cache_path)
         return lf, pool_cache_path
 
     def clean_old_caches(self, days=1):
@@ -261,7 +289,7 @@ class DataProvider:
         df.write_parquet(cache_path, compression="zstd")
         return pl.scan_parquet(cache_path)
 
-    def build_factors_view(
+    def _build_factors_view(
         self,
         pool: PoolUniverse,
         base_lf: pl.LazyFrame,

@@ -112,7 +112,7 @@ def test_load_pool_data_md5_uses_two_stage_and_no_final_cache() -> None:
         return lf.with_columns(pl.lit(1.0).alias("FACTOR_X"))
 
     provider._build_pool_base_data = fake_build_pool_base_data  # type: ignore[method-assign]
-    provider.build_factors_view = fake_build_factors_view  # type: ignore[method-assign]
+    provider._build_factors_view = fake_build_factors_view  # type: ignore[method-assign]
 
     lf = provider.load_pool_data(
         pool=pool,
