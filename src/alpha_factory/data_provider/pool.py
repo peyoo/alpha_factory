@@ -14,7 +14,6 @@ from functools import lru_cache
 from typing import Union, List
 
 import polars as pl
-import polars_ols as pls
 import polars_ds as pds
 from polars_ols.least_squares import OLSKwargs
 
@@ -287,15 +286,16 @@ class MainSmallPool(PoolUniverse):
 
         # 3. 构造处理表达式（批量处理，单次with_columns调用）
         exprs = [
-            pls.compute_least_squares(
-                pl.col(c),
-                pl.col("_mv_rank"),
-                pl.col(F.TURNOVER_RATE),
-                mode="residuals",
-                ols_kwargs=_ols_kwargs,
-            )
-            .over(F.DATE)
+            # pls.compute_least_squares(
+            #     pl.col(c),
+            #     pl.col("_mv_rank"),
+            #     pl.col(F.TURNOVER_RATE),
+            #     mode="residuals",
+            #     ols_kwargs=_ols_kwargs,
+            # )
+            # .over(F.DATE)
             # 优化：rank + z_normalize 合并，避免中间结果物化
+            pl.col(c)
             .rank("ordinal")
             .over(F.DATE)
             .pipe(lambda x: pds.z_normalize(x))
