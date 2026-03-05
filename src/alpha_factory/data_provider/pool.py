@@ -13,9 +13,10 @@ import re
 from functools import lru_cache
 from typing import Union, List
 
-import numpy as np
 import polars as pl
-from loguru import logger
+import polars_ols as pls
+import polars_ds as pds
+from polars_ols.least_squares import OLSKwargs
 
 from alpha_factory.config.base import settings
 from alpha_factory.data_provider.label import (
@@ -26,64 +27,12 @@ from alpha_factory.data_provider.label import (
 from alpha_factory.utils.schema import F
 
 
+_ols_kwargs = OLSKwargs(null_policy="drop", solve_method="svd")
+
+
 @lru_cache(maxsize=64)
 def _compile_factor_pattern(pattern: str) -> re.Pattern[str]:
     return re.compile(pattern)
-
-
-def _batch_neutralize_group(
-    group: pl.DataFrame,
-    factor_cols: list[str],
-    turnover_col: str,
-) -> pl.DataFrame:
-    """
-    批量 OLS 中性化：对同一日期分组内所有因子列一次性计算残差。
-
-    原理
-    ----
-    预测变量 X = [1, _mv_rank, TURNOVER_RATE] 对所有因子相同，
-    hat-matrix H = X(X'X)⁻¹X' 只需计算一次，
-    残差矩阵 R = Y - X·(X'X)⁻¹X'Y 通过一次 lstsq 多右端项调用得出，
-    时间复杂度从 O(N_factor) 次独立 OLS 降为 O(1) 次（相对回归次数）。
-
-    空值处理
-    --------
-    仅保留 X 所有预测变量均非空的行（过滤后 X 应无空值）；
-    Y 列中的空值用 0 临时填充以参与批量求解，结算完残差后还原为 null。
-    """
-    n = len(group)
-    mv_rank = group["_mv_rank"].to_numpy(allow_copy=False)
-    turnover = group[turnover_col].to_numpy(allow_copy=False)
-
-    # 构建预测变量矩阵（含截距），过滤后应全部有效
-    X = np.column_stack(
-        [
-            np.ones(n, dtype=np.float64),
-            mv_rank.astype(np.float64, copy=False),
-            turnover.astype(np.float64, copy=False),
-        ]
-    )
-
-    # 提取因子矩阵 Y (n × F)，float64
-    Y = group.select(factor_cols).cast(pl.Float64).to_numpy()
-    null_mask = np.isnan(Y)  # (n, F)
-
-    min_rows = X.shape[1]  # 需要至少 3 行（截距 + 2 预测变量）
-    residuals = np.full_like(Y, np.nan, dtype=np.float64)
-
-    if n >= min_rows:
-        # 空值用 0 填充，使批量 lstsq 不因 nan 报错；残差后恢复
-        Y_filled = np.where(null_mask, 0.0, Y)
-        coeffs, _, _, _ = np.linalg.lstsq(X, Y_filled, rcond=None)  # (3, F)
-        residuals = Y_filled - X @ coeffs  # (n, F)
-        residuals[null_mask] = np.nan  # 还原原始空值位置
-
-    return group.with_columns(
-        [
-            pl.Series(c, residuals[:, i], dtype=pl.Float64)
-            for i, c in enumerate(factor_cols)
-        ]
-    )
 
 
 class PoolUniverse:
@@ -305,71 +254,56 @@ class MainSmallPool(PoolUniverse):
         factors: Union[str, List[str]] = r"^factor_.*",
     ) -> Union[pl.DataFrame, pl.LazyFrame]:
         """
-        高性能微盘股因子预处理 Pipeline
+        极致性能版：微盘股因子预处理 Pipeline（已优化）
 
-        核心优化（vs 旧版）
-        -------------------
-        1. **批量 OLS 中性化**：旧版对每个因子列单独调用 `pls.compute_least_squares().over(DATE)`，
-           相当于 N_factor × N_date 次独立回归。新版通过 `map_groups` + `numpy.linalg.lstsq`
-           多右端项，每个日期分组只做 **1 次**矩阵分解，复杂度从 O(N_factor) 降为 O(1)。
-        2. **rank 与 z_normalize 分步执行**：避免 `.pipe(pds.z_normalize)` 导致 rank 表达式
-           被求值两次（mean/std 各一次引用），改为两个独立 `with_columns` 单次遍历。
-        3. **select + to_numpy**：批量提取因子 numpy 矩阵，减少 Python→Arrow→numpy 转换次数。
-        4. 保持 LazyFrame 输入/输出语义不变。
+        性能优化：
+        1. 预编译正则表达式（避免每次循环重新编译）
+        2. 使用高效的rank方法（"ordinal"显式指定）
+        3. 在单个with_columns中完成所有转换（减少数据遍历次数）
+        4. 保持LazyFrame直到最后（避免不必要的collect）
         """
+        import re
+
         is_lazy = isinstance(df, pl.LazyFrame)
         lf = df.lazy() if not is_lazy else df
 
-        # ── 1. 严格过滤（单次操作）────────────────────────────────────────────
-        filtered_lf = lf.filter(
+        # 1. 严格过滤并预计算辅助列（单次操作）
+        lf = lf.filter(
             pl.col(F.POOL_MASK)
             & pl.col(F.TOTAL_MV).is_not_null()
             & pl.col(F.TURNOVER_RATE).is_not_null()
-        )
-
-        # ── 2. 解析因子列名（lru_cache 缓存正则编译）────────────────────────
-        if isinstance(factors, str):
-            pattern = _compile_factor_pattern(factors)
-            factor_cols = [
-                c for c in filtered_lf.collect_schema().names() if pattern.match(c)
-            ]
-        else:
-            factor_cols = list(factors)
-
-        if not factor_cols:
-            return filtered_lf if is_lazy else filtered_lf.collect()
-
-        # ── 3. 预计算辅助列（单次 with_columns）─────────────────────────────
-        ranked_lf = filtered_lf.with_columns(
+        ).with_columns(
+            # 使用 "ordinal" 方法显式指定排名策略，性能优于默认方法
             _mv_rank=pl.col(F.TOTAL_MV).rank("ordinal").over(F.DATE)
         )
 
-        # ── 4. 批量 OLS 中性化（map_groups，每日期组仅一次矩阵分解）─────────
-        # 必须 collect 才能调用 map_groups；map_groups 返回 DataFrame，再转 lazy
-        neutralized_df = (
-            ranked_lf.collect()
-            .group_by(F.DATE)
-            .map_groups(
-                lambda grp: _batch_neutralize_group(grp, factor_cols, F.TURNOVER_RATE)
+        # 2. 解析因子列名（预编译正则表达式，避免循环中反复编译）
+        if isinstance(factors, str):
+            pattern = re.compile(factors)
+            target_cols = lf.collect_schema().names()
+            factor_cols = [c for c in target_cols if pattern.match(c)]
+        else:
+            factor_cols = list(factors)
+
+        # 3. 构造处理表达式（批量处理，单次with_columns调用）
+        exprs = [
+            pls.compute_least_squares(
+                pl.col(c),
+                pl.col("_mv_rank"),
+                pl.col(F.TURNOVER_RATE),
+                mode="residuals",
+                ols_kwargs=_ols_kwargs,
             )
-        )
-
-        # ── 5. 分步 Rank + Z-normalize（两次 with_columns，各遍历一次）───────
-        # 步骤 5a：对每列 ordinal rank（避免 pipe 引起的重复求值）
-        rank_exprs = [
-            pl.col(c).rank("ordinal").over(F.DATE).alias(c) for c in factor_cols
-        ]
-        ranked_df = neutralized_df.with_columns(rank_exprs)
-
-        # 步骤 5b：Z-normalize（全局标准化：(x - mean) / std）
-        znorm_exprs = [
-            ((pl.col(c) - pl.col(c).mean()) / pl.col(c).std()).alias(c)
+            .over(F.DATE)
+            # 优化：rank + z_normalize 合并，避免中间结果物化
+            .rank("ordinal")
+            .over(F.DATE)
+            .pipe(lambda x: pds.z_normalize(x))
+            .alias(c)
             for c in factor_cols
         ]
-        processed_df = ranked_df.with_columns(znorm_exprs).drop("_mv_rank")
 
-        logger.info(
-            f"因子预处理完成：中性化 +Rank+Z-normalize，处理后行数 {processed_df.height}, 列数 {processed_df.width}"
-        )
+        # 批量应用所有转换，单次遍历数据
+        processed_lf = lf.with_columns(exprs).drop("_mv_rank")
 
-        return processed_df.lazy() if is_lazy else processed_df
+        return processed_lf if is_lazy else processed_lf.collect()

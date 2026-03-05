@@ -160,7 +160,7 @@ class GPDeapGenerator(object):
         # 缓存本轮实验的适应度结果，避免重复计算
         self.fitness_cache = {}
 
-        self.data_provider = DataProvider()
+        self.data_provider = DataProvider(pool_data_in_memory=True)
 
         logger.info(f"✓ GP 生成器初始化完成 | 批大小: {self.batch_size}")
 
