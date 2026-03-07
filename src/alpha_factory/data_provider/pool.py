@@ -105,6 +105,7 @@ class MainSmallPool(PoolUniverse):
             F.AMOUNT,
             F.TOTAL_MV,
             F.VOLUME,
+            "ILLIQ",
             F.CIRC_MV,
             F.TURNOVER_RATE,
             F.VWAP,

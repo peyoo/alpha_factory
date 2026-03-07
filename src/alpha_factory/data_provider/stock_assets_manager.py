@@ -1,7 +1,7 @@
 """
 StockAssetsManager
 
-管理股票基础信息（registry），并维护一个全局唯一的 pl.Enum 类型。
+管理股票基础信息（registry），并维护一个全局唯一的 pl.Categorical 类型。
 
 字段（Registry）:
 - asset: String (主键)
@@ -12,7 +12,7 @@ StockAssetsManager
 
 设计要点：
 - 初始化从本地 parquet 文件读取 `stock_assets.parquet`（位置：settings.WAREHOUSE_DIR / 'stock_assets.parquet'）
-- 根据本地 asset 列的原始顺序构造 `self.stock_type = pl.Enum(...)`
+- 根据本地 asset 列构造 `self.stock_type = pl.Categorical`
 - 提供并发安全的全量同步方法 `update_assets(snapshot_df: pl.DataFrame)`，保证：
   - 本地已有资产的 ID 顺序不变（保持稳定）
   - 已有资产属性用 snapshot 中的数据更新
@@ -42,7 +42,7 @@ class StockAssetsManager:
 
     职责：
     1. 物理 ID 锁定：确保已有资产在 DataFrame 中的行索引（__pos__）永久稳定。
-    2. 类型对齐：维护全局 pl.Enum，确保计算层（Polars）与接入层（Tushare）无缝对接。
+    2. 类型对齐：维护全局 pl.Categorical，确保计算层（Polars）与接入层（Tushare）无缝对接。
     3. 生存者偏差处理：同步全量状态（上市、退市、暂停），保证回测不丢失已退市标的。
     """
 
@@ -54,7 +54,7 @@ class StockAssetsManager:
 
         # 内部状态
         self._df = pl.DataFrame(schema=self.schema)
-        self.stock_type: pl.Enum = pl.Enum([])
+        self.stock_type: pl.DataType = pl.Categorical
         self._mapping_cache: Dict[str, int] = {}
 
         with self._lock:
@@ -80,8 +80,8 @@ class StockAssetsManager:
         # 提取当前所有资产代码（维持原始物理顺序）
         assets_list = self._df.get_column(F.ASSET).to_list()
 
-        # 1. 更新计算层 Enum：使 Polars 计算时将 Asset 当做 Int 处理
-        self.stock_type = pl.Enum(assets_list)
+        # 1. 更新计算层类型为 Categorical
+        self.stock_type = pl.Categorical
 
         # 2. 更新接入层 Cache：提供给 TushareDataService 进行 O(1) 映射
         self._mapping_cache = {asset: i for i, asset in enumerate(assets_list)}
@@ -101,7 +101,7 @@ class StockAssetsManager:
 
     def get_properties(self) -> pl.DataFrame:
         """
-        获取携带 pl.Enum 类型的资产属性表。
+        获取携带 pl.Categorical 类型的资产属性表。
         用于后续在 Polars 中执行高性能 join。
         """
         with self._lock:
