@@ -36,6 +36,8 @@ dependencies = [
     "pydantic~=2.11.7",
     "quantstats~=0.0.81",
     "expr-codegen>=0.16.4",
+    "optuna>=3.0.0",
+    "ruamel.yaml>=0.18.0",
 ]
 
 [project.scripts]

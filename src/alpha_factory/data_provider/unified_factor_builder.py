@@ -142,8 +142,18 @@ class UnifiedFactorBuilder:
             # 💡 增量合并逻辑：检查文件是否存在，若存在则合并而非覆盖
             # 这解决了分次同步时数据被覆盖的问题
             if output_path.exists():
-                # 读取现有数据
-                df_existing = pl.read_parquet(output_path)
+                # 读取现有数据，将 ASSET 经由 String 重新 cast 到当前 session 的 Enum 类型。
+                # 原因：不同批次写入时 Enum 类别集合可能不同，直接 join 会报类型不匹配；
+                # strict=False 保证极少数已退市且已从名录移除的代码变为 null 而非抛错。
+                df_existing = (
+                    pl.read_parquet(output_path)
+                    .with_columns(
+                        pl.col(F.ASSET)
+                        .cast(pl.String)
+                        .cast(self.assets_mgr.stock_type, strict=False)
+                    )
+                    .filter(pl.col(F.ASSET).is_not_null())
+                )
                 # 删除新数据中已存在的 (DATE, ASSET) 组合，避免重复
                 existing_dates = df_existing.select([F.DATE, F.ASSET]).unique()
                 new_data = df_year.join(

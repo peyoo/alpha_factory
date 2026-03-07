@@ -1,10 +1,16 @@
 import os
 from pathlib import Path
-from typing import ClassVar, Dict
+from typing import ClassVar, Dict, Tuple, Type
 import polars as pl
 
 from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    SettingsConfigDict,
+    YamlConfigSettingsSource,
+    PydanticBaseSettingsSource,
+    DotEnvSettingsSource,
+)
 from alpha_factory.utils.schema import F
 
 
@@ -19,6 +25,53 @@ def get_default_base() -> Path:
 
     # 适配 src/alpha_factory/core/ 布局，向上爬 4 层
     return Path(__file__).resolve().parents[3]
+
+
+class BaseConfig(BaseSettings):
+    # 允许通过字段定义默认值，子类可直接覆盖此属性
+    yaml_config_file: str = "config.yaml"
+    env_file_name: str = ".env"
+
+    model_config = SettingsConfigDict(env_prefix="QUANT_", extra="ignore")
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: Type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> Tuple[PydanticBaseSettingsSource, ...]:
+
+        # 1. 获取基础路径 (调用你的健壮函数)
+        base_path = get_default_base()
+
+        # 2. 预读 Init 和 Env 得到可能的路径覆盖
+        # (注意：env_settings 此时会根据 QUANT_YAML_CONFIG_FILE 等前缀自动查找)
+        preload_env = env_settings()
+        preload_init = init_settings()
+
+        # 确定最终文件路径
+        final_yaml = (
+            preload_init.get("yaml_config_file")
+            or preload_env.get("yaml_config_file")
+            or cls.yaml_config_file
+        )
+        final_dot_env = base_path / (
+            preload_init.get("env_file_name")
+            or preload_env.get("env_file_name")
+            or cls.env_file_name
+        )
+
+        # 3. 构造真正的数据源
+        # 优先级：Init(CLI) > Env > DotEnv > YAML
+        return (
+            init_settings,
+            env_settings,
+            DotEnvSettingsSource(settings_cls, env_file=final_dot_env),
+            YamlConfigSettingsSource(settings_cls, yaml_file=base_path / final_yaml),
+        )
 
 
 class Settings(BaseSettings):
