@@ -22,7 +22,9 @@ from rich.console import Console
 from rich.table import Table
 
 from alpha_factory.cli.utils import PoolUniverseEnum
+from alpha_factory.config.strategy import FactorRank, StrategyConfig
 from alpha_factory.data_provider.data_provider import DataProvider
+from alpha_factory.data_provider.pool import PoolUniverse
 from alpha_factory.evaluation.backtest.daily_evolving import backtest_daily_evolving
 from alpha_factory.utils.schema import F
 
@@ -33,39 +35,24 @@ _RANK_PREFIX = "_RANK_"  # 预计算截面 rank 列的命名前缀
 
 
 # ---------------------------------------------------------------------------
-# YAML helpers（新格式：扁平结构，name/type/ranks 直接在根节点）
+# Pool helpers
 # ---------------------------------------------------------------------------
 
 
-def _extract_ranks(yaml_data: dict) -> tuple[str, list]:
-    """从扁平 YAML data 中提取策略名称与 ranks。
+def _resolve_pool(pool_name: str) -> PoolUniverse:
+    """将股票池名称字符串解析为 PoolUniverse 实例。
 
-    YAML 格式::
-
-        name: "s1"
-        type: "single"
-        ranks:
-          - name: "f1"
-            ...
-
-    返回:
-        (策略名称, ranks 列表)
+    遍历 PoolUniverseEnum，找到 name 匹配的成员并实例化返回。
+    若未找到则抛出 ValueError。
     """
-    if "ranks" not in yaml_data:
-        typer.echo("❌ YAML 文件中未找到 ranks 字段", err=True)
-        raise typer.Exit(code=1)
-
-    strat_name = str(yaml_data.get("name", "unknown"))
-    ranks = yaml_data.get("ranks", [])
-
-    if len(ranks) < 2:
-        typer.echo(
-            f"❌ 策略 {strat_name!r} 的 ranks 数量 < 2，无需优化",
-            err=True,
-        )
-        raise typer.Exit(code=1)
-
-    return strat_name, ranks
+    for member in PoolUniverseEnum:
+        instance = member.value()
+        if instance.name == pool_name:
+            return instance
+    raise ValueError(
+        f"未知股票池 {pool_name!r}，可选值: "
+        + ", ".join(m.value().name for m in PoolUniverseEnum)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -80,9 +67,9 @@ def softmax_weights(x: np.ndarray) -> np.ndarray:
 
 
 def precompute_factor_ranks(
-    ranks: list,
+    ranks: list[FactorRank],
     dp: DataProvider,
-    pool,
+    pool: PoolUniverse,
     start_date: str,
     end_date: Optional[str],
 ) -> pl.DataFrame:
@@ -95,11 +82,11 @@ def precompute_factor_ranks(
     同时保留回测所需的基础列（DATE / ASSET / POOL_MASK / VWAP / CLOSE /
     IS_UP_LIMIT / IS_DOWN_LIMIT / IS_SUSPENDED）。
     """
-    factor_names = [str(r.get("name", f"f{i}")) for i, r in enumerate(ranks)]
+    factor_names = [r.name for r in ranks]
 
     raw_col_names = [f"RAW_{name}" for name in factor_names]
     exprs = [
-        f"{raw_col} = {rank_def.get('expression', '').strip()}"
+        f"{raw_col} = {rank_def.expression.strip()}"
         for raw_col, rank_def in zip(raw_col_names, ranks)
     ]
 
@@ -108,7 +95,7 @@ def precompute_factor_ranks(
         f"共 {len(ranks)} 个因子，时间范围 {start_date} ~ {end_date or '最新'}"
     )
 
-    lf = dp.load_pool_data(pool.value(), start_date, end_date, exprs=exprs)
+    lf = dp.load_pool_data(pool, start_date, end_date, exprs=exprs)
 
     # 截面百分比 rank（用 direction 控制排序方向）
     # direction=1：大値好，descending=False → 最大値得最高秩（与回测中 ascending=False 一致）
@@ -117,7 +104,7 @@ def precompute_factor_ranks(
         pl.when(pl.col(F.POOL_MASK))
         .then(pl.col(raw_col))
         .otherwise(None)
-        .rank(method="average", descending=(int(rank_def.get("direction", 1)) < 0))
+        .rank(method="average", descending=(rank_def.direction < 0))
         .over(F.DATE)
         .alias(f"{_RANK_PREFIX}{name}")
         for raw_col, name, rank_def in zip(raw_col_names, factor_names, ranks)
@@ -198,9 +185,6 @@ def quant_opt(
         "-y",
         help="多因子策略 YAML 文件路径（如 output/main_small_pool/s1.yaml）",
     ),
-    pool: PoolUniverseEnum = typer.Option(
-        PoolUniverseEnum.main_small, "--pool", help="股票池"
-    ),
     start_date: str = typer.Option(
         "20190101",
         "-s",
@@ -213,10 +197,7 @@ def quant_opt(
         "--end-date",
         help="回测结束日期 YYYYMMDD（默认取仓库最新日期）",
     ),
-    n_trials: int = typer.Option(50, "--n-trials", help="Optuna 试验次数"),
-    n_buy: int = typer.Option(20, "--n-buy", help="最大持仓股数"),
-    sell_rank: int = typer.Option(60, "--sell-rank", help="卖出排名线（逐日演进模式）"),
-    cost: float = typer.Option(0.002, "--cost", help="单边交易成本率"),
+    n_trials: int = typer.Option(100, "--n-trials", help="Optuna 试验次数"),
     seed: int = typer.Option(42, "--seed", help="随机种子，确保结果可复现"),
     show_progress: bool = typer.Option(
         True, "--progress/--no-progress", help="是否显示优化进度条"
@@ -226,9 +207,14 @@ def quant_opt(
     [优化指令] 使用 Optuna 对 YAML 多因子策略的权重系数进行超参数优化。
 
     \b
-    YAML 格式（扁平，无 strategy 外层）:
+    策略参数（pool / hold_num / sell_rank / cost 等）均从 YAML 文件读取，
+    无需在命令行重复指定。YAML 需符合 StrategyConfig 格式，例如：
+
         name: "s1"
-        type: "single"
+        pool: "main_small_pool"
+        hold_num: 10
+        sell_rank: 30
+        cost: 0.003
         ranks:
           - name: "f1"
             weight: 1.0
@@ -253,16 +239,10 @@ def quant_opt(
         typer.echo("❌ 未安装 optuna，请运行 `uv sync` 安装依赖", err=True)
         raise typer.Exit(code=1)
 
-    try:
-        from ruamel.yaml import YAML as RuamelYAML
-    except ImportError:
-        typer.echo("❌ 未安装 ruamel.yaml，请运行 `uv sync` 安装依赖", err=True)
-        raise typer.Exit(code=1)
-
     # 静默 optuna 内部日志，由 rich 接管显示
     optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-    # ---- 1. 加载 YAML ----
+    # ---- 1. 通过 StrategyConfig 加载并校验 YAML ----
     if not yaml_file.is_absolute():
         yaml_file = Path.cwd() / yaml_file
 
@@ -270,31 +250,47 @@ def quant_opt(
         typer.echo(f"❌ YAML 文件不存在: {yaml_file}", err=True)
         raise typer.Exit(code=1)
 
-    _yaml = RuamelYAML()
-    _yaml.preserve_quotes = True
-    with yaml_file.open("r", encoding="utf-8") as f:
-        yaml_data = _yaml.load(f)
+    try:
+        cfg = StrategyConfig.from_yaml(yaml_file)
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"❌ 加载策略配置失败: {exc}", err=True)
+        raise typer.Exit(code=1)
 
-    strat_name, ranks = _extract_ranks(yaml_data)
+    if len(cfg.ranks) < 2:
+        typer.echo(
+            f"❌ 策略 {cfg.name!r} 的 ranks 数量 < 2，无需优化",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    strat_name = cfg.name
+    ranks = cfg.ranks
     n_factors = len(ranks)
-    factor_names = [str(r.get("name", f"f{i}")) for i, r in enumerate(ranks)]
-    directions = [int(r.get("direction", 1)) for r in ranks]
-    original_weights = [float(r.get("weight", 1.0)) for r in ranks]
+    factor_names = cfg.factor_names
+    directions = cfg.factor_directions
+    original_weights = cfg.factor_weights
+
+    # 将 pool 名称字符串解析为 PoolUniverse 实例
+    try:
+        pool_instance = _resolve_pool(cfg.pool)
+    except ValueError as exc:
+        typer.echo(f"❌ {exc}", err=True)
+        raise typer.Exit(code=1)
 
     console.rule("[bold cyan]Optuna 多因子权重优化[/bold cyan]")
     console.print(
         f"  策略: [bold]{strat_name}[/bold] | 因子数: {n_factors} | "
-        f"股票池: {pool.name} | {start_date} ~ {end_date or '最新'}"
+        f"股票池: {cfg.pool} | {start_date} ~ {end_date or '最新'}"
     )
     console.print(f"  因子: {factor_names}")
     console.print(
-        f"  持仓: n_buy={n_buy}, sell_rank={sell_rank} | "
-        f"成本: {cost:.4f} | 试验次数: {n_trials}\n"
+        f"  持仓: hold_num={cfg.hold_num}, sell_rank={cfg.sell_rank} | "
+        f"成本: {cfg.cost:.4f} | 试验次数: {n_trials}\n"
     )
 
     # ---- 2. 一次性预计算所有因子截面 rank（整个优化过程共享） ----
     dp = DataProvider()
-    base_df = precompute_factor_ranks(ranks, dp, pool, start_date, end_date)
+    base_df = precompute_factor_ranks(ranks, dp, pool_instance, start_date, end_date)
 
     # ---- 3. 定义 Optuna 目标函数（仅加权合成 + 回测，无 I/O） ----
     def objective(trial: "optuna.Trial") -> float:
@@ -307,9 +303,9 @@ def quant_opt(
             result = backtest_daily_evolving(
                 df_input=df_trial,
                 factor_col=_COMPOSITE_COL,
-                n_buy=n_buy,
-                sell_rank=sell_rank,
-                cost_rate=cost,
+                n_buy=cfg.hold_num,
+                sell_rank=cfg.sell_rank,
+                cost_rate=cfg.cost,
                 ascending=False,
             )
             return compute_ann_ret(result["daily_results"]["NAV"])
@@ -382,11 +378,10 @@ def quant_opt(
         f"  (第 {study.best_trial.number + 1} 次 / 共 {n_trials} 次试验)"
     )
 
-    # ---- 7. 写回原 YAML（扁平格式：直接更新根节点的 ranks） ----
-    for rank_def, opt_w in zip(yaml_data.get("ranks", []), best_weights):
-        rank_def["weight"] = round(float(opt_w), 6)
+    # ---- 7. 写回原 YAML（通过 StrategyConfig.to_yaml，保留注释） ----
+    for rank_item, opt_w in zip(cfg.ranks, best_weights):
+        rank_item.weight = round(float(opt_w), 6)
 
-    with yaml_file.open("w", encoding="utf-8") as f:
-        _yaml.dump(yaml_data, f)
+    cfg.to_yaml(yaml_file)
 
     console.print(f"[bold green]💾 最优权重已写回[/bold green] → {yaml_file}")

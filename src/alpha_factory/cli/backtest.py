@@ -3,15 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-import polars as pl
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from alpha_factory.cli.utils import PoolUniverseEnum
+from alpha_factory.config.strategy import StrategyConfig
 from alpha_factory.data_provider.data_provider import DataProvider
 from alpha_factory.evaluation.backtest.daily_evolving import backtest_daily_evolving
-from alpha_factory.evaluation.backtest.period import backtest_periodic_rebalance
 from alpha_factory.evaluation.backtest.utils import generate_and_open_report
 from alpha_factory.utils.schema import F
 
@@ -24,67 +22,19 @@ _EXEC_PRICE_MAP: dict[str, str] = {
     "vwap": F.VWAP,
 }
 
-# 因子表达式预处理映射：对表达式右侧包裹函数
-_PREPROCESS_EXPR_WRAPPER_MAP: dict[str, str] = {
-    "rank": "cs_rank_mask",
-    "demean": "cs_demean_mask",
-    "zscore": "cs_mad_zscore_mask",
-}
-
 
 def quant_bt(
+    yaml_file: Path = typer.Option(
+        ...,
+        "-y",
+        "--yaml",
+        help="策略 YAML 文件路径（StrategyConfig 格式）",
+    ),
     start_date: str = typer.Option(
         "20190101", "-s", "--start-date", help="开始日期 YYYYMMDD"
     ),
     end_date: Optional[str] = typer.Option(
         None, "--end", "--end-date", help="结束日期 YYYYMMDD（默认至最新）"
-    ),
-    expr: Optional[str] = typer.Option(
-        None,
-        "-e",
-        "--expr",
-        help="因子表达式，格式: FACTOR_NAME = <polars-ta 表达式>，例如 F1 = CLOSE.rolling_mean(5)",
-    ),
-    csv_file: Optional[Path] = typer.Option(
-        None,
-        "--csv",
-        help="CSV 文件路径：读取其中表达式并等权组合成一个因子回测",
-    ),
-    pool: PoolUniverseEnum = typer.Option(
-        PoolUniverseEnum.main_small, "--pool", help="股票池"
-    ),
-    mode: str = typer.Option(
-        "daily",
-        "--mode",
-        help="回测模式: daily（逐日演进，默认）| period（周期换股）",
-    ),
-    preprocess_mode: str = typer.Option(
-        "none",
-        "--preprocess-mode",
-        "-p",
-        help="因子预处理: none | rank（截面排名）| demean（截面去均值）| zscore（截面标准化）",
-    ),
-    n_buy: int = typer.Option(
-        80, "--n-buy", help="最大持仓数（daily: 买入线；period: 持股数量）"
-    ),
-    sell_rank: int = typer.Option(
-        120, "--sell-rank", help="卖出线：排名超过此值时触发卖出（仅 daily 模式）"
-    ),
-    rebalance_period: int = typer.Option(
-        5,
-        "--period",
-        help="换股周期（天数），如 5 表示每 5 天换股一次（仅 period 模式）",
-    ),
-    cost: float = typer.Option(0.003, "--cost", help="单边交易成本率"),
-    exec_price: str = typer.Option(
-        "vwap",
-        "--exec-price",
-        help="执行价字段: open（默认，后复权开盘价）| close（后复权收盘价）",
-    ),
-    ascending: bool = typer.Option(
-        False,
-        "--ascending/--descending",
-        help="因子排序方向：--ascending 表示小值买入，--descending（默认）表示大值买入",
     ),
     report: bool = typer.Option(
         True, "--report/--no-report", help="是否生成 HTML 报告并打开"
@@ -92,152 +42,20 @@ def quant_bt(
     save_trades: Optional[Path] = typer.Option(
         None,
         "--save-trades",
-        help="保存交易明细到文件，按扩展名自动选格式（.csv 或 .parquet），"
-        "例如 --save-trades output/trades.csv",
+        help="保存交易明细到文件，按扩展名自动选格式（.csv 或 .parquet）",
         show_default=False,
     ),
 ):
     """
-    因子回测框架，支持两种模式。
-
-    \b
-    模式说明:
-      daily   逐日演进回测（T+1 精准收益闭环），支持动态调仓
-      period  周期换股回测，按固定周期整体换仓
+    逐日演进因子回测（T+1 精准收益闭环）。
+    所有回测参数（因子/股票池/持仓数/卖出线/成本/执行价）均来自 YAML 文件。
 
     \b
     示例:
-      quant bt -s 20200101 -e 20231231 --expr "F1 = -ts_mean(AMOUNT, 30)"
-      quant bt -s 20200101 --expr "MOM = CLOSE / CLOSE.shift(20) - 1" --n-buy 20 --sell-rank 50
-      quant bt --mode period -s 20200101 --expr "F1 = -CLOSE.shift(1)" --n-buy 10 --period 5
+      quant bt -y output/main_small_pool/s1.yaml
+      quant bt -y output/main_small_pool/s1.yaml -s 20210101 --end 20241231
     """
-    # --- 1. 参数校验 ---
-    mode_lower = mode.strip().lower()
-    if mode_lower not in ("daily", "period"):
-        typer.echo(
-            f"❌ --mode 无效值 '{mode}'，仅支持: daily | period",
-            err=True,
-        )
-        raise typer.Exit(code=1)
-
-    if (expr is None and csv_file is None) or (
-        expr is not None and csv_file is not None
-    ):
-        typer.echo("❌ 请且仅请提供一个输入源：--expr 或 --csv", err=True)
-        raise typer.Exit(code=1)
-
-    preprocess_mode_lower = preprocess_mode.strip().lower()
-    if preprocess_mode_lower not in ("none", "rank", "demean", "zscore"):
-        typer.echo(
-            f"❌ --preprocess-mode 无效值 '{preprocess_mode}'，仅支持: none | rank | demean | zscore",
-            err=True,
-        )
-        raise typer.Exit(code=1)
-
-    exec_price_lower = exec_price.strip().lower()
-    if exec_price_lower not in _EXEC_PRICE_MAP:
-        typer.echo(
-            f"❌ --exec-price 无效值 '{exec_price}'，仅支持: {list(_EXEC_PRICE_MAP.keys())}",
-            err=True,
-        )
-        raise typer.Exit(code=1)
-    exec_price_col = _EXEC_PRICE_MAP[exec_price_lower]
-
-    if mode_lower == "daily" and sell_rank < n_buy:
-        typer.echo(
-            f"❌ --sell-rank ({sell_rank}) 必须 >= --n-buy ({n_buy})",
-            err=True,
-        )
-        raise typer.Exit(code=1)
-
-    if mode_lower == "period" and rebalance_period < 1:
-        typer.echo(
-            f"❌ --period ({rebalance_period}) 必须 >= 1",
-            err=True,
-        )
-        raise typer.Exit(code=1)
-
-    if csv_file is not None and not csv_file.is_absolute():
-        csv_file = pool.value().pool_dir / csv_file
-
-    # --- 2. 数据加载 ---
-    preprocess_wrapper = _PREPROCESS_EXPR_WRAPPER_MAP.get(preprocess_mode_lower)
-    factor_col, factor_expr = _resolve_factor_expr(
-        expr,
-        csv_file,
-        preprocess_wrapper=preprocess_wrapper if csv_file is not None else None,
-    )
-    if expr is not None and preprocess_wrapper is not None:
-        factor_expr = f"{preprocess_wrapper}({factor_expr})"
-    expr_for_loader = f"{factor_col} = {factor_expr}"
-
-    console.print(
-        f"[bold cyan]📦 加载数据[/bold cyan] pool={pool.name} | "
-        f"{start_date} ~ {end_date or '最新'} | expr={expr_for_loader!r}"
-    )
-
-    dp = DataProvider()
-    lf = dp.load_pool_data(pool.value(), start_date, end_date, exprs=[expr_for_loader])
-
-    # --- 3. 回测执行 ---
-    if mode_lower == "period":
-        console.print(
-            f"[bold cyan]🚀 启动周期换股回测[/bold cyan] | "
-            f"因子={factor_col} | 持股={n_buy} | 换仓周期={rebalance_period}天 | "
-            f"费率={cost:.4f} | 执行价={exec_price_col} | 预处理={preprocess_mode_lower}"
-        )
-        result = backtest_periodic_rebalance(
-            df_input=lf,
-            factor_col=factor_col,
-            hold_num=n_buy,
-            rebalance_period=rebalance_period,
-            cost_rate=cost,
-            exec_price=exec_price_col,
-            ascending=ascending,
-        )
-    else:
-        console.print(
-            f"[bold cyan]🚀 启动逐日演进回测[/bold cyan] | "
-            f"因子={factor_col} | 持仓={n_buy} | 卖出线={sell_rank} | "
-            f"费率={cost:.4f} | 执行价={exec_price_col} | 预处理={preprocess_mode_lower}"
-        )
-        result = backtest_daily_evolving(
-            df_input=lf,
-            factor_col=factor_col,
-            n_buy=n_buy,
-            sell_rank=sell_rank,
-            cost_rate=cost,
-            exec_price=exec_price_col,
-            ascending=ascending,
-        )
-
-    daily_df = result["daily_results"]
-    trade_df = result["trade_details"]
-
-    # --- 4. 摘要统计 ---
-    _print_summary(daily_df, trade_df, factor_col)
-
-    # --- 4b. 保存交易明细 ---
-    if save_trades is not None:
-        _save_trades(trade_df, save_trades)
-
-    # --- 5. HTML 报告 ---
-    if report:
-        # generate_and_open_report 期望 result["series"] 且列名小写
-        series = daily_df.rename(
-            {
-                "RAW_RET": "raw_ret",
-                "NET_RET": "net_ret",
-                "TURNOVER": "turnover",
-                "COUNT": "count",
-                "NAV": "nav",
-                F.DATE: "DATE",
-            }
-        )
-        try:
-            generate_and_open_report({"series": series}, factor_col)
-        except Exception as exc:  # noqa: BLE001
-            console.print(f"[yellow]⚠ 报告生成失败: {exc}[/yellow]")
+    _run_bt_from_yaml(yaml_file, start_date, end_date, report, save_trades)
 
 
 # ---------------------------------------------------------------------------
@@ -343,117 +161,135 @@ def _print_summary(daily_df, trade_df, factor_col: str) -> None:
     console.print(table)
 
 
-def _resolve_factor_expr(
-    expr: Optional[str],
-    csv_file: Optional[Path],
-    preprocess_wrapper: Optional[str] = None,
-) -> tuple[str, str]:
-    """解析输入源，返回 (factor_col, factor_expr)。"""
-    if expr is not None:
-        expr_str = expr.strip()
-        if "=" in expr_str:
-            factor_col, factor_expr = [part.strip() for part in expr_str.split("=", 1)]
-            return factor_col, factor_expr
-        return "f1", expr_str
-
-    assert csv_file is not None
-    expr_and_direction = _load_exprs_from_csv(csv_file)
-    terms: list[str] = []
-    for single_expr, direction in expr_and_direction:
-        normalized_expr = single_expr
-        if preprocess_wrapper is not None:
-            normalized_expr = f"{preprocess_wrapper}({normalized_expr})"
-        if direction > 0:
-            terms.append(f"({normalized_expr})")
-        else:
-            terms.append(f"-({normalized_expr})")
-
-    composite_sum = " + ".join(terms)
-    composite_expr = f"({composite_sum}) / {len(expr_and_direction)}"
-    return "f_csv", composite_expr
+# ---------------------------------------------------------------------------
+# YAML 策略回测
+# ---------------------------------------------------------------------------
 
 
-def _load_exprs_from_csv(csv_file: Path) -> list[tuple[str, int]]:
-    """从 CSV 中读取表达式与方向，返回 (表达式右侧, direction) 列表。"""
+def _run_bt_from_yaml(
+    yaml_file: Path,
+    start_date: str,
+    end_date: Optional[str],
+    report: bool,
+    save_trades: Optional[Path],
+) -> None:
+    """从 StrategyConfig YAML 加载策略并执行逐日演进回测。
+
+    单因子：直接加载原始表达式，direction 控制 ascending 。
+    多因子：截面 rank 预计算 + softmax 加权合成。
+    """
+    from alpha_factory.cli.opt import _resolve_pool
+
+    if not yaml_file.is_absolute():
+        yaml_file = Path.cwd() / yaml_file
+
+    if not yaml_file.exists():
+        typer.echo(f"❌ YAML 文件不存在: {yaml_file}", err=True)
+        raise typer.Exit(code=1)
+
     try:
-        df = pl.read_csv(csv_file)
+        cfg = StrategyConfig.from_yaml(yaml_file)
     except Exception as exc:  # noqa: BLE001
-        typer.echo(f"❌ 读取 --csv 文件失败: {exc}", err=True)
+        typer.echo(f"❌ 加载策略配置失败: {exc}", err=True)
         raise typer.Exit(code=1)
 
-    expr_col = None
-    for candidate in ("expression", "expr", "公式"):
-        if candidate in df.columns:
-            expr_col = candidate
-            break
-    if expr_col is None:
-        typer.echo(
-            f"❌ --csv 文件缺少表达式列，需包含 expression/expr/公式 之一；可用列: {df.columns}",
-            err=True,
+    if not cfg.ranks:
+        typer.echo("❌ YAML ranks 列表为空，无法执行回测", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        pool_instance = _resolve_pool(cfg.pool)
+    except ValueError as exc:
+        typer.echo(f"❌ {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    exec_price_col = _EXEC_PRICE_MAP.get(cfg.exe_price.strip().lower(), F.VWAP)
+
+    console.print(
+        f"[bold cyan]📦 加载策略[/bold cyan] "
+        f"name={cfg.name!r} | pool={cfg.pool} | 因子={len(cfg.ranks)} | "
+        f"hold={cfg.hold_num} | sell_rank={cfg.sell_rank} | "
+        f"{start_date} ~ {end_date or '最新'}"
+    )
+
+    dp = DataProvider()
+
+    if len(cfg.ranks) == 1:
+        # 单因子：直接加载原始表达式
+        rank = cfg.ranks[0]
+        expr_str = f"{rank.name} = {rank.expression}"
+        lf = dp.load_pool_data(pool_instance, start_date, end_date, exprs=[expr_str])
+        ascending = rank.direction < 0
+        console.print(
+            f"[bold cyan]🚀 逐日演进回测[/bold cyan] | "
+            f"因子={rank.name} | 持仓={cfg.hold_num} | 卖出线={cfg.sell_rank} | "
+            f"费率={cfg.cost:.4f} | 执行价={cfg.exe_price} | ascending={ascending}"
         )
-        raise typer.Exit(code=1)
-
-    direction_col = None
-    for candidate in ("direction", "dir", "方向"):
-        if candidate in df.columns:
-            direction_col = candidate
-            break
-
-    expr_values = [str(item).strip() for item in df.get_column(expr_col).to_list()]
-    if not any(expr_values):
-        typer.echo("❌ --csv 文件表达式为空", err=True)
-        raise typer.Exit(code=1)
-
-    if direction_col is None:
-        direction_values = [1] * len(expr_values)
+        result = backtest_daily_evolving(
+            df_input=lf,
+            factor_col=rank.name,
+            n_buy=cfg.hold_num,
+            sell_rank=cfg.sell_rank,
+            cost_rate=cfg.cost,
+            exec_price=exec_price_col,
+            ascending=ascending,
+        )
+        factor_label = rank.name
     else:
-        direction_values = [
-            _parse_direction_value(raw_direction, row_idx=i + 1)
-            for i, raw_direction in enumerate(df.get_column(direction_col).to_list())
-        ]
+        # 多因子：截面 rank 预计算 + softmax 加权合成
+        import numpy as np
 
-    parsed_exprs: list[tuple[str, int]] = []
-    for item, direction in zip(expr_values, direction_values):
-        if not item:
-            continue
-        if "=" in item:
-            parsed_exprs.append((item.split("=", 1)[1].strip(), direction))
-        else:
-            parsed_exprs.append((item, direction))
-
-    if not parsed_exprs:
-        typer.echo("❌ --csv 文件表达式为空", err=True)
-        raise typer.Exit(code=1)
-
-    return parsed_exprs
-
-
-def _parse_direction_value(raw_direction: object, row_idx: int) -> int:
-    """解析 CSV direction，合法值仅支持 1/-1（空值默认 1）。"""
-    if raw_direction is None:
-        return 1
-
-    text = str(raw_direction).strip()
-    if text == "":
-        return 1
-
-    try:
-        val = int(float(text))
-    except Exception as exc:  # noqa: BLE001
-        typer.echo(
-            f"❌ --csv 第 {row_idx} 行 direction 非法: {raw_direction!r}，仅支持 1 或 -1",
-            err=True,
+        from alpha_factory.cli.opt import (
+            _COMPOSITE_COL,
+            make_composite,
+            precompute_factor_ranks,
+            softmax_weights,
         )
-        raise typer.Exit(code=1) from exc
 
-    if val not in (1, -1):
-        typer.echo(
-            f"❌ --csv 第 {row_idx} 行 direction 非法: {raw_direction!r}，仅支持 1 或 -1",
-            err=True,
+        base_df = precompute_factor_ranks(
+            cfg.ranks, dp, pool_instance, start_date, end_date
         )
-        raise typer.Exit(code=1)
+        weights = softmax_weights(np.array(cfg.factor_weights, dtype=float))
+        df = make_composite(base_df, cfg.factor_names, weights)
+        console.print(
+            f"[bold cyan]🚀 逐日演进回测（合成因子）[/bold cyan] | "
+            f"因子数={len(cfg.ranks)} | 持仓={cfg.hold_num} | 卖出线={cfg.sell_rank} | "
+            f"费率={cfg.cost:.4f} | 执行价={cfg.exe_price}"
+        )
+        result = backtest_daily_evolving(
+            df_input=df,
+            factor_col=_COMPOSITE_COL,
+            n_buy=cfg.hold_num,
+            sell_rank=cfg.sell_rank,
+            cost_rate=cfg.cost,
+            exec_price=exec_price_col,
+            ascending=False,
+        )
+        factor_label = cfg.name
 
-    return val
+    daily_df = result["daily_results"]
+    trade_df = result["trade_details"]
+
+    _print_summary(daily_df, trade_df, factor_label)
+
+    if save_trades is not None:
+        _save_trades(trade_df, save_trades)
+
+    if report:
+        series = daily_df.rename(
+            {
+                "RAW_RET": "raw_ret",
+                "NET_RET": "net_ret",
+                "TURNOVER": "turnover",
+                "COUNT": "count",
+                "NAV": "nav",
+                F.DATE: "DATE",
+            }
+        )
+        try:
+            generate_and_open_report({"series": series}, factor_label)
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[yellow]⚠ 报告生成失败: {exc}[/yellow]")
 
 
 def _save_trades(trade_df, path: Path) -> None:

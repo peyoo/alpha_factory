@@ -3,11 +3,11 @@ tests/test_cli_opt.py — quant opt 命令单元测试
 
 覆盖：
   - softmax_weights：归一化约束（sum=1, w≥0）
-  - build_composite_expr：合成表达式格式正确
+  - make_composite：合成与加权逻辑
   - compute_ann_ret：年化收益率计算
-  - _extract_ranks：YAML 解析与错误处理
+  - StrategyConfig 加载：YAML 解析与校验（替代原 _extract_ranks 测试）
   - CLI smoke test：--help 可正常响应（不依赖真实数据）
-  - YAML 写回：weight 字段正确更新
+  - YAML 写回：通过 StrategyConfig.to_yaml 写回权重
 """
 
 from __future__ import annotations
@@ -15,16 +15,15 @@ from __future__ import annotations
 import numpy as np
 import polars as pl
 import pytest
-from click.exceptions import Exit as ClickExit
 from typer.testing import CliRunner
 
 from alpha_factory.cli.opt import (
-    _extract_ranks,
     compute_ann_ret,
     make_composite,
     softmax_weights,
 )
 from alpha_factory.cli.main import app
+from alpha_factory.config.strategy import StrategyConfig
 
 runner = CliRunner()
 
@@ -139,57 +138,54 @@ class TestComputeAnnRet:
 
 
 # ---------------------------------------------------------------------------
-# _extract_ranks
+# StrategyConfig 加载（替代原 _extract_ranks 测试）
 # ---------------------------------------------------------------------------
 
 
-class TestExtractRanks:
-    """TestExtractRanks - 验证扁平 YAML 解析。"""
+class TestStrategyConfigLoad:
+    """通过 StrategyConfig.from_yaml 验证 YAML 解析与校验。"""
 
-    def _make_data(self, n_ranks: int = 2) -> dict:
-        """Generate flat YAML dict with n_ranks ranks."""
-        return {
-            "name": "s1",
-            "type": "single",
-            "ranks": [
-                {
-                    "name": f"f{i}",
-                    "expression": f"CLOSE.shift({i})",
-                    "direction": 1,
-                    "weight": 1.0,
-                }
-                for i in range(1, n_ranks + 1)
-            ],
-        }
+    def _make_yaml_content(self, n_ranks: int = 2) -> str:
+        ranks_block = "\n".join(
+            f"  - name: f{i}\n"
+            f"    expression: CLOSE.shift({i})\n"
+            f"    direction: 1\n"
+            f"    weight: 1.0"
+            for i in range(1, n_ranks + 1)
+        )
+        return f"name: s1\npool: main_small_pool\nranks:\n{ranks_block}\n"
 
-    def test_extract_name_and_ranks(self):
-        data = self._make_data(2)
-        name, ranks = _extract_ranks(data)
-        assert name == "s1"
-        assert len(ranks) == 2
+    def test_load_name_and_ranks(self, tmp_path):
+        yaml_file = tmp_path / "s1.yaml"
+        yaml_file.write_text(self._make_yaml_content(2), encoding="utf-8")
+        cfg = StrategyConfig.from_yaml(yaml_file)
+        assert cfg.name == "s1"
+        assert len(cfg.ranks) == 2
 
-    def test_extract_three_ranks(self):
-        data = self._make_data(3)
-        _, ranks = _extract_ranks(data)
-        assert len(ranks) == 3
+    def test_load_three_ranks(self, tmp_path):
+        yaml_file = tmp_path / "s1.yaml"
+        yaml_file.write_text(self._make_yaml_content(3), encoding="utf-8")
+        cfg = StrategyConfig.from_yaml(yaml_file)
+        assert len(cfg.ranks) == 3
 
-    def test_missing_name_defaults_to_unknown(self):
-        data = {"ranks": [{"name": "f1", "expression": "x", "direction": 1}] * 2}
-        name, _ = _extract_ranks(data)
-        assert name == "unknown"
+    def test_defaults_applied(self, tmp_path):
+        """未指定字段应取 StrategyConfig 默认值。"""
+        yaml_file = tmp_path / "s1.yaml"
+        yaml_file.write_text(self._make_yaml_content(2), encoding="utf-8")
+        cfg = StrategyConfig.from_yaml(yaml_file)
+        assert cfg.pool == "main_small_pool"
+        assert cfg.cost == pytest.approx(0.003)
+        assert cfg.hold_num == 10
 
-    def test_raises_on_single_rank(self):
-        data = self._make_data(n_ranks=1)
-        with pytest.raises(ClickExit):
-            _extract_ranks(data)
+    def test_factor_names_property(self, tmp_path):
+        yaml_file = tmp_path / "s1.yaml"
+        yaml_file.write_text(self._make_yaml_content(2), encoding="utf-8")
+        cfg = StrategyConfig.from_yaml(yaml_file)
+        assert cfg.factor_names == ["f1", "f2"]
 
-    def test_raises_on_missing_ranks_key(self):
-        with pytest.raises(ClickExit):
-            _extract_ranks({"name": "s1"})
-
-    def test_raises_on_empty_ranks(self):
-        with pytest.raises(ClickExit):
-            _extract_ranks({"name": "s1", "ranks": []})
+    def test_missing_file_raises(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            StrategyConfig.from_yaml(tmp_path / "nonexistent.yaml")
 
 
 # ---------------------------------------------------------------------------
@@ -217,12 +213,12 @@ class TestCliSmoke:
 
 
 class TestYamlWriteback:
-    """YAML 写回测试（扁平格式）。"""
+    """YAML 写回测试（通过 StrategyConfig.to_yaml）。"""
 
     def _make_yaml_content(self) -> str:
         return (
             "name: test_strat\n"
-            "type: single\n"
+            "pool: main_small_pool\n"
             "ranks:\n"
             "  - name: f1\n"
             "    weight: 1.0\n"
@@ -235,54 +231,32 @@ class TestYamlWriteback:
         )
 
     def test_weight_updated_in_yaml(self, tmp_path):
-        from ruamel.yaml import YAML
-
         yaml_file = tmp_path / "test_strat.yaml"
         yaml_file.write_text(self._make_yaml_content(), encoding="utf-8")
 
-        # 模拟：将最优权重写回（扁平格式，直接更新根节点 ranks）
+        # 模拟：通过 StrategyConfig 更新权重并写回
         new_weights = np.array([0.3, 0.7])
-        _yaml = YAML()
-        _yaml.preserve_quotes = True
-        with yaml_file.open("r", encoding="utf-8") as f:
-            data = _yaml.load(f)
-
-        for rank_def, w in zip(data.get("ranks", []), new_weights):
-            rank_def["weight"] = round(float(w), 6)
-
-        with yaml_file.open("w", encoding="utf-8") as f:
-            _yaml.dump(data, f)
+        cfg = StrategyConfig.from_yaml(yaml_file)
+        for rank_item, w in zip(cfg.ranks, new_weights):
+            rank_item.weight = round(float(w), 6)
+        cfg.to_yaml(yaml_file)
 
         # 读回验证
-        with yaml_file.open("r", encoding="utf-8") as f:
-            result_data = _yaml.load(f)
-
-        written_weights = [r["weight"] for r in result_data["ranks"]]
-        assert abs(written_weights[0] - 0.3) < 1e-6
-        assert abs(written_weights[1] - 0.7) < 1e-6
+        cfg2 = StrategyConfig.from_yaml(yaml_file)
+        assert abs(cfg2.ranks[0].weight - 0.3) < 1e-6
+        assert abs(cfg2.ranks[1].weight - 0.7) < 1e-6
 
     def test_structure_preserved_after_writeback(self, tmp_path):
-        from ruamel.yaml import YAML
-
         yaml_file = tmp_path / "test_strat2.yaml"
         yaml_file.write_text(self._make_yaml_content(), encoding="utf-8")
 
-        _yaml = YAML()
-        _yaml.preserve_quotes = True
-        with yaml_file.open("r", encoding="utf-8") as f:
-            data = _yaml.load(f)
+        # 写回不改变 expression / direction / name
+        cfg = StrategyConfig.from_yaml(yaml_file)
+        for rank_item in cfg.ranks:
+            rank_item.weight = 0.5
+        cfg.to_yaml(yaml_file)
 
-        # 写回不改变 expression 和 direction
-        for rank_def in data.get("ranks", []):
-            rank_def["weight"] = 0.5
-
-        with yaml_file.open("w", encoding="utf-8") as f:
-            _yaml.dump(data, f)
-
-        with yaml_file.open("r", encoding="utf-8") as f:
-            result_data = _yaml.load(f)
-
-        ranks = result_data["ranks"]
-        assert ranks[0]["expression"] == "CLOSE.shift(1)"
-        assert ranks[1]["direction"] == -1
-        assert ranks[0]["name"] == "f1"
+        cfg2 = StrategyConfig.from_yaml(yaml_file)
+        assert cfg2.ranks[0].expression == "CLOSE.shift(1)"
+        assert cfg2.ranks[1].direction == -1
+        assert cfg2.ranks[0].name == "f1"
