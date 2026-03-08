@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 import sys
 from typing import Any, Optional
 
@@ -63,4 +64,31 @@ def validate_date_str(
         sys.exit(1)
 
 
-__all__ = ["get_tushare_token", "validate_date_str", "PoolUniverseEnum"]
+__all__ = [
+    "get_tushare_token",
+    "validate_date_str",
+    "PoolUniverseEnum",
+    "resolve_yaml_path",
+]
+
+
+def resolve_yaml_path(yaml_file: Path) -> Path:
+    """将 YAML 文件路径解析为绝对路径。
+
+    解析优先级（优先级升序）：
+
+    1. 已是绝对路径 → 原样返回。
+    2. cwd / yaml_file 存在 → 返回（向前兼容）。
+    3. settings.STRATEGY_DIR / yaml_file 存在 → 返回。
+    4. 备选 → 返回 cwd / yaml_file（后续会报文件不存在）。
+    """
+    p = Path(yaml_file)
+    if p.is_absolute():
+        return p
+    as_cwd = Path.cwd() / p
+    if as_cwd.exists():
+        return as_cwd
+    as_strategy = settings.STRATEGY_DIR / p
+    if as_strategy.exists():
+        return as_strategy
+    return as_cwd

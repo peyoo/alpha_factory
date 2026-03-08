@@ -21,11 +21,12 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from alpha_factory.cli.utils import PoolUniverseEnum
+from alpha_factory.cli.utils import PoolUniverseEnum, resolve_yaml_path
 from alpha_factory.config.strategy import FactorRank, StrategyConfig
 from alpha_factory.data_provider.data_provider import DataProvider
 from alpha_factory.data_provider.pool import PoolUniverse
 from alpha_factory.evaluation.backtest.daily_evolving import backtest_daily_evolving
+from alpha_factory.evaluation.batch.ic_summary import batch_ic_summary
 from alpha_factory.utils.schema import F
 
 console = Console()
@@ -66,6 +67,62 @@ def softmax_weights(x: np.ndarray) -> np.ndarray:
     return e / e.sum()
 
 
+def auto_fill_directions(
+    ranks: list[FactorRank],
+    dp: DataProvider,
+    pool: PoolUniverse,
+    start_date: str,
+    end_date: Optional[str],
+) -> None:
+    """对 direction=None 的因子，通过 batch_ic_summary 自动推断排序方向。
+
+    ic_mean >= 0 → direction=1（因子值越大越好）；
+    ic_mean < 0  → direction=-1（因子值越小越好）。
+    """
+    pending = [r for r in ranks if r.direction is None]
+    if not pending:
+        return
+
+    # 为 batch_ic_summary 构造 factor_ 前缀列名
+    col_map: dict[str, FactorRank] = {f"factor_{r.name}": r for r in pending}
+    exprs = [f"{col} = {r.expression.strip()}" for col, r in col_map.items()]
+
+    console.print(
+        f"[bold cyan]⚙ 自动推断因子方向[/bold cyan]  "
+        f"共 {len(pending)} 个未指定方向的因子，正在加载数据计算 IC…"
+    )
+
+    lf = dp.load_pool_data(pool, start_date, end_date, exprs=exprs)
+    ic_df = batch_ic_summary(lf, factors=list(col_map.keys()))
+
+    if ic_df.is_empty():
+        console.print(
+            "[yellow]⚠ IC 计算结果为空，所有未指定方向的因子默认使用 direction=1[/yellow]"
+        )
+        for r in pending:
+            r.direction = 1
+        return
+
+    ic_map: dict[str, float] = dict(
+        zip(ic_df["factor"].to_list(), ic_df["ic_mean"].to_list())
+    )
+
+    from rich.table import Table as RichTable
+
+    t = RichTable(show_header=True, header_style="bold magenta")
+    t.add_column("因子", style="cyan")
+    t.add_column("ic_mean", justify="right")
+    t.add_column("direction", justify="center", style="bold")
+    for col_name, rank in col_map.items():
+        ic_mean = ic_map.get(col_name)
+        direction: int = 1 if (ic_mean is None or ic_mean >= 0) else -1
+        rank.direction = direction  # type: ignore[assignment]
+        ic_str = f"{ic_mean:.4f}" if ic_mean is not None else "N/A"
+        color = "green" if direction == 1 else "red"
+        t.add_row(rank.name, ic_str, f"[{color}]{direction}[/{color}]")
+    console.print(t)
+
+
 def precompute_factor_ranks(
     ranks: list[FactorRank],
     dp: DataProvider,
@@ -104,7 +161,7 @@ def precompute_factor_ranks(
         pl.when(pl.col(F.POOL_MASK))
         .then(pl.col(raw_col))
         .otherwise(None)
-        .rank(method="average", descending=(rank_def.direction < 0))
+        .rank(method="average", descending=((rank_def.direction or 1) < 0))
         .over(F.DATE)
         .alias(f"{_RANK_PREFIX}{name}")
         for raw_col, name, rank_def in zip(raw_col_names, factor_names, ranks)
@@ -243,8 +300,7 @@ def quant_opt(
     optuna.logging.set_verbosity(optuna.logging.WARNING)
 
     # ---- 1. 通过 StrategyConfig 加载并校验 YAML ----
-    if not yaml_file.is_absolute():
-        yaml_file = Path.cwd() / yaml_file
+    yaml_file = resolve_yaml_path(yaml_file)
 
     if not yaml_file.exists():
         typer.echo(f"❌ YAML 文件不存在: {yaml_file}", err=True)
@@ -290,6 +346,10 @@ def quant_opt(
 
     # ---- 2. 一次性预计算所有因子截面 rank（整个优化过程共享） ----
     dp = DataProvider()
+
+    # 对 direction=None 的因子，通过 IC 自动推断排序方向
+    auto_fill_directions(ranks, dp, pool_instance, start_date, end_date)
+
     base_df = precompute_factor_ranks(ranks, dp, pool_instance, start_date, end_date)
 
     # ---- 3. 定义 Optuna 目标函数（仅加权合成 + 回测，无 I/O） ----

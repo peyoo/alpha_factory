@@ -14,9 +14,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Literal, Union
+from typing import List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -36,8 +36,8 @@ class ExprFilter(BaseModel):
           - expression: "TOTAL_MV > 1000000000"
     """
 
-    name: str = Field(default="", description="过滤规则名称（可选）")
     expression: str = ""
+    name: str = Field(default="", description="过滤规则名称（可选）")
 
 
 class FactorRank(BaseModel):
@@ -46,18 +46,20 @@ class FactorRank(BaseModel):
     示例::
 
         ranks:
-          - name: "f1"
+          - name: "f1"          # 可选，缺省时由 StrategyConfig 自动生成 rank_f1/rank_f2...
             expression: "ts_mean(AMOUNT, 60)"
             weight: 0.12
             direction: -1
     """
 
-    name: str
     expression: str
+    name: Optional[str] = Field(
+        default=None, description="因子名称，留空则由策略配置自动生成"
+    )
     weight: float = Field(default=1.0, ge=0.0, description="因子权重，优化后写回此处")
-    direction: Literal[1, -1] = Field(
-        default=1,
-        description="1 表示因子值越大越好；-1 表示因子值越小越好",
+    direction: Optional[Literal[1, -1]] = Field(
+        default=None,
+        description="1 表示因子值越大越好；-1 表示因子值越小越好；留空由 quant opt 通过 IC 自动推断",
     )
 
 
@@ -120,6 +122,14 @@ class StrategyConfig(BaseModel):
         default_factory=list,
         description="参与合成排名的因子定义，顺序对应权重向量",
     )
+
+    @model_validator(mode="after")
+    def _auto_fill_rank_names(self) -> "StrategyConfig":
+        """为未命名的因子自动生成 rank_f1 / rank_f2 … 形式的名称。"""
+        for idx, rank in enumerate(self.ranks, start=1):
+            if not rank.name:
+                rank.name = f"rank_f{idx}"
+        return self
 
     # ---------- 回测模式 ----------
     bt_mode: str = Field(default="daily_top_n", description="回测模式")

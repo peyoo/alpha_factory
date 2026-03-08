@@ -11,6 +11,7 @@ from alpha_factory.config.strategy import StrategyConfig
 from alpha_factory.data_provider.data_provider import DataProvider
 from alpha_factory.evaluation.backtest.daily_evolving import backtest_daily_evolving
 from alpha_factory.evaluation.backtest.utils import generate_and_open_report
+from alpha_factory.cli.utils import resolve_yaml_path
 from alpha_factory.utils.schema import F
 
 console = Console()
@@ -180,8 +181,7 @@ def _run_bt_from_yaml(
     """
     from alpha_factory.cli.opt import _resolve_pool
 
-    if not yaml_file.is_absolute():
-        yaml_file = Path.cwd() / yaml_file
+    yaml_file = resolve_yaml_path(yaml_file)
 
     if not yaml_file.exists():
         typer.echo(f"❌ YAML 文件不存在: {yaml_file}", err=True)
@@ -219,7 +219,7 @@ def _run_bt_from_yaml(
         rank = cfg.ranks[0]
         expr_str = f"{rank.name} = {rank.expression}"
         lf = dp.load_pool_data(pool_instance, start_date, end_date, exprs=[expr_str])
-        ascending = rank.direction < 0
+        ascending = (rank.direction or 1) < 0
         console.print(
             f"[bold cyan]🚀 逐日演进回测[/bold cyan] | "
             f"因子={rank.name} | 持仓={cfg.hold_num} | 卖出线={cfg.sell_rank} | "
@@ -243,13 +243,14 @@ def _run_bt_from_yaml(
             _COMPOSITE_COL,
             make_composite,
             precompute_factor_ranks,
-            softmax_weights,
         )
 
         base_df = precompute_factor_ranks(
             cfg.ranks, dp, pool_instance, start_date, end_date
         )
-        weights = softmax_weights(np.array(cfg.factor_weights, dtype=float))
+        raw_w = np.array(cfg.factor_weights, dtype=float)
+        w_sum = raw_w.sum()
+        weights = raw_w / w_sum if w_sum > 0 else raw_w
         df = make_composite(base_df, cfg.factor_names, weights)
         console.print(
             f"[bold cyan]🚀 逐日演进回测（合成因子）[/bold cyan] | "

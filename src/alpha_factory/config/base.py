@@ -104,6 +104,10 @@ class Settings(BaseSettings):
     def LOG_DIR(self) -> Path:
         return self.OUTPUT_DIR / "logs"
 
+    @property
+    def STRATEGY_DIR(self) -> Path:
+        return self.OUTPUT_DIR / "strategies"
+
     # --- 业务常量 ---
     SYSTEM_START_DATE: str = "20150101"
     CALENDAR_FILENAME: str = "trade_calendar.parquet"
