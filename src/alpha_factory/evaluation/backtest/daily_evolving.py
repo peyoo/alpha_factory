@@ -57,6 +57,7 @@ def backtest_daily_evolving(
         F.IS_DOWN_LIMIT,
         F.IS_SUSPENDED,
     ]
+    # lf = lf.filter((pl.col("RANK") <= sell_rank + 100) | (pl.col("RANK") == 999999))
     df = lf.select(final_cols).collect()
 
     all_dates = df.get_column(F.DATE).unique().sort().to_list()

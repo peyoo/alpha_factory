@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from datetime import date
-from typing import List
+from typing import List, Optional
 import pandas as pd
 import polars as pl
 import polars.selectors as cs
@@ -78,6 +78,81 @@ class UnifiedFactorBuilder:
             self._execute_single_year_build(cur_start, cur_end, year)
 
         logger.success("✨ 所有年度任务已处理完毕。")
+
+    def _resolve_query_end_date(self, end: Optional[date]) -> date:
+        """解析查询结束日期，None 时返回统一因子库最新可用日期。"""
+        if end is not None:
+            return end
+
+        factor_dir = self.warehouse_dir / "unified_factors"
+        parquet_files = sorted(factor_dir.glob("*.parquet"))
+        if not parquet_files:
+            raise FileNotFoundError(f"未找到统一因子文件目录: {factor_dir}")
+
+        max_dates: list[date] = []
+        for file_path in parquet_files:
+            max_dt = (
+                pl.scan_parquet(file_path)
+                .select(pl.col(F.DATE).max().alias("max_date"))
+                .collect()
+                .item(0, 0)
+            )
+            if max_dt is not None:
+                max_dates.append(max_dt)
+
+        if not max_dates:
+            raise ValueError("统一因子库中未找到有效 DATE 数据")
+        return max(max_dates)
+
+    def datas(
+        self,
+        start: date,
+        end: Optional[date] = None,
+        assets: Optional[List[str]] = None,
+        cols: Optional[List[str]] = None,
+    ) -> pl.DataFrame:
+        """内部查询接口，用于数据校验。
+
+        参数:
+            start: 起始日期（含）。
+            end: 结束日期（含），None 表示查询到最新日期。
+            assets: 资产代码列表，None 表示不过滤。
+            cols: 额外字段列表，返回结果始终包含 DATE 和 ASSET。
+        """
+        end_date = self._resolve_query_end_date(end)
+        if start > end_date:
+            raise ValueError(f"start({start}) 不得晚于 end({end_date})")
+
+        factor_dir = self.warehouse_dir / "unified_factors"
+        scans: list[pl.LazyFrame] = []
+        for year in range(start.year, end_date.year + 1):
+            file_path = factor_dir / f"{year}.parquet"
+            if file_path.exists():
+                scans.append(
+                    pl.scan_parquet(file_path).with_columns(
+                        pl.col(F.ASSET).cast(pl.String)
+                    )
+                )
+
+        if not scans:
+            raise FileNotFoundError(f"数据区间 {start} - {end_date} 无可用统一因子文件")
+
+        lf = pl.concat(scans).filter(
+            (pl.col(F.DATE) >= start) & (pl.col(F.DATE) <= end_date)
+        )
+
+        if assets:
+            lf = lf.filter(pl.col(F.ASSET).is_in(assets))
+
+        if cols:
+            selected_cols = [
+                F.DATE,
+                F.ASSET,
+                *[c for c in cols if c not in {F.DATE, F.ASSET}],
+            ]
+            lf = lf.select(selected_cols)
+
+        return lf.collect()
 
     def _execute_single_year_build(
         self, start_dt: date, end_dt: date, year: int

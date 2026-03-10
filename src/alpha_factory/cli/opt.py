@@ -21,6 +21,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from loguru import logger
+
 from alpha_factory.cli.utils import PoolUniverseEnum, resolve_yaml_path
 from alpha_factory.config.strategy import FactorRank, StrategyConfig
 from alpha_factory.data_provider.data_provider import DataProvider
@@ -376,33 +378,38 @@ def quant_opt(
     sampler = optuna.samplers.TPESampler(seed=seed)
     study = optuna.create_study(direction="maximize", sampler=sampler)
 
-    if show_progress:
-        from rich.progress import (
-            BarColumn,
-            Progress,
-            SpinnerColumn,
-            TextColumn,
-            TimeElapsedColumn,
-        )
+    _DE_MODULE = "alpha_factory.evaluation.backtest.daily_evolving"
+    logger.disable(_DE_MODULE)
+    try:
+        if show_progress:
+            from rich.progress import (
+                BarColumn,
+                Progress,
+                SpinnerColumn,
+                TextColumn,
+                TimeElapsedColumn,
+            )
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[bold blue]{task.description}"),
-            BarColumn(),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            TextColumn("最优年化: [bold green]{task.fields[best]:.2%}"),
-            TimeElapsedColumn(),
-            console=console,
-        ) as progress:
-            task = progress.add_task("优化中...", total=n_trials, best=0.0)
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[bold blue]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TextColumn("最优年化: [bold green]{task.fields[best]:.2%}"),
+                TimeElapsedColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task("优化中...", total=n_trials, best=0.0)
 
-            def _cb(s: optuna.Study, t: optuna.Trial) -> None:
-                best_val = s.best_value if s.best_trial is not None else 0.0
-                progress.update(task, advance=1, best=best_val)
+                def _cb(s: optuna.Study, t: optuna.Trial) -> None:
+                    best_val = s.best_value if s.best_trial is not None else 0.0
+                    progress.update(task, advance=1, best=best_val)
 
-            study.optimize(objective, n_trials=n_trials, callbacks=[_cb])
-    else:
-        study.optimize(objective, n_trials=n_trials)
+                study.optimize(objective, n_trials=n_trials, callbacks=[_cb])
+        else:
+            study.optimize(objective, n_trials=n_trials)
+    finally:
+        logger.enable(_DE_MODULE)
 
     # ---- 5. 提取最优权重 ----
     best_raw = np.array([study.best_params[f"w_{name}"] for name in factor_names])
