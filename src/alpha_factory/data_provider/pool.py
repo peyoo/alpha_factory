@@ -169,6 +169,7 @@ class MainSmallPool(PoolUniverse):
             & ~pl.col("ASSET").str.starts_with("688")
             & ~pl.col("ASSET").str.starts_with("8")
             & ~pl.col("ASSET").str.starts_with("4")
+            # & pl.col("IS_SUSPENDED")
         )
 
         if production is False:
@@ -195,7 +196,7 @@ class MainSmallPool(PoolUniverse):
         # polars rank 将 None 排到最末，fill_null(999999) 确保其 POOL_MASK=False。
         # 这与之前"先过滤再排名"的效果等价，但保留了完整的行数据供时序使用。
         tradable = (
-            ~pl.col("IS_ST") & ~pl.col("IS_SUSPENDED") & (pl.col("LIST_DAYS") >= 300)
+            ~pl.col("IS_ST") & ~pl.col("IS_SUSPENDED") & (pl.col("LIST_DAYS") >= 180)
             # & ~pl.col("IS_UP_LIMIT")
             # & ~pl.col("IS_DOWN_LIMIT")
         )

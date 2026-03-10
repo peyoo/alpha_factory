@@ -80,7 +80,6 @@ def _fake_backtest(**kwargs):
         "daily_results": pl.DataFrame(
             {
                 F.DATE: ["2026-01-02"],
-                "RAW_RET": [0.0],
                 "NET_RET": [0.0],
                 "TURNOVER": [0.0],
                 "COUNT": [0],

@@ -221,7 +221,7 @@ def _run_bt_from_yaml(
         lf = dp.load_pool_data(pool_instance, start_date, end_date, exprs=[expr_str])
         ascending = (rank.direction or 1) < 0
         console.print(
-            f"[bold cyan]🚀 逐日演进回测[/bold cyan] | "
+            f"[bold cyan]🚀 单因子逐日演进回测[/bold cyan] | "
             f"因子={rank.name} | 持仓={cfg.hold_num} | 卖出线={cfg.sell_rank} | "
             f"费率={cfg.cost:.4f} | 执行价={cfg.exe_price} | ascending={ascending}"
         )
@@ -279,7 +279,6 @@ def _run_bt_from_yaml(
     if report:
         series = daily_df.rename(
             {
-                "RAW_RET": "raw_ret",
                 "NET_RET": "net_ret",
                 "TURNOVER": "turnover",
                 "COUNT": "count",
