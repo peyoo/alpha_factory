@@ -183,6 +183,7 @@ class UnifiedFactorBuilder:
             limit_lf = self._op_clean_limit(all_dates)
             st_lf = self._op_clean_st(all_dates)
             suspend_lf = self._op_clean_suspend(all_dates)
+            disclosure_lf = self._op_clean_disclosure(all_dates)
 
             # 多路左连接
             panel = (
@@ -192,6 +193,7 @@ class UnifiedFactorBuilder:
                 .join(limit_lf, on=[F.DATE, F.ASSET], how="left")
                 .join(st_lf, on=[F.DATE, F.ASSET], how="left")
                 .join(suspend_lf, on=[F.DATE, F.ASSET], how="left")
+                .join(disclosure_lf, on=[F.DATE, F.ASSET], how="left")
             )
 
             # 💡 跨年锚点：将上一年最后一天已处理数据拼在最前，
@@ -470,8 +472,89 @@ class UnifiedFactorBuilder:
             ]
         )
 
+    def _op_clean_disclosure(self, trading_dates: List[date]) -> pl.LazyFrame:
+        """清洗披露数据：提取每个资产每年的最新 ann_date，并展开到 4 月交易日。"""
+        if not trading_dates:
+            return pl.LazyFrame(
+                schema={
+                    F.DATE: pl.Date,
+                    F.ASSET: self.assets_mgr.stock_type,
+                    "_TMP_APRIL_ANN_DATE": pl.Date,
+                }
+            )
+
+        report_end_dates = sorted({date(d.year - 1, 12, 31) for d in trading_dates})
+        df_pl = self.cache_manager.load_as_polars("disclosure_date", report_end_dates)
+        if df_pl is None:
+            return pl.LazyFrame(
+                schema={
+                    F.DATE: pl.Date,
+                    F.ASSET: self.assets_mgr.stock_type,
+                    "_TMP_APRIL_ANN_DATE": pl.Date,
+                }
+            )
+
+        valid_codes = set(self.assets_mgr.get_all_codes())
+        april_plan = (
+            df_pl.lazy()
+            .filter(pl.col(F.ASSET).is_in(valid_codes))
+            .with_columns(
+                [
+                    # 💡 优先使用 actual_date（实际披露日期），其次 ann_date（公告日期）
+                    pl.when(pl.col("actual_date").is_not_null())
+                    .then(pl.col("actual_date").cast(pl.Utf8))
+                    .when(pl.col("ann_date").is_not_null())
+                    .then(pl.col("ann_date").cast(pl.Utf8))
+                    .otherwise(None)
+                    .str.strptime(pl.Date, "%Y%m%d", strict=False)
+                    .alias("_ACTUAL_DISCLOSURE_DATE"),
+                ]
+            )
+            .filter(pl.col("_ACTUAL_DISCLOSURE_DATE").is_not_null())
+            .with_columns(
+                pl.col("_ACTUAL_DISCLOSURE_DATE").dt.year().alias("_PLAN_YEAR")
+            )
+            .group_by([F.ASSET, "_PLAN_YEAR"])
+            .agg(pl.col("_ACTUAL_DISCLOSURE_DATE").max().alias("_TMP_APRIL_ANN_DATE"))
+        )
+
+        april_dates = [d for d in trading_dates if d.month == 4]
+        if not april_dates:
+            return pl.LazyFrame(
+                schema={
+                    F.DATE: pl.Date,
+                    F.ASSET: self.assets_mgr.stock_type,
+                    "_TMP_APRIL_ANN_DATE": pl.Date,
+                }
+            )
+
+        april_dates_lf = (
+            pl.DataFrame({F.DATE: april_dates})
+            .lazy()
+            .with_columns(pl.col(F.DATE).dt.year().alias("_PLAN_YEAR"))
+        )
+
+        return (
+            april_dates_lf.join(april_plan, on="_PLAN_YEAR", how="inner")
+            .select(
+                [
+                    pl.col(F.DATE),
+                    pl.col(F.ASSET).cast(self.assets_mgr.stock_type),
+                    pl.col("_TMP_APRIL_ANN_DATE"),
+                ]
+            )
+            .unique([F.DATE, F.ASSET], keep="last")
+        )
+
     def _op_process_indicators(self, lf: pl.LazyFrame) -> pl.LazyFrame:
         """核心业务逻辑：填充、状态判定、复权计算"""
+        schema_names = set(lf.collect_schema().names())
+        additional_cols: list[pl.Expr] = []
+        if "_TMP_APRIL_ANN_DATE" not in schema_names:
+            additional_cols.append(
+                pl.lit(None).cast(pl.Date).alias("_TMP_APRIL_ANN_DATE")
+            )
+
         ffill_cols = [
             F.CLOSE_RAW,
             F.ADJ_FACTOR,
@@ -488,6 +571,7 @@ class UnifiedFactorBuilder:
 
         return (
             lf.sort([F.ASSET, F.DATE])
+            .with_columns(additional_cols)
             .with_columns(
                 [
                     # 1. 综合停牌判定：显式标记 OR 价格缺失
@@ -503,9 +587,23 @@ class UnifiedFactorBuilder:
                     .over(F.ASSET)
                     .cast(pl.Boolean)
                     .alias(F.IS_ST),
+                    pl.when(pl.col(F.DATE).dt.month() < 4)
+                    .then(pl.lit(True))
+                    .when(pl.col(F.DATE).dt.month() == 4)
+                    .then(
+                        pl.col("_TMP_APRIL_ANN_DATE").is_not_null()
+                        & (pl.col(F.DATE) > pl.col("_TMP_APRIL_ANN_DATE"))
+                    )
+                    .otherwise(None)
+                    .alias(F.APRIL_DISCLOSURE_SIGNAL),
+                    pl.col([F.VOLUME, F.AMOUNT]).fill_null(0.0),
+                ]
+            )
+            .with_columns(
+                [
                     # 时序填充
                     pl.col(ffill_cols).forward_fill().over(F.ASSET),
-                    pl.col([F.VOLUME, F.AMOUNT]).fill_null(0.0),
+                    pl.col(F.APRIL_DISCLOSURE_SIGNAL).forward_fill().over(F.ASSET),
                 ]
             )
             .with_columns(

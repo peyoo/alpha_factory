@@ -207,7 +207,7 @@ class MainSmallPool(PoolUniverse):
             ~pl.col("IS_ST")
             & ~pl.col("IS_SUSPENDED")
             & (pl.col("LIST_DAYS") >= 180)
-            & (pl.col("CLOSE_RAW") > 1.0)
+            & pl.col(F.APRIL_DISCLOSURE_SIGNAL)
             # & ~pl.col("IS_UP_LIMIT")
             # & ~pl.col("IS_DOWN_LIMIT")
         )

@@ -119,7 +119,10 @@ class TushareDataService:
         total = len(trade_days)
         logger.info(f"🚀 开始同步任务，共计 {total} 个交易日...")
 
-        # 4. 【核心修改】使用 try...finally 维护 HDF5 长连接
+        # 4. 同步年度财报披露计划（用于 L2 披露相关因子）
+        self._sync_disclosure_dates(start_dt, end_dt)
+
+        # 5. 【核心修改】使用 try...finally 维护 HDF5 长连接
         try:
             for i, current_date in enumerate(trade_days, 1):
                 # 此时内部调用的 is_cached 和 save_to_hdf5 会自动复用已打开的句柄
@@ -135,9 +138,52 @@ class TushareDataService:
             # 💡 无论任务成功还是报错中断，必须显式释放文件句柄
             self.cache_manager.close_all()
 
-        # 4. 同步完成后触发 L2 构建
+        # 6. 同步完成后触发 L2 构建
         logger.info("⚙️ 启动年度 Parquet 因子库构建...")
         self.factor_builder.build_unified_factors(start_dt, end_dt)
+
+    def _sync_disclosure_dates(self, start_dt: date, end_dt: date) -> None:
+        """同步年度披露计划数据（来源：Tushare disclosure_date）。"""
+        years = sorted({y - 1 for y in range(start_dt.year, end_dt.year + 1)})
+        fields_schema = {
+            "ts_code": "string",
+            "ann_date": "string",
+            "end_date": "string",
+            "pre_date": "string",
+            "actual_date": "string",
+            "modify_date": "string",
+        }
+
+        for report_year in years:
+            report_end = date(report_year, 12, 31)
+            if self.cache_manager.is_cached("disclosure_date", report_end):
+                continue
+
+            try:
+                self.rate_limiter.wait()
+                fetch_fields = list(fields_schema.keys())
+                df = self.pro.disclosure_date(
+                    end_date=report_end.strftime("%Y%m%d"),
+                    fields=fetch_fields,
+                )
+
+                if df is None or df.empty:
+                    logger.warning(f"⚠️ disclosure_date 无数据: {report_end}")
+                    continue
+
+                for col, dtype in fields_schema.items():
+                    if col not in df.columns:
+                        continue
+                    if dtype == "string":
+                        df[col] = df[col].fillna("").astype(str)
+                        if col == "ts_code":
+                            df[col] = df[col].str.slice(0, 12).astype("S12")
+
+                self.cache_manager.save_to_hdf5("disclosure_date", report_end, df)
+                logger.info(f"✓ 已持久化: disclosure_date ({report_end})")
+            except Exception as e:
+                logger.error(f"❌ disclosure_date 同步异常 ({report_end}): {e}")
+                raise DataSyncError("API 中断: disclosure_date") from e
 
     def _sync_single_day_bundle(self, trade_date: date, idx: int, total: int) -> None:
         date_str = trade_date.strftime("%Y%m%d")
