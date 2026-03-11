@@ -47,6 +47,62 @@ def test_is_st_keeps_true_after_first_true() -> None:
     assert result[F.IS_ST].to_list() == [False, True, True, True]
 
 
+def test_is_st_from_daily_names_rules() -> None:
+    class _DummyAssetsMgr:
+        stock_type = pl.String
+
+        @staticmethod
+        def get_all_codes() -> list[str]:
+            return [
+                "000001.SZ",
+                "000002.SZ",
+                "000003.SZ",
+                "000004.SZ",
+                "000005.SZ",
+                "000006.SZ",
+            ]
+
+    class _DummyCacheMgr:
+        @staticmethod
+        def load_as_polars(source: str, trading_dates: list[date]) -> pl.DataFrame:
+            assert source == "daily_names"
+            assert len(trading_dates) == 1
+            return pl.DataFrame(
+                {
+                    F.DATE: [trading_dates[0]] * 6,
+                    F.ASSET: [
+                        "000001.SZ",
+                        "000002.SZ",
+                        "000003.SZ",
+                        "000004.SZ",
+                        "000005.SZ",
+                        "000006.SZ",
+                    ],
+                    "name": [
+                        "*ST中珠",
+                        "st华微",
+                        " 平安银行 ",
+                        "中航产融退",
+                        "示例退市",
+                        None,
+                    ],
+                }
+            )
+
+    builder = UnifiedFactorBuilder.__new__(UnifiedFactorBuilder)
+    builder.assets_mgr = _DummyAssetsMgr()
+    builder.cache_manager = _DummyCacheMgr()
+
+    result = (
+        builder._op_clean_st([date(2022, 1, 3)])
+        .collect()
+        .sort(F.ASSET)
+        .select([F.ASSET, F.IS_ST])
+    )
+
+    assert result[F.IS_ST].to_list() == [True, True, False, True, True, False]
+
+
 def test_datas_end_none_queries_to_latest(tmp_path: Path) -> None:
     factor_dir = tmp_path / "unified_factors"
     factor_dir.mkdir(parents=True, exist_ok=True)
@@ -84,3 +140,37 @@ def test_datas_end_none_queries_to_latest(tmp_path: Path) -> None:
         date(2025, 1, 3),
     ]
     assert result[F.CLOSE].to_list() == [10.0, 11.0, 12.0]
+
+
+def test_is_st_from_daily_names_precomputed_column() -> None:
+    class _DummyAssetsMgr:
+        stock_type = pl.String
+
+        @staticmethod
+        def get_all_codes() -> list[str]:
+            return ["000001.SZ", "000002.SZ", "000003.SZ"]
+
+    class _DummyCacheMgr:
+        @staticmethod
+        def load_as_polars(source: str, trading_dates: list[date]) -> pl.DataFrame:
+            assert source == "daily_names"
+            return pl.DataFrame(
+                {
+                    F.DATE: [trading_dates[0]] * 3,
+                    F.ASSET: ["000001.SZ", "000002.SZ", "000003.SZ"],
+                    "is_st": [True, False, None],
+                }
+            )
+
+    builder = UnifiedFactorBuilder.__new__(UnifiedFactorBuilder)
+    builder.assets_mgr = _DummyAssetsMgr()
+    builder.cache_manager = _DummyCacheMgr()
+
+    result = (
+        builder._op_clean_st([date(2022, 1, 3)])
+        .collect()
+        .sort(F.ASSET)
+        .select([F.ASSET, F.IS_ST])
+    )
+
+    assert result[F.IS_ST].to_list() == [True, False, False]

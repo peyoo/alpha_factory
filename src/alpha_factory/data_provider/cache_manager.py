@@ -79,10 +79,16 @@ class HDF5CacheManager:
         if df is None or df.empty:
             return
 
+        df = df.copy()
+
+        # 兼容 pandas StringDtype：PyTables Fixed 模式无法直接处理扩展字符串类型
+        for col in df.columns:
+            if isinstance(df[col].dtype, pd.StringDtype):
+                df[col] = df[col].fillna("").astype(object)
+
         # 💡 额外的一步：确保 ts_code 存储为固定长度字节串
         # 这让 HDF5 的 Fixed 模式运行效率最高
         if "ts_code" in df.columns:
-            df = df.copy()  # 避免修改原始输入
             df["ts_code"] = df["ts_code"].astype(str).astype("S12")
 
         date_str = (

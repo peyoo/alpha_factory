@@ -3,7 +3,6 @@ from __future__ import annotations
 import datetime
 from datetime import date
 from typing import List, Optional
-import pandas as pd
 import polars as pl
 import polars.selectors as cs
 from loguru import logger
@@ -28,7 +27,7 @@ class UnifiedFactorBuilder:
     类别,字段名,类型,单位,业务含义与逻辑
     坐标轴,DATE,Date,-,交易日期（已根据交易日历对齐）
     ,ASSET,Enum,-,股票唯一代码（类型锁定，跨表计算不丢索引）
-    状态,IS_ST,Bool,-,是否风险警示：基于 st 接口标记并前向填充。
+    状态,IS_ST,Bool,-,是否风险警示：基于证券名称规则判定并前向传递。
     ,IS_SUSPENDED,Bool,-,是否全天停牌：(显式停牌接口 == True) OR (价格缺失)。
     复权价格,OPEN,F32,元,后复权开盘价：用于计算收益率（已处理停牌填充）。
     ,HIGH,F32,元,后复权最高价：用于计算波动率及技术指标。
@@ -159,24 +158,25 @@ class UnifiedFactorBuilder:
     ) -> None:
         """
         [私有方法] 执行单一年度片段的 ETL 逻辑
-        加入了 30 天的前置 Buffer 机制，确保跨年数据填充的连续性。
+
+        跨年连续性策略：在调用 _op_process_indicators 之前，将上一年最后一个
+        交易日的已处理数据拼接在面板最前面，作为 forward_fill 的锚点种子行。
+        上年数据经过完整 ETL，ffill_cols 必然非空，从而结构性保证本年第一天
+        的 forward_fill 总有值可继承，无需依赖任意天数的 buffer。
         """
         logger.info(f"📂 正在处理 {year} 年度数据片段: {start_dt} -> {end_dt}")
         try:
-            # --- 1. 获取带 Buffer 的交易日 ---
-            # 向前多取 30 天，确保 1 月初的 forward_fill 有初始值
-            buffer_start = start_dt - pd.Timedelta(days=30)
-            all_dates = self.calendar_mgr.get_trade_days(buffer_start, end_dt)
+            # --- 1. 获取当年交易日（不再需要前置 Buffer）---
+            all_dates = self.calendar_mgr.get_trade_days(start_dt, end_dt)
 
             if not all_dates:
                 logger.warning(f"⚠️ {year} 年在指定区间内无交易日，跳过。")
                 return
 
             # --- 2. 算子流水线 (Lazy) ---
-            # 基于 all_dates 生成骨架，确保 Buffer 期间的资产也在对齐范围内
             skeleton = self._generate_skeleton_lf(all_dates)
 
-            # 批量加载 L1 碎片 (此时加载的是含 Buffer 的年度数据)
+            # 批量加载 L1 碎片
             daily_lf = self._op_clean_daily(all_dates)
             adj_lf = self._op_clean_adj(all_dates)
             basic_lf = self._op_clean_basic(all_dates)
@@ -194,18 +194,23 @@ class UnifiedFactorBuilder:
                 .join(suspend_lf, on=[F.DATE, F.ASSET], how="left")
             )
 
+            # 💡 跨年锚点：将上一年最后一天已处理数据拼在最前，
+            # 确保 forward_fill 在本年第一天总有非空种子
+            anchor_lf = self._load_prev_year_anchor(year)
+            if anchor_lf is not None:
+                panel = pl.concat([anchor_lf, panel], how="diagonal_relaxed")
+
             # 核心指标处理 (包含 ST 填充、价格补全、复权计算)
             panel = self._op_process_indicators(panel)
 
-            # --- 3. 落地存储前过滤 Buffer ---
+            # --- 3. 落地存储 ---
             output_path = self.warehouse_dir / "unified_factors" / f"{year}.parquet"
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
             # 触发计算（不尝试转为 Enum，保留字符串格式以支持新资产）
             df_full = panel.collect()
 
-            # 💡 关键：过滤掉 Buffer 天数，只保留当前年度的数据落盘
-            # 但此时 1 月 1 日的数据已经通过 Buffer 完成了前向填充
+            # 过滤掉锚点行（上一年日期 < start_dt），只保留当年数据落盘
             df_year = df_full.filter(
                 (pl.col(F.DATE) >= start_dt) & (pl.col(F.DATE) <= end_dt)
             )
@@ -255,6 +260,35 @@ class UnifiedFactorBuilder:
             self.cache_manager.close_all()
 
     # ================= 内部算子 (Lazy Operations) =================
+
+    def _load_prev_year_anchor(self, year: int) -> pl.LazyFrame | None:
+        """
+        加载上一年度最后一个交易日的已处理数据，作为 forward_fill 的跨年锚点。
+
+        返回 LazyFrame（含上年最后一天所有行）；若上年 parquet 不存在（首次构建），
+        则返回 None，调用方跳过 concat 即可，保持全量首次构建的兼容性。
+        """
+        prev_path = self.warehouse_dir / "unified_factors" / f"{year - 1}.parquet"
+        if not prev_path.exists():
+            return None
+
+        # 读取上一年 parquet，将 ASSET 重新绑定到当前 session 的 Enum 类型
+        lf = (
+            pl.scan_parquet(prev_path)
+            .with_columns(
+                pl.col(F.ASSET)
+                .cast(pl.String)
+                .cast(self.assets_mgr.stock_type, strict=False)
+            )
+            .filter(pl.col(F.ASSET).is_not_null())
+        )
+
+        # 取最后一个交易日（仅需一次小 collect 获取单个日期标量）
+        max_date = lf.select(pl.col(F.DATE).max()).collect().item(0, 0)
+        if max_date is None:
+            return None
+
+        return lf.filter(pl.col(F.DATE) == max_date)
 
     def _generate_skeleton_lf(self, trading_dates: List[date]) -> pl.LazyFrame:
         """生成基于资产存续期的标准坐标轴"""
@@ -397,11 +431,10 @@ class UnifiedFactorBuilder:
         )
 
     def _op_clean_st(self, trading_dates: List[date]) -> pl.LazyFrame:
-        """清洗 ST 标记数据"""
-        # 注意：这里的 source 需与你 TushareDataService 同步时的名称一致
-        df_pl = self.cache_manager.load_as_polars("st", trading_dates)
+        """基于 daily_names 的证券简称规则生成 ST 标记"""
+        df_pl = self.cache_manager.load_as_polars("daily_names", trading_dates)
 
-        # 如果没有 ST 数据（可能该年度无 ST 股票或未同步），返回带 Schema 的空表
+        # 如果没有名称数据（可能该年度未同步），返回带 Schema 的空表
         if df_pl is None:
             return pl.LazyFrame(
                 schema={
@@ -411,11 +444,29 @@ class UnifiedFactorBuilder:
                 }
             )
 
-        return self._ensure_valid_assets(df_pl.lazy()).select(
+        lf = self._ensure_valid_assets(df_pl.lazy())
+
+        if "is_st" in df_pl.columns:
+            return lf.select(
+                [
+                    pl.col(F.DATE),
+                    pl.col(F.ASSET).cast(self.assets_mgr.stock_type),
+                    pl.col("is_st").fill_null(False).cast(pl.Boolean).alias(F.IS_ST),
+                ]
+            )
+
+        name_clean = pl.col("name").fill_null("").str.strip_chars()
+        name_lower = name_clean.str.to_lowercase()
+
+        return lf.select(
             [
                 pl.col(F.DATE),
                 pl.col(F.ASSET).cast(self.assets_mgr.stock_type),
-                pl.lit(True).alias(F.IS_ST),
+                (
+                    name_lower.str.contains("st", literal=True)
+                    | name_clean.str.ends_with("退")
+                    | name_clean.str.ends_with("退市")
+                ).alias(F.IS_ST),
             ]
         )
 

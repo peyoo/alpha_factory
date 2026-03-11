@@ -187,6 +187,11 @@ class TushareDataService:
                 {"ts_code": "string", "suspend_type": "string"},
             ),
             ("st", self.pro.stock_st, {"ts_code": "string", "is_st": "string"}),
+            (
+                "daily_names",
+                self.pro.bak_daily,
+                {"ts_code": "string", "name": "string"},
+            ),
         ]
 
         for source, api_func, fields_schema in tasks:
@@ -203,12 +208,29 @@ class TushareDataService:
                 if df is None or df.empty:
                     continue
 
+                if source == "daily_names" and "name" in df.columns:
+                    name_clean = df["name"].fillna("").astype(str).str.strip()
+                    name_lower = name_clean.str.lower()
+                    is_st = (
+                        name_lower.str.contains("st", regex=False)
+                        | name_clean.str.endswith("退")
+                        | name_clean.str.endswith("退市")
+                    )
+                    df = pd.DataFrame(
+                        {
+                            "ts_code": df["ts_code"],
+                            "is_st": is_st.fillna(False).astype(bool),
+                        }
+                    )
+
                 # 💡 2. 强转类型：仅为兼容 Fixed 模式和内存优化
                 # 此时 df 已经没有冗余日期列了
                 for col, dtype in fields_schema.items():
                     if col in df.columns:
                         if dtype == "string":
-                            df[col] = df[col].fillna("").astype(str).astype("S12")
+                            df[col] = df[col].fillna("").astype(str)
+                            if col == "ts_code":
+                                df[col] = df[col].str.slice(0, 12).astype("S12")
                         else:
                             df[col] = pd.to_numeric(df[col], errors="coerce").astype(
                                 dtype
@@ -258,7 +280,7 @@ class TushareDataService:
             try:
                 # 使用 daily_basic 接口，只获取 1 条记录检查数据可用性
                 self.rate_limiter.wait()
-                df = self.pro.daily_basic(trade_date=date_str, limit=1)
+                df = self.pro.bak_basic(trade_date=date_str, limit=1)
 
                 # 如果返回不为空，说明该日有数据
                 if df is not None and not df.empty:

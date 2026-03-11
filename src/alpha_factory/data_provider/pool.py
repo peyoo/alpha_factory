@@ -88,6 +88,14 @@ class PoolUniverse:
     def pool_dir(self):
         return settings.OUTPUT_DIR / self.name
 
+    def buy_able(self, lf: pl.LazyFrame, exprs: List) -> pl.LazyFrame:
+        """
+        定义一个 buy_able 方法，返回一个布尔表达式，表示哪些股票在当前日期是可以买入的。
+        这个方法可以被回测引擎调用，用于生成每日的买入信号。
+        例如，可以定义为：可交易（非停牌、非ST、上市超过180天）且不在涨跌停状态的股票。
+        """
+        return lf
+
 
 class MainSmallPool(PoolUniverse):
     @property
