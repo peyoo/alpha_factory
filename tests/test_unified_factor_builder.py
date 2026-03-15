@@ -217,16 +217,16 @@ def test_april_disclosure_signal_binary_rules() -> None:
             F.TURNOVER_RATE: [1.0] * 9,
             F.UP_LIMIT: [11.0] * 9,
             F.DOWN_LIMIT: [9.0] * 9,
-            "_TMP_APRIL_ANN_DATE": [
-                date(2022, 4, 20),
-                date(2022, 4, 20),
-                date(2022, 4, 20),
-                date(2022, 4, 20),
-                None,
-                None,
-                None,
-                None,
-                None,
+            "flag": [
+                False,
+                False,
+                False,
+                True,
+                True,
+                True,
+                False,
+                False,
+                False,
             ],
         }
     ).lazy()
@@ -236,7 +236,7 @@ def test_april_disclosure_signal_binary_rules() -> None:
     s1 = result.filter(pl.col(F.ASSET) == "000001.SZ").select(
         [F.DATE, F.APRIL_DISCLOSURE_SIGNAL]
     )
-    # 💡 改为：1-3月为true（有风险）；披露日当天为false；大于披露日才为true
+    # 💡 直接使用预计算的 flag 列
     assert s1[F.APRIL_DISCLOSURE_SIGNAL].to_list() == [
         False,
         False,
@@ -263,18 +263,13 @@ def test_clean_disclosure_uses_latest_ann_date_per_asset_year() -> None:
     class _DummyCacheMgr:
         @staticmethod
         def load_as_polars(source: str, trading_dates: list[date]) -> pl.DataFrame:
-            assert source == "disclosure_date"
-            assert trading_dates == [date(2021, 12, 31)]
+            assert source == "disclosure"
+            assert trading_dates == [date(2022, 4, 26), date(2022, 4, 29)]
             return pl.DataFrame(
                 {
-                    F.DATE: [date(2021, 12, 31)] * 3,
-                    F.ASSET: ["000001.SZ", "000001.SZ", "000001.SZ"],
-                    "ann_date": ["20220420", "20220428", "20220506"],
-                    "actual_date": [
-                        "20220430",
-                        "20220505",
-                        "20220510",
-                    ],  # 优先使用 actual_date
+                    F.DATE: [date(2022, 4, 26), date(2022, 4, 29)],
+                    F.ASSET: ["000001.SZ", "000001.SZ"],
+                    "flag": [True, True],
                 }
             )
 
@@ -288,8 +283,5 @@ def test_clean_disclosure_uses_latest_ann_date_per_asset_year() -> None:
         .sort(F.DATE)
     )
 
-    # 💡 现在优先使用 actual_date，最大值是 20220510（2022-05-10）
-    assert result["_TMP_APRIL_ANN_DATE"].to_list() == [
-        date(2022, 5, 10),
-        date(2022, 5, 10),
-    ]
+    # 💡 直接返回预计算的 flag 列
+    assert result["flag"].to_list() == [True, True]

@@ -212,8 +212,8 @@ class MainSmallPool(PoolUniverse):
             & (pl.col("LIST_DAYS") >= 180)
             & ~pl.col("IS_UP_LIMIT")
             & ~pl.col("IS_DOWN_LIMIT")
-            & (pl.col("CLOSE_RAW_MA60") > 1.5)
-            & pl.col(F.APRIL_DISCLOSURE_SIGNAL)
+            & (pl.col("CLOSE_RAW_MA60") > 2)
+            & ~pl.col(F.APRIL_DISCLOSURE_SIGNAL)
         )
 
         result = (

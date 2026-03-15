@@ -119,10 +119,7 @@ class TushareDataService:
         total = len(trade_days)
         logger.info(f"🚀 开始同步任务，共计 {total} 个交易日...")
 
-        # 4. 同步年度财报披露计划（用于 L2 披露相关因子）
-        self._sync_disclosure_dates(start_dt, end_dt)
-
-        # 5. 【核心修改】使用 try...finally 维护 HDF5 长连接
+        # 4. 【核心修改】使用 try...finally 维护 HDF5 长连接
         try:
             for i, current_date in enumerate(trade_days, 1):
                 # 此时内部调用的 is_cached 和 save_to_hdf5 会自动复用已打开的句柄
@@ -138,52 +135,108 @@ class TushareDataService:
             # 💡 无论任务成功还是报错中断，必须显式释放文件句柄
             self.cache_manager.close_all()
 
-        # 6. 同步完成后触发 L2 构建
+        # 5. 同步完成后触发 L2 构建
         logger.info("⚙️ 启动年度 Parquet 因子库构建...")
         self.factor_builder.build_unified_factors(start_dt, end_dt)
 
-    def _sync_disclosure_dates(self, start_dt: date, end_dt: date) -> None:
-        """同步年度披露计划数据（来源：Tushare disclosure_date）。"""
-        years = sorted({y - 1 for y in range(start_dt.year, end_dt.year + 1)})
-        fields_schema = {
-            "ts_code": "string",
-            "ann_date": "string",
-            "end_date": "string",
-            "pre_date": "string",
-            "actual_date": "string",
-            "modify_date": "string",
-        }
+    def _disclosure(
+        self, trade_date: str, fields: Optional[list] = None
+    ) -> pd.DataFrame:
+        """
+        报告期披露计划因子
 
-        for report_year in years:
-            report_end = date(report_year, 12, 31)
-            if self.cache_manager.is_cached("disclosure_date", report_end):
-                continue
+        【信号定义】当前交易日是否满足以下三个条件（全部满足则 flag = True）：
+        1. 预计披露日期(pre_date) 与当前交易日(trade_date) 的差异 <= 3 天
+        2. 预计披露日期位于4月下旬（4月21-30日）
+        3. 当前交易日 < 实际披露日期(actual_date)
 
-            try:
-                self.rate_limiter.wait()
-                fetch_fields = list(fields_schema.keys())
-                df = self.pro.disclosure_date(
-                    end_date=report_end.strftime("%Y%m%d"),
-                    fields=fetch_fields,
+        参数:
+            trade_date: YYYYMMDD 格式的交易日期字符串
+            fields: 忽略（兼容 API 调用签名）
+
+        返回：DataFrame with columns {ts_code, flag}
+        """
+        trade_date_obj = datetime.strptime(trade_date, "%Y%m%d").date()
+
+        if trade_date_obj.month == 4 and trade_date_obj.day <= 15:
+            return pd.DataFrame(columns=["ts_code", "flag"])
+
+        report_year = trade_date_obj.year - 1  # 报告年度通常是前一年
+        report_end = date(report_year, 12, 31)
+
+        # 1. 直接从 API 获取该年度的披露计划（不使用缓存）
+        try:
+            self.rate_limiter.wait()
+            df_disclosure = self.pro.disclosure_date(
+                end_date=report_end.strftime("%Y%m%d"),
+                fields=["ts_code", "pre_date", "actual_date"],
+            )
+
+            if df_disclosure is None or df_disclosure.empty:
+                # 返回空的结果集
+                return pd.DataFrame(columns=["ts_code", "flag"])
+        except Exception as e:
+            logger.warning(f"⚠️ 无法获取披露计划数据 ({report_end}): {e}")
+            return pd.DataFrame(columns=["ts_code", "flag"])
+
+        # 2. 数据预处理：转换日期列为 datetime
+        try:
+            if "pre_date" in df_disclosure.columns:
+                df_disclosure["pre_date"] = pd.to_datetime(df_disclosure["pre_date"])
+            if "actual_date" in df_disclosure.columns:
+                df_disclosure["actual_date"] = pd.to_datetime(
+                    df_disclosure["actual_date"]
+                )
+        except Exception as e:
+            logger.warning(f"⚠️ 披露日期列转换异常: {e}")
+            return pd.DataFrame(columns=["ts_code", "flag"])
+
+        # 3. 应用三个条件筛选
+        result_data = []
+
+        for _, row in df_disclosure.iterrows():
+            ts_code = row["ts_code"]
+            pre_date = row.get("pre_date")
+            actual_date = row.get("actual_date")
+
+            flag = False
+
+            # 仅当必要字段都存在且不为 NaT 时才进行判断
+            if pd.notna(pre_date) and pd.notna(actual_date):
+                pre_date_obj = (
+                    pre_date.date() if hasattr(pre_date, "date") else pre_date
+                )
+                actual_date_obj = (
+                    actual_date.date() if hasattr(actual_date, "date") else actual_date
                 )
 
-                if df is None or df.empty:
-                    logger.warning(f"⚠️ disclosure_date 无数据: {report_end}")
-                    continue
+                # 【条件1】计划披露日期与当前交易日的差异 <= 3 天
+                date_diff = abs((pre_date_obj - trade_date_obj).days)
+                cond1 = date_diff <= 3
 
-                for col, dtype in fields_schema.items():
-                    if col not in df.columns:
-                        continue
-                    if dtype == "string":
-                        df[col] = df[col].fillna("").astype(str)
-                        if col == "ts_code":
-                            df[col] = df[col].str.slice(0, 12).astype("S12")
+                # 【条件2】计划披露日期位于4月下旬（4月21-30日）
+                cond2 = pre_date_obj.month == 4 and 21 <= pre_date_obj.day <= 30
 
-                self.cache_manager.save_to_hdf5("disclosure_date", report_end, df)
-                logger.info(f"✓ 已持久化: disclosure_date ({report_end})")
-            except Exception as e:
-                logger.error(f"❌ disclosure_date 同步异常 ({report_end}): {e}")
-                raise DataSyncError("API 中断: disclosure_date") from e
+                # 【条件3】当前交易日 < 实际发布日期
+                cond3 = trade_date_obj < actual_date_obj
+
+                # 全部条件都满足则置为 True
+                flag = cond1 and cond2 and cond3
+
+            result_data.append({"ts_code": ts_code, "flag": flag})
+
+        # 4. 构造返回 DataFrame
+        result_df = pd.DataFrame(result_data)
+        if not result_df.empty:
+            # 类型转换（兼容 HDF5 Fixed 模式）
+            result_df["ts_code"] = result_df["ts_code"].astype(str).str.slice(0, 12)
+            result_df["flag"] = result_df["flag"]
+        else:
+            # 保证列类型一致
+            result_df["ts_code"] = result_df["ts_code"]
+            result_df["flag"] = result_df["flag"]
+
+        return result_df
 
     def _st_data(self, trade_date: str, fields: Optional[list] = None) -> pd.DataFrame:
         """
@@ -363,6 +416,11 @@ class TushareDataService:
                 "st",
                 self._st_data,
                 {"ts_code": "string", "is_st": "boolean"},
+            ),
+            (
+                "disclosure",
+                self._disclosure,
+                {"ts_code": "string", "flag": "boolean"},
             ),
         ]
 
