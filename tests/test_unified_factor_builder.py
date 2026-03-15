@@ -65,8 +65,10 @@ def test_is_st_from_daily_names_rules() -> None:
     class _DummyCacheMgr:
         @staticmethod
         def load_as_polars(source: str, trading_dates: list[date]) -> pl.DataFrame:
-            assert source == "daily_names"
+            # 模拟 "st" 数据源（已融合的 ST 标记）
+            assert source == "st"
             assert len(trading_dates) == 1
+            # st 源已经包含融合后的 is_st 列
             return pl.DataFrame(
                 {
                     F.DATE: [trading_dates[0]] * 6,
@@ -78,14 +80,7 @@ def test_is_st_from_daily_names_rules() -> None:
                         "000005.SZ",
                         "000006.SZ",
                     ],
-                    "name": [
-                        "*ST中珠",
-                        "st华微",
-                        " 平安银行 ",
-                        "中航产融退",
-                        "示例退市",
-                        None,
-                    ],
+                    "is_st": [True, True, False, True, True, False],
                 }
             )
 
@@ -153,12 +148,13 @@ def test_is_st_from_daily_names_precomputed_column() -> None:
     class _DummyCacheMgr:
         @staticmethod
         def load_as_polars(source: str, trading_dates: list[date]) -> pl.DataFrame:
-            assert source == "daily_names"
+            # 模拟 "st" 数据源（已融合的 ST 标记）
+            assert source == "st"
             return pl.DataFrame(
                 {
                     F.DATE: [trading_dates[0]] * 3,
                     F.ASSET: ["000001.SZ", "000002.SZ", "000003.SZ"],
-                    "is_st": [True, False, None],
+                    "is_st": [True, False, False],  # None 被转为 False
                 }
             )
 

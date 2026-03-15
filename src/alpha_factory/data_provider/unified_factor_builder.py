@@ -433,43 +433,48 @@ class UnifiedFactorBuilder:
         )
 
     def _op_clean_st(self, trading_dates: List[date]) -> pl.LazyFrame:
-        """基于 daily_names 的证券简称规则生成 ST 标记"""
-        df_pl = self.cache_manager.load_as_polars("daily_names", trading_dates)
+        """
+        加载融合的 ST 标记因子
 
-        # 如果没有名称数据（可能该年度未同步），返回带 Schema 的空表
-        if df_pl is None:
+        【数据源】
+        "st" - 融合数据源（namechange + stock_st 并集）
+        - namechange 名称规则 OR stock_st 列表中存在 → is_st=True
+        - 否则 → is_st=False
+
+        【填充策略】
+        - 缺失值采用 forward_fill 填充（按 ASSET 分组，按 DATE 排序）
+        """
+        df_st = self.cache_manager.load_as_polars("st", trading_dates)
+
+        # 如果没有数据，返回带 Schema 的空表
+        if df_st is None or "is_st" not in df_st.columns:
             return pl.LazyFrame(
                 schema={
                     F.DATE: pl.Date,
                     F.ASSET: self.assets_mgr.stock_type,
-                    "IS_ST": pl.Boolean,
+                    F.IS_ST: pl.Boolean,
                 }
             )
 
-        lf = self._ensure_valid_assets(df_pl.lazy())
-
-        if "is_st" in df_pl.columns:
-            return lf.select(
+        # 使用融合的 ST 标记，采用 forward_fill 填充缺失值
+        lf = self._ensure_valid_assets(df_st.lazy())
+        return (
+            lf.sort([F.ASSET, F.DATE])
+            .with_columns(
+                pl.col("is_st")
+                .forward_fill()
+                .over(F.ASSET)
+                .fill_null(False)
+                .cast(pl.Boolean)
+                .alias(F.IS_ST)
+            )
+            .select(
                 [
                     pl.col(F.DATE),
                     pl.col(F.ASSET).cast(self.assets_mgr.stock_type),
-                    pl.col("is_st").fill_null(False).cast(pl.Boolean).alias(F.IS_ST),
+                    pl.col(F.IS_ST),
                 ]
             )
-
-        name_clean = pl.col("name").fill_null("").str.strip_chars()
-        name_lower = name_clean.str.to_lowercase()
-
-        return lf.select(
-            [
-                pl.col(F.DATE),
-                pl.col(F.ASSET).cast(self.assets_mgr.stock_type),
-                (
-                    name_lower.str.contains("st", literal=True)
-                    | name_clean.str.ends_with("退")
-                    | name_clean.str.ends_with("退市")
-                ).alias(F.IS_ST),
-            ]
         )
 
     def _op_clean_disclosure(self, trading_dates: List[date]) -> pl.LazyFrame:

@@ -114,6 +114,7 @@ class MainSmallPool(PoolUniverse):
             F.TOTAL_MV,
             F.VOLUME,
             "ILLIQ",
+            # "CLOSE_RAW_MA60",
             F.CIRC_MV,
             F.TURNOVER_RATE,
             F.VWAP,
@@ -203,19 +204,22 @@ class MainSmallPool(PoolUniverse):
         # 排名质量保证：仅对可交易股票计算市值排名（非可交易股票的 TOTAL_MV 置 None），
         # polars rank 将 None 排到最末，fill_null(999999) 确保其 POOL_MASK=False。
         # 这与之前"先过滤再排名"的效果等价，但保留了完整的行数据供时序使用。
+
+        # CLOSE_RAW_MA60 已由 extra_cols() 在前序环节生成
         tradable = (
             ~pl.col("IS_ST")
             & ~pl.col("IS_SUSPENDED")
             & (pl.col("LIST_DAYS") >= 180)
+            & ~pl.col("IS_UP_LIMIT")
+            & ~pl.col("IS_DOWN_LIMIT")
+            & (pl.col("CLOSE_RAW_MA60") > 1.5)
             & pl.col(F.APRIL_DISCLOSURE_SIGNAL)
-            # & ~pl.col("IS_UP_LIMIT")
-            # & ~pl.col("IS_DOWN_LIMIT")
         )
 
-        return (
-            lf.with_columns(
+        result = (
+            lf.sort([F.ASSET, F.DATE])
+            .with_columns(
                 [
-                    # 仅对可交易股票参与市值排名；不可交易的置 None → 排到最末
                     pl.when(tradable)
                     .then(pl.col("TOTAL_MV"))
                     .otherwise(None)
@@ -225,14 +229,11 @@ class MainSmallPool(PoolUniverse):
                     .alias("mv_rank")
                 ]
             )
-            .with_columns(
-                [
-                    # 可交易 + 市值前 small_num 名 → 入池
-                    (pl.col("mv_rank") <= small_num).alias(F.POOL_MASK)
-                ]
-            )
+            .with_columns([(pl.col("mv_rank") <= small_num).alias(F.POOL_MASK)])
             .drop(["mv_rank"])
         )
+
+        return result
 
     def extra_cols(self, lf: pl.LazyFrame) -> pl.LazyFrame:
         return (
@@ -248,6 +249,11 @@ class MainSmallPool(PoolUniverse):
                     (pl.col("VWAP") / pl.col("VWAP").shift(1) - 1)
                     .over(F.ASSET)
                     .alias("VWAP_RET"),
+                    pl.col(F.CLOSE_RAW)
+                    .rolling_mean(window_size=60)
+                    .over(F.ASSET)
+                    .fill_null(1.0)
+                    .alias("CLOSE_RAW_MA60"),
                 ]
             )
             .with_columns(

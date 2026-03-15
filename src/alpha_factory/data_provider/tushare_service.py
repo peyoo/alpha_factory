@@ -185,6 +185,133 @@ class TushareDataService:
                 logger.error(f"❌ disclosure_date 同步异常 ({report_end}): {e}")
                 raise DataSyncError("API 中断: disclosure_date") from e
 
+    def _st_data(self, trade_date: str, fields: Optional[list] = None) -> pd.DataFrame:
+        """
+        融合 namechange 和 stock_st 生成可靠的 ST 标记
+
+        【核心策略】
+        - 查询 [prev_trade_date, trade_date] 内的 namechange 记录
+        - 名称規則：包含"st"(忽视大小写) | 以"退" | 以"退市" → is_st=True
+        - 融合优先级：namechange 规则结果 > stock_st 的 is_st 字段
+        - 处理缓存和日志由 _sync_single_day_bundle 统一管理
+
+        参数:
+            trade_date: YYYYMMDD 格式的交易日期字符串
+            fields: 忽略（兼容 API 调用签名）
+
+        返回：DataFrame with columns {ts_code, is_st}
+        """
+        # 1. 转换日期格式并获取前一个交易日
+        trade_date_obj = datetime.strptime(trade_date, "%Y%m%d").date()
+        prev_trade_date = self.calendar.offset(trade_date_obj, -1)
+        prev_date_str = prev_trade_date.strftime("%Y%m%d")
+
+        # 2. 查询 namechange [prev_date_str, trade_date] 的名称变更记录
+        df_namechange = None
+        try:
+            self.rate_limiter.wait()
+            df_namechange = self.pro.namechange(
+                start_date=prev_date_str,
+                end_date=trade_date,
+                fields=["ts_code", "name", "change_reason"],
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ namechange 查询异常 ({prev_date_str}~{trade_date}): {e}")
+
+        # 3. 查询 stock_st (trade_date) 的官方 ST 股票列表
+        # stock_st 返回的列表本身就代表 ST 股票，无需 is_st 字段
+        df_stock_st = None
+        try:
+            self.rate_limiter.wait()
+            df_stock_st = self.pro.stock_st(trade_date=trade_date, fields=["ts_code"])
+        except Exception as e:
+            logger.warning(f"⚠️ stock_st 查询异常 ({trade_date}): {e}")
+
+        # 4. 融合两个数据源
+        return self._merge_st_sources(df_namechange, df_stock_st)
+
+    def _extract_st_from_names(self, df: pd.DataFrame) -> dict:
+        """
+        从名称字段和变更原因提取 ST 标记
+
+        规则：
+        1. 名称包含"st"(任意大小写) | 以"退" | 以"退市" → True
+        2. change_reason == "终止上市" → True (退市标记)
+
+        返回：{ts_code: is_st} 字典
+        """
+        if df is None or df.empty or "name" not in df.columns:
+            return {}
+
+        result = {}
+        for _, row in df.iterrows():
+            ts_code = row["ts_code"]
+            name = str(row.get("name", "")).strip()
+            change_reason = str(row.get("change_reason", "")).strip()
+
+            # 名称规则检查
+            is_st_from_name = (
+                "st" in name.lower()
+                or name.endswith("退")
+                or name.endswith("退市")
+                or name.startswith("退市")
+            )
+
+            # 退市原因检查
+            is_delisted = change_reason == "终止上市"
+
+            is_st = is_st_from_name or is_delisted
+            result[ts_code] = is_st
+
+        return result
+
+    def _merge_st_sources(
+        self, df_namechange: Optional[pd.DataFrame], df_stock_st: Optional[pd.DataFrame]
+    ) -> pd.DataFrame:
+        """
+        融合 namechange 和 stock_st 的 ST 标记
+
+        融合策略：取并集
+        - 如果 namechange 中 ts_code 满足 ST 规则 → is_st=True
+        - 或者 ts_code 出现在 stock_st 列表中 → is_st=True
+        - 否则 → is_st=False
+
+        注意：stock_st API 返回的列表本身就代表 ST 股票，无需 is_st 字段
+
+        返回：DataFrame with columns {ts_code, is_st}
+        """
+        # 提取两个数据源中识别为 ST 的 ts_code
+        st_codes_from_namechange = set()
+        st_dict = self._extract_st_from_names(df_namechange)
+        st_codes_from_namechange = {code for code, is_st in st_dict.items() if is_st}
+
+        # stock_st 返回的所有 ts_code 都代表 ST 股票
+        st_codes_from_stock_st = set()
+        if df_stock_st is not None and not df_stock_st.empty:
+            st_codes_from_stock_st = set(df_stock_st["ts_code"].values)
+
+        # 并集：两个数据源中满足 ST 条件的所有 ts_code
+        all_st_codes = st_codes_from_namechange | st_codes_from_stock_st
+
+        # 获取所有涉及的 ts_code（包括两个数据源中的所有股票）
+        all_codes = st_dict.keys() | st_codes_from_stock_st
+
+        result_data = []
+        for ts_code in sorted(all_codes):
+            # 并集策略：任一来源认为是 ST 就标记为 True
+            is_st = ts_code in all_st_codes
+
+            result_data.append({"ts_code": ts_code, "is_st": is_st})
+
+        result_df = pd.DataFrame(result_data)
+
+        # 类型转换（兼容 HDF5 Fixed 模式）
+        if not result_df.empty:
+            result_df["ts_code"] = result_df["ts_code"].str.slice(0, 12).astype("S12")
+            result_df["is_st"] = result_df["is_st"].astype(bool)
+
+        return result_df
+
     def _sync_single_day_bundle(self, trade_date: date, idx: int, total: int) -> None:
         date_str = trade_date.strftime("%Y%m%d")
 
@@ -232,11 +359,10 @@ class TushareDataService:
                 self.pro.suspend_d,
                 {"ts_code": "string", "suspend_type": "string"},
             ),
-            ("st", self.pro.stock_st, {"ts_code": "string", "is_st": "string"}),
             (
-                "daily_names",
-                self.pro.bak_daily,
-                {"ts_code": "string", "name": "string"},
+                "st",
+                self._st_data,
+                {"ts_code": "string", "is_st": "boolean"},
             ),
         ]
 
@@ -254,29 +380,15 @@ class TushareDataService:
                 if df is None or df.empty:
                     continue
 
-                if source == "daily_names" and "name" in df.columns:
-                    name_clean = df["name"].fillna("").astype(str).str.strip()
-                    name_lower = name_clean.str.lower()
-                    is_st = (
-                        name_lower.str.contains("st", regex=False)
-                        | name_clean.str.endswith("退")
-                        | name_clean.str.endswith("退市")
-                    )
-                    df = pd.DataFrame(
-                        {
-                            "ts_code": df["ts_code"],
-                            "is_st": is_st.fillna(False).astype(bool),
-                        }
-                    )
-
                 # 💡 2. 强转类型：仅为兼容 Fixed 模式和内存优化
-                # 此时 df 已经没有冗余日期列了
                 for col, dtype in fields_schema.items():
                     if col in df.columns:
                         if dtype == "string":
                             df[col] = df[col].fillna("").astype(str)
                             if col == "ts_code":
                                 df[col] = df[col].str.slice(0, 12).astype("S12")
+                        elif dtype == "boolean":
+                            df[col] = df[col].astype(bool)
                         else:
                             df[col] = pd.to_numeric(df[col], errors="coerce").astype(
                                 dtype

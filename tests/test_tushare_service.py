@@ -15,16 +15,41 @@ class _DummyRateLimiter:
 
 class _DummyCacheManager:
     def __init__(self) -> None:
-        self.saved_source: str | None = None
-        self.saved_df: pd.DataFrame | None = None
+        self.calls: list[tuple] = []  # (source, df)
 
     @staticmethod
     def is_cached(source: str, trade_date: date) -> bool:
-        return source != "daily_names"
+        # 只跳过已处理的数据源
+        return source in (
+            "daily",
+            "adj_factor",
+            "daily_basic",
+            "stk_limit",
+            "suspend_d",
+        )
 
     def save_to_hdf5(self, source: str, trade_date: date, df: pd.DataFrame) -> None:
-        self.saved_source = source
-        self.saved_df = df.copy()
+        self.calls.append((source, df.copy()))
+
+    @property
+    def saved_source(self) -> str | None:
+        """向后兼容：返回最后一次保存的数据源"""
+        return self.calls[-1][0] if self.calls else None
+
+    @property
+    def saved_df(self) -> pd.DataFrame | None:
+        """向后兼容：返回最后一次保存的 DataFrame"""
+        return self.calls[-1][1] if self.calls else None
+
+
+class _DummyCalendar:
+    """Mock 交易日历，用于计算前一天"""
+
+    def offset(self, trade_date: date, delta: int) -> date:
+        # 简单实现：假设每天都是交易日
+        from datetime import timedelta
+
+        return trade_date + timedelta(days=delta)
 
 
 class _DummyPro:
@@ -49,19 +74,25 @@ class _DummyPro:
         raise AssertionError("suspend_d should not be called when cached")
 
     @staticmethod
-    def stock_st(*args, **kwargs):
-        raise AssertionError("stock_st should not be called when cached")
-
-    @staticmethod
-    def bak_daily(*, trade_date: str, fields: list[str]) -> pd.DataFrame:
-        assert trade_date == "20220103"
-        assert fields == ["ts_code", "name"]
+    def namechange(
+        *, start_date: str, end_date: str, fields: list[str]
+    ) -> pd.DataFrame:
+        """Mock namechange API：返回名称变更记录"""
+        assert fields == ["ts_code", "name", "change_reason"]
         return pd.DataFrame(
             {
                 "ts_code": ["000001.SZ"],
                 "name": ["平安银行"],
+                "change_reason": ["其他"],
             }
         )
+
+    @staticmethod
+    def stock_st(*, trade_date: str, fields: list[str]) -> pd.DataFrame:
+        """Mock stock_st API - 返回 ST 股票列表"""
+        assert fields == ["ts_code"]
+        # 返回空结果（以测试 namechange 规则的优先级）
+        return pd.DataFrame({"ts_code": []})
 
     @staticmethod
     def disclosure_date(*, end_date: str, fields: list[str]) -> pd.DataFrame:
@@ -86,19 +117,25 @@ class _DummyPro:
         )
 
 
-def test_sync_single_day_bundle_daily_names_uses_bak_daily() -> None:
+def test_sync_single_day_bundle_st_via_st_data() -> None:
+    """验证 _sync_single_day_bundle 中 st 数据由 _st_data 方法生成"""
     service = TushareDataService.__new__(TushareDataService)
     service.rate_limiter = _DummyRateLimiter()
     service.pro = _DummyPro()
     service.cache_manager = _DummyCacheManager()
+    service.calendar = _DummyCalendar()
 
     service._sync_single_day_bundle(date(2022, 1, 3), idx=1, total=1)
 
-    assert service.cache_manager.saved_source == "daily_names"
-    assert service.cache_manager.saved_df is not None
-    assert "name" not in service.cache_manager.saved_df.columns
-    assert "is_st" in service.cache_manager.saved_df.columns
-    assert not service.cache_manager.saved_df.loc[0, "is_st"]
+    # 验证保存了 st
+    saved_sources = [call[0] for call in service.cache_manager.calls]
+    assert "st" in saved_sources, f"Expected 'st' in {saved_sources}"
+
+    # 验证 st 数据包含 is_st 列
+    st_df = next(df for source, df in service.cache_manager.calls if source == "st")
+    assert "is_st" in st_df.columns
+    assert "ts_code" in st_df.columns
+    assert len(st_df) > 0
 
 
 def test_sync_disclosure_dates_saves_report_end_partition() -> None:

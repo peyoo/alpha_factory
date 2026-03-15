@@ -137,7 +137,7 @@ class DataProvider:
             f"⚙️ 构建股票池基础数据 [{start_date.strftime('%Y%m%d')} -> {end_date.strftime('%Y%m%d')}]..."
         )
 
-        funcs = [pool.pool, pool.extra_cols, *pool.label_col_funcs]
+        funcs = [pool.extra_cols, pool.pool, *pool.label_col_funcs]
         select_cols = pool.needed_cols()
 
         lf = self._scan_with_lookback(
