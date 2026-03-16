@@ -210,9 +210,10 @@ class TushareDataService:
                     actual_date.date() if hasattr(actual_date, "date") else actual_date
                 )
 
-                # 【条件1】计划披露日期与当前交易日的差异 <= 3 天
+                # 【条件1】计划披露日期与当前交易日的差异 <= 4 天
+                # 这里至少需要4天，周末两天，再加上买卖各一天。
                 date_diff = abs((pre_date_obj - trade_date_obj).days)
-                cond1 = date_diff <= 3
+                cond1 = date_diff <= 4
 
                 # 【条件2】计划披露日期位于4月下旬（4月21-30日）
                 cond2 = pre_date_obj.month == 4 and 21 <= pre_date_obj.day <= 30

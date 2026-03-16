@@ -251,7 +251,22 @@ def backtest_daily_evolving(
             }
         )
 
-    # --- 4. 输出结果 ---
+    # --- 4. 处理未平仓持仓 ---
+    # 将回测结束时仍未平仓的持仓转化为交易记录
+    for asset, hold in holdings.items():
+        trades_records.append(
+            {
+                F.ASSET: asset,
+                "entry_date": hold["entry_date"],
+                "exit_date": curr_dt,
+                "entry_price": hold["entry_price"],
+                "exit_price": hold["last_price"],
+                "pnl_ret": hold["last_price"] / hold["entry_price"] - 1,
+                "holding_periods": len(all_dates) - 1 - hold["entry_idx"],
+            }
+        )
+
+    # --- 5. 输出结果 ---
     res_daily = pl.DataFrame(daily_records)
 
     return {"daily_results": res_daily, "trade_details": pl.DataFrame(trades_records)}
