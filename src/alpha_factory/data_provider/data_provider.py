@@ -376,20 +376,15 @@ class DataProvider:
         for year in range(effective_start.year, end_date.year + 1):
             file_path = self.factor_dir / f"{year}.parquet"
             if file_path.exists():
-                # 将 ASSET 先统一 cast 到 String，消除不同年份 Enum 类别集不同导致的
-                # schema 不兼容问题（polars concat 要求各文件 schema 完全一致）
-                scans.append(
-                    pl.scan_parquet(file_path).with_columns(
-                        pl.col(F.ASSET).cast(pl.String)
-                    )
-                )
+                # ✅ ASSET 保存为 String，concat 后统一转为 Categorical
+                scans.append(pl.scan_parquet(file_path))
 
         if not scans:
             raise FileNotFoundError(
                 f"数据区间 {start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')} 无可用文件"
             )
 
-        # concat 后统一 cast 回当前 session 的 Enum 类型，与 _static_props join 保持一致
+        # concat 后统一 cast 为当前 session 的 Categorical，与 _static_props join 保持一致
         return (
             pl.concat(scans)
             .with_columns(

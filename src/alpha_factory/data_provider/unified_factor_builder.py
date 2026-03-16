@@ -55,6 +55,8 @@ class UnifiedFactorBuilder:
         self.calendar_mgr = calendar_mgr
         self.cache_manager = HDF5CacheManager(settings.RAW_DATA_DIR)
         self.warehouse_dir = settings.WAREHOUSE_DIR
+        # ✅ 缓存有效资产代码于初始化时，避免后续重复调用 get_all_codes()
+        self._valid_asset_codes = assets_mgr.get_all_codes()
 
     def build_unified_factors(
         self, start_date: datetime.date, end_date: datetime.date
@@ -224,17 +226,9 @@ class UnifiedFactorBuilder:
             # 💡 增量合并逻辑：检查文件是否存在，若存在则合并而非覆盖
             # 这解决了分次同步时数据被覆盖的问题
             if output_path.exists():
-                # 读取现有数据，将 ASSET 经由 String 重新 cast 到当前 session 的 Enum 类型。
-                # 原因：不同批次写入时 Enum 类别集合可能不同，直接 join 会报类型不匹配；
-                # strict=False 保证极少数已退市且已从名录移除的代码变为 null 而非抛错。
-                df_existing = (
-                    pl.read_parquet(output_path)
-                    .with_columns(
-                        pl.col(F.ASSET)
-                        .cast(pl.String)
-                        .cast(self.assets_mgr.stock_type, strict=False)
-                    )
-                    .filter(pl.col(F.ASSET).is_not_null())
+                # ✅ ASSET 保持为 String，无需往返转换
+                df_existing = pl.read_parquet(output_path).filter(
+                    pl.col(F.ASSET).is_not_null()
                 )
                 # 删除新数据中已存在的 (DATE, ASSET) 组合，避免重复
                 existing_dates = df_existing.select([F.DATE, F.ASSET]).unique()
@@ -250,7 +244,7 @@ class UnifiedFactorBuilder:
             else:
                 df_final = df_year
 
-            # 写入 Parquet（保留 ASSET 为 String 类型以支持动态资产）
+            # 写入 Parquet（保留 ASSET 为 String 类型以支持动态资产和跨年兼容性）
             df_final.write_parquet(output_path, compression="snappy")
 
             logger.info(
@@ -269,21 +263,15 @@ class UnifiedFactorBuilder:
 
         返回 LazyFrame（含上年最后一天所有行）；若上年 parquet 不存在（首次构建），
         则返回 None，调用方跳过 concat 即可，保持全量首次构建的兼容性。
+
+        ✅ 简化逻辑：ASSET 保存为 String，后续在 join 前统一转换类型。
         """
         prev_path = self.warehouse_dir / "unified_factors" / f"{year - 1}.parquet"
         if not prev_path.exists():
             return None
 
-        # 读取上一年 parquet，将 ASSET 重新绑定到当前 session 的 Enum 类型
-        lf = (
-            pl.scan_parquet(prev_path)
-            .with_columns(
-                pl.col(F.ASSET)
-                .cast(pl.String)
-                .cast(self.assets_mgr.stock_type, strict=False)
-            )
-            .filter(pl.col(F.ASSET).is_not_null())
-        )
+        # 直接读取，ASSET 保持为 String（避免 Categorical 类别集不兼容）
+        lf = pl.scan_parquet(prev_path).filter(pl.col(F.ASSET).is_not_null())
 
         # 取最后一个交易日（仅需一次小 collect 获取单个日期标量）
         max_date = lf.select(pl.col(F.DATE).max()).collect().item(0, 0)
@@ -301,7 +289,16 @@ class UnifiedFactorBuilder:
 
         return (
             date_df.join(
-                properties.select([F.ASSET, "list_date", "delist_date"]), how="cross"
+                properties.select(
+                    [
+                        pl.col(F.ASSET).cast(
+                            pl.String
+                        ),  # ✅ 保证 ASSET 为 String以支持后续 join
+                        "list_date",
+                        "delist_date",
+                    ]
+                ),
+                how="cross",
             )
             .filter(
                 (pl.col(F.DATE) >= pl.col("list_date"))
@@ -317,28 +314,29 @@ class UnifiedFactorBuilder:
     # ================= 内部算子 (Lazy Operations) =================
 
     def _ensure_valid_assets(self, lf: pl.LazyFrame) -> pl.LazyFrame:
-        """防火墙：剔除名录外代码并强制转换 Enum"""
-        valid_codes = self.assets_mgr.get_all_codes()
-        return lf.filter(pl.col(F.ASSET).is_in(valid_codes)).with_columns(
-            pl.col(F.ASSET).cast(self.assets_mgr.stock_type)
-        )
+        """
+        防火墙：仅剔除名录外代码。
+
+        注意：不再负责类型转换（之前重复转换问题的根源）。
+        类型转换在 _execute_single_year_build 的 join 之前统一处理。
+        """
+        # ✅ 懒加载 valid_asset_codes（支持测试中的动态构建）
+        if not hasattr(self, "_valid_asset_codes"):
+            self._valid_asset_codes = self.assets_mgr.get_all_codes()
+        return lf.filter(pl.col(F.ASSET).is_in(self._valid_asset_codes))
 
     def _op_clean_daily(self, trading_dates: List[date]) -> pl.LazyFrame:
         """清洗原始行情：使用 load_as_polars 获取数据"""
         # 1. 直接获取已经转好 Date 类型的 Polars DataFrame
         df_pl = self.cache_manager.load_as_polars("daily", trading_dates)
         if df_pl is None:
-            return pl.LazyFrame(
-                schema={F.DATE: pl.Date, F.ASSET: self.assets_mgr.stock_type}
-            )
+            return pl.LazyFrame(schema={F.DATE: pl.Date, F.ASSET: pl.String})
 
-        # 2. 这里的 DATE 和 ASSET 已经是正确类型，保留字符串以支持新资产
+        # 2. 过滤有效资产，后续在 join 前统一处理类型转换
         return self._ensure_valid_assets(df_pl.lazy()).select(
             [
                 pl.col(F.DATE),
-                pl.col(F.ASSET).cast(
-                    self.assets_mgr.stock_type
-                ),  # 保留为字符串而非 Enum
+                pl.col(F.ASSET),
                 pl.col("open").cast(pl.Float32).alias(F.OPEN_RAW),
                 pl.col("high").cast(pl.Float32).alias(F.HIGH_RAW),
                 pl.col("low").cast(pl.Float32).alias(F.LOW_RAW),
@@ -365,7 +363,7 @@ class UnifiedFactorBuilder:
         return self._ensure_valid_assets(df_pl.lazy()).select(
             [
                 pl.col(F.DATE),
-                pl.col(F.ASSET).cast(self.assets_mgr.stock_type),  # 保留为字符串
+                pl.col(F.ASSET),
                 pl.col("adj_factor").cast(pl.Float32).alias("ADJ_FACTOR"),
             ]
         )
@@ -376,7 +374,7 @@ class UnifiedFactorBuilder:
             return pl.LazyFrame(
                 schema={
                     F.DATE: pl.Date,
-                    F.ASSET: self.assets_mgr.stock_type,
+                    F.ASSET: pl.String,
                     "PE": pl.Float32,
                     "PB": pl.Float32,
                     "PS": pl.Float32,
@@ -389,14 +387,11 @@ class UnifiedFactorBuilder:
         return self._ensure_valid_assets(df_pl.lazy()).select(
             [
                 pl.col(F.DATE),
-                pl.col(
-                    F.ASSET
-                ),  # 已经在 load_as_polars 重命名过，且在 _ensure_valid_assets 转了 Enum
+                pl.col(F.ASSET),
                 pl.col("pe").cast(pl.Float32).alias(F.PE),
                 pl.col("pb").cast(pl.Float32).alias(F.PB),
                 pl.col("ps").cast(pl.Float32).alias(F.PS),
                 pl.col("turnover_rate").cast(pl.Float32).alias(F.TURNOVER_RATE),
-                # 💡 这里一定要补齐 circ_mv，且金额换算为"元"
                 (pl.col("total_mv") * 10000).cast(pl.Float64).alias(F.TOTAL_MV),
                 (pl.col("circ_mv") * 10000).cast(pl.Float64).alias(F.CIRC_MV),
             ]
@@ -409,7 +404,7 @@ class UnifiedFactorBuilder:
         return self._ensure_valid_assets(df_pl.lazy()).select(
             [
                 pl.col(F.DATE),
-                pl.col(F.ASSET).cast(self.assets_mgr.stock_type),
+                pl.col(F.ASSET),
                 pl.col("up_limit").cast(pl.Float32).alias(F.UP_LIMIT),
                 pl.col("down_limit").cast(pl.Float32).alias(F.DOWN_LIMIT),
             ]
@@ -423,8 +418,8 @@ class UnifiedFactorBuilder:
             return pl.LazyFrame(
                 schema={
                     F.DATE: pl.Date,
-                    F.ASSET: self.assets_mgr.stock_type,
-                    "_TMP_SUSPEND_": pl.Boolean,  # 💡 使用临时前缀，方便批量剔除
+                    F.ASSET: pl.String,
+                    "_TMP_SUSPEND_": pl.Boolean,
                 }
             )
 
@@ -451,7 +446,7 @@ class UnifiedFactorBuilder:
             return pl.LazyFrame(
                 schema={
                     F.DATE: pl.Date,
-                    F.ASSET: self.assets_mgr.stock_type,
+                    F.ASSET: pl.String,
                     F.IS_ST: pl.Boolean,
                 }
             )
@@ -471,7 +466,7 @@ class UnifiedFactorBuilder:
             .select(
                 [
                     pl.col(F.DATE),
-                    pl.col(F.ASSET).cast(self.assets_mgr.stock_type),
+                    pl.col(F.ASSET),
                     pl.col(F.IS_ST),
                 ]
             )
@@ -483,7 +478,7 @@ class UnifiedFactorBuilder:
             return pl.LazyFrame(
                 schema={
                     F.DATE: pl.Date,
-                    F.ASSET: self.assets_mgr.stock_type,
+                    F.ASSET: pl.String,
                     "flag": pl.Boolean,
                 }
             )
@@ -494,7 +489,7 @@ class UnifiedFactorBuilder:
             return pl.LazyFrame(
                 schema={
                     F.DATE: pl.Date,
-                    F.ASSET: self.assets_mgr.stock_type,
+                    F.ASSET: pl.String,
                     "flag": pl.Boolean,
                 }
             )

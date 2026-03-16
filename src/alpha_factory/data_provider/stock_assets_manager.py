@@ -75,21 +75,22 @@ class StockAssetsManager:
 
     def _refresh_internal_state_locked(self):
         """
-        同步刷新内存中的 Enum 类型和映射字典。
+        同步刷新内存中的 Categorical 类型和映射字典。
         """
         # 提取当前所有资产代码（维持原始物理顺序）
         assets_list = self._df.get_column(F.ASSET).to_list()
 
-        # 1. 更新计算层类型为 Categorical
+        # 1. 更新计算层类型为 Categorical（一次性设置，后续无需重复转换）
         self.stock_type = pl.Categorical
 
         # 2. 更新接入层 Cache：提供给 TushareDataService 进行 O(1) 映射
         self._mapping_cache = {asset: i for i, asset in enumerate(assets_list)}
 
-        # 3. 预处理 Exchange 为分类变量（节省空间并提升计算效率）
-        # if "exchange" in self._df.columns:
+        # 3. 统一维护核心标识列及分类列为 Categorical（一次性操作）
+        # 确保之后 get_properties() 无需再做类型转换
         self._df = self._df.with_columns(
             [
+                pl.col(F.ASSET).cast(pl.Categorical),
                 pl.col("exchange").cast(pl.Categorical),
                 pl.col("market").cast(pl.Categorical),
             ]
@@ -102,10 +103,11 @@ class StockAssetsManager:
     def get_properties(self) -> pl.DataFrame:
         """
         获取携带 pl.Categorical 类型的资产属性表。
-        用于后续在 Polars 中执行高性能 join。
+        ASSET 列已在 _refresh_internal_state_locked 中统一维护为 Categorical。
         """
         with self._lock:
-            return self._df.with_columns(pl.col(F.ASSET).cast(self.stock_type))
+            # ✅ 无需重复 cast，ASSET 已在内部维护为 Categorical
+            return self._df
 
     def update_assets(self, snapshot_df: pl.DataFrame):
         """
@@ -145,11 +147,16 @@ class StockAssetsManager:
     def _save_locked(self):
         """持久化资产表。"""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        # 写盘前必须将 Enum/Categorical 转回 Utf8 以保持 Parquet 的通用兼容性
+        # ✅ 写盘时将分类列转为 String，保证 Parquet 的通用兼容性
+        # ASSET 保存为 String 避免 Categorical 类别集在跨文件 concat 时的不兼容问题
         temp_path = self.path.with_suffix(".tmp")
         (
             self._df.with_columns(
-                [pl.col(F.ASSET).cast(pl.Utf8), pl.col("exchange").cast(pl.Utf8)]
+                [
+                    pl.col(F.ASSET).cast(pl.Utf8),
+                    pl.col("exchange").cast(pl.Utf8),
+                    pl.col("market").cast(pl.Utf8),
+                ]
             ).write_parquet(temp_path, compression="snappy")
         )
         temp_path.replace(self.path)  # 原子替换
