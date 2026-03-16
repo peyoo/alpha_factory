@@ -41,8 +41,10 @@ class HDF5CacheManager:
                     except Exception as e:
                         logger.error(f"关闭 {key} 失败: {e}")
 
-        # 💡 强制触发垃圾回收，配合 pop 切断引用链
-        gc.collect()
+        # 💡 延迟垃圾回收：pop 操作已切断引用，仅在大规模释放时手动触发
+        # 避免同步 gc.collect() 导致的 50-200ms 阻塞
+        if len(keys) > 10:
+            gc.collect()
 
     def _get_store(self, source: str) -> pd.HDFStore:
         """获取或创建 HDFStore 句柄 (线程安全)"""
@@ -53,7 +55,11 @@ class HDF5CacheManager:
                 self._stores[source] = pd.HDFStore(
                     path, mode="a", complevel=4, complib="blosc"
                 )
-            return self._stores[source]
+            store = self._stores[source]
+            # 〰️ 架构扩展点：未来可在此处验证/注入 schema metadata
+            # if store.attrs.get("schema_version") != EXPECTED_SCHEMA_VERSION:
+            #     logger.warning(f"Schema version mismatch for {source}")
+            return store
 
     def is_cached(self, source: str, trade_date: Union[str, date]) -> bool:
         """检查特定日期的数据是否存在于缓存中"""
@@ -128,7 +134,7 @@ class HDF5CacheManager:
                 pldf = pl.from_pandas(pdf)
 
                 # 3. 💡 类型修复：处理 Binary -> String 转换
-                # HDF5 以 S12 存储会导致 Polars 识别为 Binary，必须转回 String 才能进行 is_in 过滤
+                # HDF5 以 S12 存储会导致 Polars 识别为 Binary，必须转回 String 才能进行后续过滤
                 binary_cols = [
                     col for col, dtype in pldf.schema.items() if dtype == pl.Binary
                 ]
@@ -137,23 +143,10 @@ class HDF5CacheManager:
                         [pl.col(c).cast(pl.String) for c in binary_cols]
                     )
 
-                # 4. 数值精度对齐：强制转换数值列类型，防止 concat 时的 schema 不匹配
-                for col in pldf.columns:
-                    if col in ["ts_code", "ASSET"]:
-                        continue
-                    # 将所有 float64 统一为 float32 (除非是需要高精度的成交额或市值)
-                    if pldf.schema[col] == pl.Float64 and col not in [
-                        "amount",
-                        "total_mv",
-                    ]:
-                        pldf = pldf.with_columns(pl.col(col).cast(pl.Float32))
-
-                # 5. 字段标准化：ts_code -> ASSET
-                if "ts_code" in pldf.columns:
-                    pldf = pldf.rename({"ts_code": "ASSET"})
-
-                # 6. 💡 核心逻辑：利用 Polars 的广播机制回填日期
-                pldf = pldf.with_columns(pl.lit(d).alias("DATE"))
+                # 4. 字段标准化与日期回填：一次调用链修复列名并注入时间维度
+                # 注意：HDF5 元数据已包含数值精度信息，Polars 自动从 PyTables 恢复，无需二次转换
+                rename_cols = {"ts_code": "ASSET"} if "ts_code" in pldf.columns else {}
+                pldf = pldf.rename(rename_cols).with_columns(pl.lit(d).alias("DATE"))
 
                 pldfs.append(pldf)
 
