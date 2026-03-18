@@ -225,21 +225,25 @@ class UnifiedFactorBuilder:
 
             # 💡 增量合并逻辑：检查文件是否存在，若存在则合并而非覆盖
             # 这解决了分次同步时数据被覆盖的问题
+            # ⚠️ 关键修复：仅以 CLOSE_RAW 非空行作为"已填充"基准，
+            # 避免旧的空壳行（CLOSE_RAW=null）占位导致无法写入正确价格数据
             if output_path.exists():
                 # ✅ ASSET 保持为 String，无需往返转换
                 df_existing = pl.read_parquet(output_path).filter(
                     pl.col(F.ASSET).is_not_null()
                 )
-                # 删除新数据中已存在的 (DATE, ASSET) 组合，避免重复
-                existing_dates = df_existing.select([F.DATE, F.ASSET]).unique()
+                # 只保留有实际价格数据的行作为"已填充"基准
+                df_populated = df_existing.filter(pl.col(F.CLOSE_RAW).is_not_null())
+                existing_populated = df_populated.select([F.DATE, F.ASSET]).unique()
+                # 新数据去除已有实际价格的行（避免重复写入），空壳行允许被覆盖
                 new_data = df_year.join(
-                    existing_dates, on=[F.DATE, F.ASSET], how="anti"
+                    existing_populated, on=[F.DATE, F.ASSET], how="anti"
                 )
-                # 合并：保留现有数据 + 新数据
+                # 合并：保留现有有效数据 + 新数据（包含替换原空壳行）
                 if not new_data.is_empty():
-                    df_final = pl.concat([df_existing, new_data])
+                    df_final = pl.concat([df_populated, new_data])
                 else:
-                    df_final = df_existing
+                    df_final = df_populated if not df_populated.is_empty() else df_year
                     logger.info(f"ℹ️ {year}.parquet 中该时间段数据已存在，无需重复写入")
             else:
                 df_final = df_year

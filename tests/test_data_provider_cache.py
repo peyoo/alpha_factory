@@ -107,7 +107,7 @@ def test_load_pool_data_md5_uses_two_stage_and_no_final_cache() -> None:
         base_calls.append((p, start, end))
         return _make_base_lf(), fake_pool_path
 
-    def fake_build_factors_view(p, lf, exprs, final_cache_path=None):
+    def fake_build_factors_view(p, lf, exprs, processors=None, final_cache_path=None):
         factors_calls.append({"final_cache_path": final_cache_path})
         return lf.with_columns(pl.lit(1.0).alias("FACTOR_X"))
 

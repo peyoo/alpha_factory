@@ -126,7 +126,12 @@ class StockAssetsManager:
                 #    对于已有资产，我们要更新其属性，但保留舊位置。
                 #    所以我們先通過 join 拿到 snap 裡的最新信息，關聯到舊的位置上。
 
-                existing_base = self._df.select(F.ASSET).with_row_index("__pos__")
+                # 注意：self._df 的 ASSET 列经 _refresh_internal_state_locked 维护为 Categorical，
+                # 而 snap 经 cast(self.schema) 后为 Utf8。join key 两侧类型必须一致，
+                # 因此在此处显式 cast 为 Utf8，避免 Polars join 类型不匹配错误。
+                existing_base = self._df.select(
+                    pl.col(F.ASSET).cast(pl.Utf8)
+                ).with_row_index("__pos__")
 
                 # 更新已有资产属性
                 updated_existing = (

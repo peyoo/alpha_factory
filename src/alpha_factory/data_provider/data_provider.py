@@ -14,6 +14,7 @@ from expr_codegen import codegen_exec
 
 
 from alpha_factory.data_provider import TushareDataService
+from alpha_factory.data_provider.factorsprocessor import FactorsProcessor
 from alpha_factory.data_provider.pool import PoolUniverse
 from alpha_factory.data_provider.stock_assets_manager import StockAssetsManager
 from alpha_factory.config.base import settings
@@ -78,6 +79,7 @@ class DataProvider:
         start_date: DateLike,
         end_date: Optional[DateLike] = None,
         exprs: Optional[List] = None,
+        processors: Optional[List[FactorsProcessor]] = None,
         cache: Optional[Union[str, Path]] = None,
     ) -> pl.LazyFrame:
         """按股票池加载数据，并支持两阶段缓存策略。
@@ -104,7 +106,9 @@ class DataProvider:
             pool_cache_path, exprs, cache
         )
 
-        lf = self._build_factors_view(pool, pool_data, exprs, factors_cache_path)
+        lf = self._build_factors_view(
+            pool, pool_data, exprs, processors, factors_cache_path
+        )
 
         # 在最后阶段过滤到 start_dt 及以后（表达式计算已完成，可以安全过滤）
         return lf.filter(pl.col("DATE") >= start_dt)
@@ -294,6 +298,7 @@ class DataProvider:
         pool: PoolUniverse,
         base_lf: pl.LazyFrame,
         exprs: Optional[List],
+        processors: Optional[List[FactorsProcessor]] = None,
         final_cache_path: Optional[Path] = None,
     ) -> pl.LazyFrame:
         """在基础层数据上生成表达式列，并按需缓存最终结果。
@@ -309,7 +314,8 @@ class DataProvider:
         lf, generated_expr_cols = self._apply_column_exprs(base_lf, exprs)
         lf = self._finalize_projection(lf, select_cols, generated_expr_cols)
 
-        # lf = pool.preprocessor(lf, generated_expr_cols)
+        for processor in processors or []:
+            lf = processor.process(lf)
 
         if final_cache_path:
             return self._persist_cache_and_reload(lf, final_cache_path)
