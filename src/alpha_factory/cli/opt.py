@@ -27,6 +27,8 @@ from alpha_factory.cli.utils import PoolUniverseEnum, resolve_yaml_path
 from alpha_factory.config.strategy import FactorRank, StrategyConfig
 from alpha_factory.data_provider.data_provider import DataProvider
 from alpha_factory.data_provider.pool import PoolUniverse
+from alpha_factory.data_provider.prcoessors.pre_processor import PreProcess
+from alpha_factory.data_provider.prcoessors.rank import Rank
 from alpha_factory.evaluation.backtest.daily_evolving import backtest_daily_evolving
 from alpha_factory.evaluation.batch.ic_summary import batch_ic_summary
 from alpha_factory.utils.schema import F
@@ -34,7 +36,6 @@ from alpha_factory.utils.schema import F
 console = Console()
 
 _COMPOSITE_COL = "COMPOSITE_OPT"
-_RANK_PREFIX = "_RANK_"  # 预计算截面 rank 列的命名前缀
 
 
 # ---------------------------------------------------------------------------
@@ -85,9 +86,8 @@ def auto_fill_directions(
     if not pending:
         return
 
-    # 为 batch_ic_summary 构造 factor_ 前缀列名
-    col_map: dict[str, FactorRank] = {f"factor_{r.name}": r for r in pending}
-    exprs = [f"{col} = {r.expression.strip()}" for col, r in col_map.items()]
+    exprs = [r.expr_str for r in pending]
+    factor_cols = [r.name for r in pending]
 
     console.print(
         f"[bold cyan]⚙ 自动推断因子方向[/bold cyan]  "
@@ -95,7 +95,7 @@ def auto_fill_directions(
     )
 
     lf = dp.load_pool_data(pool, start_date, end_date, exprs=exprs)
-    ic_df = batch_ic_summary(lf, factors=list(col_map.keys()))
+    ic_df = batch_ic_summary(lf, factors=factor_cols)
 
     if ic_df.is_empty():
         console.print(
@@ -115,107 +115,14 @@ def auto_fill_directions(
     t.add_column("因子", style="cyan")
     t.add_column("ic_mean", justify="right")
     t.add_column("direction", justify="center", style="bold")
-    for col_name, rank in col_map.items():
-        ic_mean = ic_map.get(col_name)
+    for rank in pending:
+        ic_mean = ic_map.get(rank.name)
         direction: int = 1 if (ic_mean is None or ic_mean >= 0) else -1
         rank.direction = direction  # type: ignore[assignment]
         ic_str = f"{ic_mean:.4f}" if ic_mean is not None else "N/A"
         color = "green" if direction == 1 else "red"
         t.add_row(rank.name, ic_str, f"[{color}]{direction}[/{color}]")
     console.print(t)
-
-
-def precompute_factor_ranks(
-    ranks: list[FactorRank],
-    dp: DataProvider,
-    pool: PoolUniverse,
-    start_date: str,
-    end_date: Optional[str],
-) -> pl.DataFrame:
-    """一次性加载所有因子原始值，并计算截面百分比 rank，返回 DataFrame。
-
-    对每个因子生成列 ``_RANK_{name}``：
-    - 仅在 ``POOL_MASK=True`` 的标的中排名（与回测逻辑对齐）
-    - 停牌/不在池的标的排名为 ``null``
-
-    同时保留回测所需的基础列（DATE / ASSET / POOL_MASK / VWAP / CLOSE /
-    IS_UP_LIMIT / IS_DOWN_LIMIT / IS_SUSPENDED）。
-    """
-    factor_names = [r.name for r in ranks]
-
-    raw_col_names = [f"RAW_{name}" for name in factor_names]
-    exprs = [
-        f"{raw_col} = {rank_def.expression.strip()}"
-        for raw_col, rank_def in zip(raw_col_names, ranks)
-    ]
-
-    console.print(
-        f"[bold cyan]⚙ 预计算因子数据[/bold cyan]  "
-        f"共 {len(ranks)} 个因子，时间范围 {start_date} ~ {end_date or '最新'}"
-    )
-
-    lf = dp.load_pool_data(pool, start_date, end_date, exprs=exprs)
-
-    # 截面百分比 rank（用 direction 控制排序方向）
-    # direction=1：大値好，descending=False → 最大値得最高秩（与回测中 ascending=False 一致）
-    # direction=-1：小値好，descending=True  → 最小値得最高秩
-    rank_exprs = [
-        pl.when(pl.col(F.POOL_MASK))
-        .then(pl.col(raw_col))
-        .otherwise(None)
-        .rank(method="average", descending=((rank_def.direction or 1) < 0))
-        .over(F.DATE)
-        .alias(f"{_RANK_PREFIX}{name}")
-        for raw_col, name, rank_def in zip(raw_col_names, factor_names, ranks)
-    ]
-    lf = lf.with_columns(rank_exprs)
-
-    keep_cols = [
-        F.DATE,
-        F.ASSET,
-        F.POOL_MASK,
-        F.VWAP,
-        F.CLOSE,
-        F.IS_UP_LIMIT,
-        F.IS_DOWN_LIMIT,
-        F.IS_SUSPENDED,
-    ] + [f"{_RANK_PREFIX}{name}" for name in factor_names]
-
-    available = set(lf.collect_schema().names())
-    keep_cols = [c for c in keep_cols if c in available]
-
-    df = lf.select(keep_cols).collect()
-
-    console.print(
-        f"[green]✓ 预计算完成[/green]  "
-        f"行数: {df.height:,}  日期: {df[F.DATE].min()} ~ {df[F.DATE].max()}"
-    )
-    return df
-
-
-def make_composite(
-    base_df: pl.DataFrame,
-    factor_names: list[str],
-    weights: np.ndarray,
-) -> pl.DataFrame:
-    """在 base_df（含预计算 rank 列）上构造加权合成因子列并返回新 DataFrame。
-
-    合成公式::
-
-        COMPOSITE = Σ (weight_i × _RANK_{name_i})
-
-    direction 已在预计算阶段通过 rank 的 descending 参数吸收，
-    此处仅做纯加权求和。
-    """
-    terms = [
-        pl.col(f"{_RANK_PREFIX}{name}").cast(pl.Float64) * float(w)
-        for name, w in zip(factor_names, weights)
-    ]
-    composite_expr = terms[0]
-    for t in terms[1:]:
-        composite_expr = composite_expr + t
-
-    return base_df.with_columns(composite_expr.alias(_COMPOSITE_COL))
 
 
 # ---------------------------------------------------------------------------
@@ -346,22 +253,47 @@ def quant_opt(
         f"成本: {cfg.cost:.4f} | 试验次数: {n_trials}\n"
     )
 
-    # ---- 2. 一次性预计算所有因子截面 rank（整个优化过程共享） ----
+    # ---- 2. 一次性预计算所有因子（PreProcess: 市值中性化 + rank + z-normalize + 正交化）----
     dp = DataProvider()
 
     # 对 direction=None 的因子，通过 IC 自动推断排序方向
     auto_fill_directions(ranks, dp, pool_instance, start_date, end_date)
 
-    base_df = precompute_factor_ranks(ranks, dp, pool_instance, start_date, end_date)
+    console.print(
+        f"[bold cyan]⚙ 预计算因子数据[/bold cyan]  "
+        f"共 {len(ranks)} 个因子，时间范围 {start_date} ~ {end_date or '最新'}"
+    )
+    lf = dp.load_pool_data(
+        pool_instance,
+        start_date,
+        end_date,
+        exprs=cfg.factor_exprs,
+        processors=[PreProcess(factors=factor_names)],
+    )
+    base_df = lf.collect()
+    console.print(
+        f"[green]✓ 预计算完成[/green]  "
+        f"行数: {base_df.height:,}  日期: {base_df[F.DATE].min()} ~ {base_df[F.DATE].max()}"
+    )
+
+    # direction 通过权重符号体现：direction=-1 → 负权重 → 因子值越小得分越高
+    _directions = np.array([r.direction or 1 for r in ranks], dtype=float)
 
     # ---- 3. 定义 Optuna 目标函数（仅加权合成 + 回测，无 I/O） ----
     def objective(trial: "optuna.Trial") -> float:
         raw = np.array(
             [trial.suggest_float(f"w_{name}", 0.0, 1.0) for name in factor_names]
         )
-        weights = softmax_weights(raw)
+        signed_weights = {
+            name: float(w * d)
+            for name, w, d in zip(factor_names, softmax_weights(raw), _directions)
+        }
         try:
-            df_trial = make_composite(base_df, factor_names, weights)
+            df_trial = Rank(
+                factors=factor_names,
+                name=_COMPOSITE_COL,
+                weights=signed_weights,
+            ).process(base_df)
             result = backtest_daily_evolving(
                 df_input=df_trial,
                 factor_col=_COMPOSITE_COL,

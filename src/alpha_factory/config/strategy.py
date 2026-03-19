@@ -62,6 +62,11 @@ class FactorRank(BaseModel):
         description="1 表示因子值越大越好；-1 表示因子值越小越好；留空由 quant opt 通过 IC 自动推断",
     )
 
+    @property
+    def expr_str(self) -> str:
+        """返回 DataProvider exprs 所需的 ``name = expression`` 格式字符串。"""
+        return f"{self.name} = {self.expression.strip()}"
+
 
 # ---------------------------------------------------------------------------
 # 主配置模型
@@ -246,3 +251,8 @@ class StrategyConfig(BaseModel):
     def factor_directions(self) -> List[int]:
         """返回所有因子方向列表（1 / -1）。"""
         return [r.direction for r in self.ranks]
+
+    @property
+    def factor_exprs(self) -> List[str]:
+        """返回所有因子的 ``name = expression`` 字符串列表，供 DataProvider 使用。"""
+        return [r.expr_str for r in self.ranks]

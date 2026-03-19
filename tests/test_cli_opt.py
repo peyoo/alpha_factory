@@ -1,9 +1,8 @@
-"""
-tests/test_cli_opt.py — quant opt 命令单元测试
+"""tests/test_cli_opt.py — quant opt 命令单元测试
 
 覆盖：
   - softmax_weights：归一化约束（sum=1, w≥0）
-  - make_composite：合成与加权逻辑
+  - Rank.process：合成与加权逻辑（替代原 make_composite 测试）
   - compute_ann_ret：年化收益率计算
   - StrategyConfig 加载：YAML 解析与校验（替代原 _extract_ranks 测试）
   - CLI smoke test：--help 可正常响应（不依赖真实数据）
@@ -19,9 +18,9 @@ from typer.testing import CliRunner
 
 from alpha_factory.cli.opt import (
     compute_ann_ret,
-    make_composite,
     softmax_weights,
 )
+from alpha_factory.data_provider.prcoessors.rank import Rank
 from alpha_factory.cli.main import app
 from alpha_factory.config.strategy import StrategyConfig
 
@@ -62,10 +61,10 @@ class TestSoftmaxWeights:
 
 
 class TestMakeComposite:
-    """TestMakeComposite - 验证预计算列的加权合成逻辑。"""
+    """TestMakeComposite - 验证因子列的加权合成逻辑（使用 Rank.process）。"""
 
     def _make_base_df(self, n_days: int = 4, n_stocks: int = 3):
-        """Minimal DataFrame with _RANK_ columns mimicking precomputed data."""
+        """Minimal DataFrame with factor columns (w/o _RANK_ prefix)."""
         import itertools
         from alpha_factory.utils.schema import F
 
@@ -77,21 +76,25 @@ class TestMakeComposite:
             {
                 F.DATE: [r[0] for r in rows],
                 F.ASSET: [r[1] for r in rows],
-                "_RANK_f1": np.arange(1, n + 1, dtype=float),
-                "_RANK_f2": np.arange(n, 0, -1, dtype=float),
+                "f1": np.arange(1, n + 1, dtype=float),
+                "f2": np.arange(n, 0, -1, dtype=float),
             }
         )
 
     def test_composite_column_created(self):
         df = self._make_base_df()
-        result = make_composite(df, ["f1", "f2"], np.array([0.5, 0.5]))
+        result = Rank(
+            factors=["f1", "f2"], name="COMPOSITE_OPT", weights={"f1": 0.5, "f2": 0.5}
+        ).process(df)
         assert "COMPOSITE_OPT" in result.columns
 
     def test_weighted_sum_correctness(self):
-        """composite = w1*_RANK_f1 + w2*_RANK_f2，方向已在预计算阶段吸收到 rank 排序方向中。"""
+        """composite = w1*f1 + w2*f2，direction 通过权重符号体现。"""
         df = self._make_base_df(n_days=1, n_stocks=2)
-        # _RANK_f1=[1,2], _RANK_f2=[2,1], w=[0.8, 0.2]
-        result = make_composite(df.head(2), ["f1", "f2"], np.array([0.8, 0.2]))
+        # f1=[1,2], f2=[2,1], w={f1:0.8, f2:0.2}
+        result = Rank(
+            factors=["f1", "f2"], name="COMPOSITE_OPT", weights={"f1": 0.8, "f2": 0.2}
+        ).process(df.head(2))
         expected = [
             0.8 * 1 + 0.2 * 2,  # 1.2
             0.8 * 2 + 0.2 * 1,  # 1.8
@@ -99,16 +102,20 @@ class TestMakeComposite:
         assert result["COMPOSITE_OPT"].to_list() == pytest.approx(expected, rel=1e-6)
 
     def test_pure_first_factor(self):
-        """When w=[1,0], composite == _RANK_f1（direction 已内化于 rank 列）."""
+        """When weights={f1:1, f2:0}, composite == f1."""
         df = self._make_base_df(n_days=2, n_stocks=2)
-        result = make_composite(df, ["f1", "f2"], np.array([1.0, 0.0]))
+        result = Rank(
+            factors=["f1", "f2"], name="COMPOSITE_OPT", weights={"f1": 1.0, "f2": 0.0}
+        ).process(df)
         assert result["COMPOSITE_OPT"].to_list() == pytest.approx(
-            result["_RANK_f1"].to_list(), rel=1e-6
+            result["f1"].to_list(), rel=1e-6
         )
 
     def test_original_df_not_mutated(self):
         df = self._make_base_df()
-        _ = make_composite(df, ["f1", "f2"], np.array([0.5, 0.5]))
+        _ = Rank(
+            factors=["f1", "f2"], name="COMPOSITE_OPT", weights={"f1": 0.5, "f2": 0.5}
+        ).process(df)
         assert "COMPOSITE_OPT" not in df.columns
 
 

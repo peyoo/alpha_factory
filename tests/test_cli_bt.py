@@ -161,12 +161,12 @@ def test_bt_single_factor_direction_1_ascending_false(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# 多因子：precompute_factor_ranks + make_composite
+# 多因子：load_pool_data + Rank.process 合成 COMPOSITE_OPT
 # ---------------------------------------------------------------------------
 
 
 def test_bt_multi_factor_uses_composite(tmp_path: Path):
-    """多因子时应调用 precompute_factor_ranks + make_composite，ascending=False。"""
+    """多因子时应通过 Rank.process 合成 COMPOSITE_OPT，backtest ascending=False。"""
     yaml_path = _write_yaml(tmp_path, _MULTI_RANK_YAML)
 
     mock_base_df = pl.DataFrame(
@@ -179,14 +179,14 @@ def test_bt_multi_factor_uses_composite(tmp_path: Path):
             F.IS_UP_LIMIT: [False],
             F.IS_DOWN_LIMIT: [False],
             F.IS_SUSPENDED: [False],
-            "_RANK_f1": [1.0],
-            "_RANK_f2": [2.0],
+            "f1": [1.0],
+            "f2": [2.0],
             "COMPOSITE_OPT": [1.5],
         }
     )
 
     with (
-        patch("alpha_factory.cli.backtest.DataProvider"),
+        patch("alpha_factory.cli.backtest.DataProvider") as mock_dp_cls,
         patch(
             "alpha_factory.cli.backtest.backtest_daily_evolving",
             side_effect=_fake_backtest,
@@ -194,17 +194,14 @@ def test_bt_multi_factor_uses_composite(tmp_path: Path):
         patch("alpha_factory.cli.backtest._print_summary"),
         patch("alpha_factory.cli.opt._resolve_pool"),
         patch(
-            "alpha_factory.cli.opt.precompute_factor_ranks", return_value=mock_base_df
-        ) as mock_pre,
-        patch(
-            "alpha_factory.cli.opt.make_composite", return_value=mock_base_df
-        ) as mock_comp,
+            "alpha_factory.cli.opt.Rank.process", return_value=mock_base_df
+        ) as mock_rank,
     ):
+        mock_dp_cls.return_value.load_pool_data.return_value = mock_base_df.lazy()
         result = runner.invoke(app, ["bt", "-y", str(yaml_path), "--no-report"])
 
     assert result.exit_code == 0, result.output
-    assert mock_pre.called
-    assert mock_comp.called
+    assert mock_rank.called
     assert mock_bt.call_args.kwargs["ascending"] is False
 
 

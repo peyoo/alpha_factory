@@ -89,11 +89,16 @@ class PreProcess(FactorsProcessor):
             X_res[mask] = X_ortho_active
 
             res_df = pl.from_numpy(X_res, schema=factor_cols)
-            return pl.concat([df.drop(factor_cols), res_df], how="horizontal")
+            return pl.concat([df.drop(factor_cols), res_df], how="horizontal").select(
+                df.columns
+            )
 
-        # 5. 分组执行并清理
+        # 5. 分组执行并清理（map_groups 需要显式传入 schema）
+        _schema = processed_lf.collect_schema()
         processed_lf = (
-            processed_lf.group_by(F.DATE).map_groups(_apply_ortho).drop(["_mv_rank"])
+            processed_lf.group_by(F.DATE)
+            .map_groups(_apply_ortho, schema=_schema)
+            .drop(["_mv_rank"])
         )
 
         return processed_lf if is_lazy else processed_lf.collect()

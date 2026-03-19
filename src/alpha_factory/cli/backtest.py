@@ -236,22 +236,32 @@ def _run_bt_from_yaml(
         )
         factor_label = rank.name
     else:
-        # 多因子：截面 rank 预计算 + softmax 加权合成
+        # 多因子：PreProcess 预处理 + 加权合成
         import numpy as np
 
-        from alpha_factory.cli.opt import (
-            _COMPOSITE_COL,
-            make_composite,
-            precompute_factor_ranks,
-        )
+        from alpha_factory.cli.opt import _COMPOSITE_COL
+        from alpha_factory.data_provider.prcoessors.pre_processor import PreProcess
+        from alpha_factory.data_provider.prcoessors.rank import Rank
 
-        base_df = precompute_factor_ranks(
-            cfg.ranks, dp, pool_instance, start_date, end_date
+        factor_names = cfg.factor_names
+        lf = dp.load_pool_data(
+            pool_instance,
+            start_date,
+            end_date,
+            exprs=cfg.factor_exprs,
+            processors=[PreProcess(factors=factor_names)],
         )
+        base_df = lf.collect()
         raw_w = np.array(cfg.factor_weights, dtype=float)
         w_sum = raw_w.sum()
-        weights = raw_w / w_sum if w_sum > 0 else raw_w
-        df = make_composite(base_df, cfg.factor_names, weights)
+        norm_w = raw_w / w_sum if w_sum > 0 else raw_w
+        _directions = np.array([r.direction or 1 for r in cfg.ranks], dtype=float)
+        signed_weights = {
+            name: float(w * d) for name, w, d in zip(factor_names, norm_w, _directions)
+        }
+        df = Rank(
+            factors=factor_names, name=_COMPOSITE_COL, weights=signed_weights
+        ).process(base_df)
         console.print(
             f"[bold cyan]🚀 逐日演进回测（合成因子）[/bold cyan] | "
             f"因子数={len(cfg.ranks)} | 持仓={cfg.hold_num} | 卖出线={cfg.sell_rank} | "
