@@ -272,3 +272,44 @@ class StrategyConfig(BaseModel):
     def factor_exprs(self) -> List[str]:
         """返回所有因子的 ``name = expression`` 字符串列表，供 DataProvider 使用。"""
         return [r.expr_str for r in self.ranks]
+
+    def build_actions(self) -> List:
+        """构建完整的 actions 管道（预处理、合成等）。
+
+        对于单因子策略，返回空列表 []。
+        对于多因子策略，返回 [预处理器（如有）, 合成器]。
+
+        Returns:
+            FactorsAction 对象列表，供 DataProvider.load_pool_data 使用。
+        """
+        from alpha_factory.data_provider.factorsprocessor import (
+            FactorsPreProcessor,
+            FactorsRankComposite,
+        )
+        from alpha_factory.cli.opt import _COMPOSITE_COL
+
+        actions: List = []
+
+        # 多因子时才添加 actions
+        if len(self.ranks) > 1:
+            factor_names = self.factor_names
+
+            # 1. 预处理（如果配置了）
+            if self.preprocess:
+                actions.append(
+                    FactorsPreProcessor(factors=factor_names, actions=self.preprocess)
+                )
+
+            # 2. 合成（权重直接使用，FactorsRankComposite 内部会做自动归一化）
+            signed_weights = {
+                name: float(w) for name, w in zip(factor_names, self.factor_weights)
+            }
+            actions.append(
+                FactorsRankComposite(
+                    factors=factor_names,
+                    name=_COMPOSITE_COL,
+                    weights=signed_weights,
+                )
+            )
+
+        return actions

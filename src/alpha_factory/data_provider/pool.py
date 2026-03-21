@@ -117,7 +117,7 @@ class MainSmallPool(PoolUniverse):
         ]
 
     def pool(
-        self, lf: pl.LazyFrame, small_num: int = 800, production=False
+        self, lf: pl.LazyFrame, small_num: int = 400, production=False
     ) -> pl.LazyFrame:
         """
         定义一个"小市值股票池"，用于捕捉小盘股效应，不可用于生产环境，仅供研究参考。
@@ -201,7 +201,7 @@ class MainSmallPool(PoolUniverse):
             & ~pl.col("IS_UP_LIMIT")
             & ~pl.col("IS_DOWN_LIMIT")
             & (pl.col("CLOSE_RAW_MA60") > 2)
-            # & ~pl.col(F.APRIL_DISCLOSURE_SIGNAL)
+            & ~pl.col(F.APRIL_DISCLOSURE_SIGNAL)
         )
 
         result = (

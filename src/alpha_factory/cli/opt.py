@@ -286,7 +286,7 @@ def quant_opt(
         start_date,
         end_date,
         exprs=cfg.factor_exprs,
-        processors=processors,
+        actions=processors,
     )
     base_df = lf.collect()
     console.print(

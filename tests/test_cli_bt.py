@@ -116,8 +116,8 @@ def test_bt_single_factor_loads_raw_expr(tmp_path: Path):
     assert call_exprs == ["f1 = -ts_mean(AMOUNT, 60)"]
 
 
-def test_bt_single_factor_direction_minus1_ascending_true(tmp_path: Path):
-    """direction=-1 时应以 ascending=True 调用 backtest_daily_evolving。"""
+def test_bt_single_factor_direction_minus1_ascending_false(tmp_path: Path):
+    """方向已在表达式生成时统一处理，backtest 层级统一使用 ascending=False。"""
     yaml_path = _write_yaml(tmp_path, _SINGLE_RANK_YAML)
 
     with (
@@ -133,11 +133,11 @@ def test_bt_single_factor_direction_minus1_ascending_true(tmp_path: Path):
         result = runner.invoke(app, ["bt", "-y", str(yaml_path), "--no-report"])
 
     assert result.exit_code == 0, result.output
-    assert mock_bt.call_args.kwargs["ascending"] is True
+    assert mock_bt.call_args.kwargs["ascending"] is False
 
 
 def test_bt_single_factor_direction_1_ascending_false(tmp_path: Path):
-    """direction=1 时应以 ascending=False 调用 backtest_daily_evolving。"""
+    """单因子时 backtest 层级统一使用 ascending=False。"""
     data = {
         **_SINGLE_RANK_YAML,
         "ranks": [{"name": "f1", "expression": "CLOSE", "weight": 1.0, "direction": 1}],

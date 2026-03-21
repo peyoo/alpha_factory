@@ -79,7 +79,7 @@ class DataProvider:
         start_date: DateLike,
         end_date: Optional[DateLike] = None,
         exprs: List[str] = None,
-        processors: List[FactorsAction] = None,
+        actions: List[FactorsAction] = None,
         cache: str | Path = None,
     ) -> pl.LazyFrame:
         """按股票池加载数据，并支持两阶段缓存策略。
@@ -89,6 +89,8 @@ class DataProvider:
             start_date: 起始日期，接受 str（YYYYMMDD）或 datetime.date。
             end_date: 结束日期，None 时自动推断仓库最新日期。
             exprs: 因子表达式列表，支持 `name = expr` 形式。
+            actions: 可选的数据处理动作列表，支持预处理对象和合成类对象，
+                对生成的因子列进行转换/聚合等操作。
             cache: 缓存策略。
                 - `"md5"`: pool 基础数据缓存 + factors 结果按 MD5 自动合成路径缓存。
                 - `Path/str`: 显式 factors 缓存路径（相对路径转绝对路径）。
@@ -107,7 +109,7 @@ class DataProvider:
         )
 
         lf = self._build_factors_view(
-            pool, pool_data, exprs, processors, factors_cache_path
+            pool, pool_data, exprs, actions, factors_cache_path
         )
 
         # 在最后阶段过滤到 start_dt 及以后（表达式计算已完成，可以安全过滤）
@@ -298,7 +300,7 @@ class DataProvider:
         pool: PoolUniverse,
         base_lf: pl.LazyFrame,
         exprs: Optional[List],
-        processors: Optional[List[FactorsAction]] = None,
+        actions: Optional[List[FactorsAction]] = None,
         final_cache_path: Optional[Path] = None,
     ) -> pl.LazyFrame:
         """在基础层数据上生成表达式列，并按需缓存最终结果。
@@ -314,10 +316,10 @@ class DataProvider:
         lf, generated_expr_cols = self._apply_column_exprs(base_lf, exprs)
         lf = self._finalize_projection(lf, select_cols, generated_expr_cols)
 
-        for processor in processors or []:
-            # 转换为 DataFrame 以兼容 processor.process() 的 API
+        for action in actions or []:
+            # 转换为 DataFrame 以兼容 action.process() 的 API
             df = lf.collect() if isinstance(lf, pl.LazyFrame) else lf
-            df = processor.process(df)
+            df = action.process(df)
             lf = df.lazy() if isinstance(df, pl.DataFrame) else df
 
         if final_cache_path:

@@ -214,83 +214,49 @@ def _run_bt_from_yaml(
 
     dp = DataProvider()
 
+    # 统一的数据加载（单/多因子通过 build_actions() 统一处理）
+    lf = dp.load_pool_data(
+        pool_instance,
+        start_date,
+        end_date,
+        exprs=cfg.factor_exprs,
+        actions=cfg.build_actions(),
+    )
+    df = lf.collect()
+
+    # 确定因子列名和方向（单/多因子自动判断）
     if len(cfg.ranks) == 1:
-        # 单因子：直接加载原始表达式（expr_str 已包含方向）
-        rank = cfg.ranks[0]
-        lf = dp.load_pool_data(
-            pool_instance, start_date, end_date, exprs=[rank.expr_str]
-        )
-        ascending = (rank.direction or 1) < 0
-        console.print(
-            f"[bold cyan]🚀 单因子逐日演进回测[/bold cyan] | "
-            f"因子={rank.name} | 持仓={cfg.hold_num} | 卖出线={cfg.sell_rank} | "
-            f"费率={cfg.cost:.4f} | 执行价={cfg.exe_price} | ascending={ascending}"
-        )
-        result = backtest_daily_evolving(
-            df_input=lf,
-            factor_col=rank.name,
-            n_buy=cfg.hold_num,
-            sell_rank=cfg.sell_rank,
-            cost_rate=cfg.cost,
-            exec_price=exec_price_col,
-            ascending=ascending,
-        )
-        factor_label = rank.name
-    else:
-        # 多因子：新 FactorsPreProcessor 预处理 + 加权合成
-        import numpy as np
-
         from alpha_factory.cli.opt import _COMPOSITE_COL
-        from alpha_factory.data_provider.factorsprocessor import (
-            FactorsPreProcessor,
-            FactorsRankComposite,
-        )
 
-        factor_names = cfg.factor_names
+        factor_col = cfg.ranks[0].name
+        mode_label = "单因子"
+    else:
+        from alpha_factory.cli.opt import _COMPOSITE_COL
 
-        # 从配置读取预处理函数，如果未指定则不预处理
-        preprocess_actions = cfg.preprocess if cfg.preprocess else []
-        processors = (
-            [FactorsPreProcessor(factors=factor_names, actions=preprocess_actions)]
-            if preprocess_actions
-            else []
-        )
+        factor_col = _COMPOSITE_COL
+        mode_label = f"多因子 ({len(cfg.ranks)} 因子)"
 
-        lf = dp.load_pool_data(
-            pool_instance,
-            start_date,
-            end_date,
-            exprs=cfg.factor_exprs,
-            processors=processors,
-        )
-        base_df = lf.collect()
-        raw_w = np.array(cfg.factor_weights, dtype=float)
-        w_sum = raw_w.sum()
-        norm_w = raw_w / w_sum if w_sum > 0 else raw_w
-        # 注：方向已在 expr_str 中通过负号编码，权重直接为正
-        signed_weights = {name: float(w) for name, w in zip(factor_names, norm_w)}
-        df = FactorsRankComposite(
-            factors=factor_names, name=_COMPOSITE_COL, weights=signed_weights
-        ).process(base_df)
-        console.print(
-            f"[bold cyan]🚀 逐日演进回测（合成因子）[/bold cyan] | "
-            f"因子数={len(cfg.ranks)} | 持仓={cfg.hold_num} | 卖出线={cfg.sell_rank} | "
-            f"费率={cfg.cost:.4f} | 执行价={cfg.exe_price}"
-        )
-        result = backtest_daily_evolving(
-            df_input=df,
-            factor_col=_COMPOSITE_COL,
-            n_buy=cfg.hold_num,
-            sell_rank=cfg.sell_rank,
-            cost_rate=cfg.cost,
-            exec_price=exec_price_col,
-            ascending=False,
-        )
-        factor_label = cfg.name
+    console.print(
+        f"[bold cyan]🚀 逐日演进回测 ({mode_label})[/bold cyan] | "
+        f"因子={factor_col} | 持仓={cfg.hold_num} | 卖出线={cfg.sell_rank} | "
+        f"费率={cfg.cost:.4f} | 执行价={cfg.exe_price}"
+    )
+
+    result = backtest_daily_evolving(
+        df_input=df,
+        factor_col=factor_col,
+        n_buy=cfg.hold_num,
+        sell_rank=cfg.sell_rank,
+        cost_rate=cfg.cost,
+        exec_price=exec_price_col,
+        # 方向已在表达式生成时统一处理，backtest 层级统一使用 ascending=False
+        ascending=False,
+    )
 
     daily_df = result["daily_results"]
     trade_df = result["trade_details"]
 
+    factor_label = cfg.name if len(cfg.ranks) > 1 else cfg.ranks[0].name
     _print_summary(daily_df, trade_df, factor_label)
 
     if save_trades is not None:
