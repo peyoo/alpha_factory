@@ -18,6 +18,7 @@ from typing import Optional
 import numpy as np
 import polars as pl
 import typer
+from polars_ta.wq import cs_mad, cs_zscore
 from rich.console import Console
 from rich.table import Table
 
@@ -26,9 +27,11 @@ from loguru import logger
 from alpha_factory.cli.utils import PoolUniverseEnum, resolve_yaml_path
 from alpha_factory.config.strategy import FactorRank, StrategyConfig
 from alpha_factory.data_provider.data_provider import DataProvider
+from alpha_factory.data_provider.factorsprocessor import (
+    FactorsPreProcessor,
+    FactorsRankComposite,
+)
 from alpha_factory.data_provider.pool import PoolUniverse
-from alpha_factory.data_provider.prcoessors.pre_processor import PreProcess
-from alpha_factory.data_provider.prcoessors.rank import Rank
 from alpha_factory.evaluation.backtest.daily_evolving import backtest_daily_evolving
 from alpha_factory.evaluation.batch.ic_summary import batch_ic_summary
 from alpha_factory.utils.schema import F
@@ -140,6 +143,17 @@ def compute_ann_ret(nav_series: pl.Series) -> float:
 
 
 # ---------------------------------------------------------------------------
+# 预处理器定义
+# ---------------------------------------------------------------------------
+# 因子市值中性化：使用 cs_mad_zscore_resid 计算残差
+# cs_mad_zscore_resid(y, x) 中 y 是要处理的因子，x 是中性化目标
+# 直接使用 TOTAL_MV 而不是 mv_rank 来避免缓存同步问题
+# pre_processor = lambda x: cs_mad_zscore_resid(x, pl.col('MV_RANK'))
+
+pre_processors = [cs_mad, cs_zscore]
+
+
+# ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
 
@@ -163,7 +177,7 @@ def quant_opt(
         "--end-date",
         help="回测结束日期 YYYYMMDD（默认取仓库最新日期）",
     ),
-    n_trials: int = typer.Option(100, "--n-trials", help="Optuna 试验次数"),
+    n_trials: int = typer.Option(50, "--n-trials", help="Optuna 试验次数"),
     seed: int = typer.Option(42, "--seed", help="随机种子，确保结果可复现"),
     show_progress: bool = typer.Option(
         True, "--progress/--no-progress", help="是否显示优化进度条"
@@ -263,33 +277,31 @@ def quant_opt(
         f"[bold cyan]⚙ 预计算因子数据[/bold cyan]  "
         f"共 {len(ranks)} 个因子，时间范围 {start_date} ~ {end_date or '最新'}"
     )
+
     lf = dp.load_pool_data(
         pool_instance,
         start_date,
         end_date,
         exprs=cfg.factor_exprs,
-        processors=[PreProcess(factors=factor_names)],
+        processors=[FactorsPreProcessor(factors=factor_names, actions=pre_processors)],
     )
     base_df = lf.collect()
     console.print(
-        f"[green]✓ 预计算完成[/green]  "
+        f"[green]✓ 预计算完成[/green]"
         f"行数: {base_df.height:,}  日期: {base_df[F.DATE].min()} ~ {base_df[F.DATE].max()}"
     )
 
-    # direction 通过权重符号体现：direction=-1 → 负权重 → 因子值越小得分越高
-    _directions = np.array([r.direction or 1 for r in ranks], dtype=float)
-
     # ---- 3. 定义 Optuna 目标函数（仅加权合成 + 回测，无 I/O） ----
+    # 注：方向已在 expr_str 中通过负号编码，权重直接为正
     def objective(trial: "optuna.Trial") -> float:
         raw = np.array(
             [trial.suggest_float(f"w_{name}", 0.0, 1.0) for name in factor_names]
         )
         signed_weights = {
-            name: float(w * d)
-            for name, w, d in zip(factor_names, softmax_weights(raw), _directions)
+            name: float(w) for name, w in zip(factor_names, softmax_weights(raw))
         }
         try:
-            df_trial = Rank(
+            df_trial = FactorsRankComposite(
                 factors=factor_names,
                 name=_COMPOSITE_COL,
                 weights=signed_weights,

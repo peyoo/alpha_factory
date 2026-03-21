@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+import polars as pl
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -215,10 +216,11 @@ def _run_bt_from_yaml(
     dp = DataProvider()
 
     if len(cfg.ranks) == 1:
-        # 单因子：直接加载原始表达式
+        # 单因子：直接加载原始表达式（expr_str 已包含方向）
         rank = cfg.ranks[0]
-        expr_str = f"{rank.name} = {rank.expression}"
-        lf = dp.load_pool_data(pool_instance, start_date, end_date, exprs=[expr_str])
+        lf = dp.load_pool_data(
+            pool_instance, start_date, end_date, exprs=[rank.expr_str]
+        )
         ascending = (rank.direction or 1) < 0
         console.print(
             f"[bold cyan]🚀 单因子逐日演进回测[/bold cyan] | "
@@ -236,30 +238,38 @@ def _run_bt_from_yaml(
         )
         factor_label = rank.name
     else:
-        # 多因子：PreProcess 预处理 + 加权合成
+        # 多因子：新 FactorsPreProcessor 预处理 + 加权合成
         import numpy as np
 
         from alpha_factory.cli.opt import _COMPOSITE_COL
-        from alpha_factory.data_provider.prcoessors.pre_processor import PreProcess
-        from alpha_factory.data_provider.prcoessors.rank import Rank
+        from alpha_factory.data_provider.factorsprocessor import (
+            FactorsPreProcessor,
+            FactorsRankComposite,
+        )
+        from polars_ta.wq import cs_mad_zscore_resid
 
         factor_names = cfg.factor_names
+
+        # 定义预处理器：市值中性化
+        def pre_processor(x):
+            return cs_mad_zscore_resid(x, pl.col(F.TOTAL_MV))
+
         lf = dp.load_pool_data(
             pool_instance,
             start_date,
             end_date,
             exprs=cfg.factor_exprs,
-            processors=[PreProcess(factors=factor_names)],
+            processors=[
+                FactorsPreProcessor(factors=factor_names, actions=[pre_processor])
+            ],
         )
         base_df = lf.collect()
         raw_w = np.array(cfg.factor_weights, dtype=float)
         w_sum = raw_w.sum()
         norm_w = raw_w / w_sum if w_sum > 0 else raw_w
-        _directions = np.array([r.direction or 1 for r in cfg.ranks], dtype=float)
-        signed_weights = {
-            name: float(w * d) for name, w, d in zip(factor_names, norm_w, _directions)
-        }
-        df = Rank(
+        # 注：方向已在 expr_str 中通过负号编码，权重直接为正
+        signed_weights = {name: float(w) for name, w in zip(factor_names, norm_w)}
+        df = FactorsRankComposite(
             factors=factor_names, name=_COMPOSITE_COL, weights=signed_weights
         ).process(base_df)
         console.print(

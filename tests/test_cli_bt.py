@@ -194,14 +194,15 @@ def test_bt_multi_factor_uses_composite(tmp_path: Path):
         patch("alpha_factory.cli.backtest._print_summary"),
         patch("alpha_factory.cli.opt._resolve_pool"),
         patch(
-            "alpha_factory.cli.opt.Rank.process", return_value=mock_base_df
-        ) as mock_rank,
+            "alpha_factory.data_provider.factorsprocessor.FactorsRankComposite"
+        ) as mock_rank_composite,
     ):
         mock_dp_cls.return_value.load_pool_data.return_value = mock_base_df.lazy()
+        mock_rank_composite.return_value.process.return_value = mock_base_df
         result = runner.invoke(app, ["bt", "-y", str(yaml_path), "--no-report"])
 
     assert result.exit_code == 0, result.output
-    assert mock_rank.called
+    assert mock_rank_composite.called
     assert mock_bt.call_args.kwargs["ascending"] is False
 
 

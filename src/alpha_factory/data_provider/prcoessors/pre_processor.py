@@ -1,17 +1,16 @@
-import numpy as np
 import polars as pl
 import polars_ds as pds
 import polars_ols as pls
 from polars_ols.least_squares import OLSKwargs
 
-from alpha_factory.data_provider.factorsprocessor import FactorsProcessor
+from alpha_factory.data_provider.factorsprocessor import FactorsAction
 from alpha_factory.utils.schema import F
 
 
 _ols_kwargs = OLSKwargs(null_policy="drop", solve_method="svd")
 
 
-class PreProcess(FactorsProcessor):
+class PreProcess(FactorsAction):
     def process(self, df: pl.DataFrame) -> pl.DataFrame:
 
         is_lazy = isinstance(df, pl.LazyFrame)
@@ -62,43 +61,43 @@ class PreProcess(FactorsProcessor):
         # 应用预处理转换
         processed_lf = lf.with_columns(exprs_alpha + exprs_mv)
 
-        # 4. 对称正交化：矩阵运算必须只针对池内样本
-        def _apply_ortho(df: pl.DataFrame) -> pl.DataFrame:
-            # 获取池内掩码
-            mask = df[F.POOL_MASK].to_numpy()
-            # 如果该截面没有符合条件的股票，直接返回
-            if not mask.any():
-                return df
-
-            # 提取因子矩阵
-            X_full = df.select(factor_cols).to_numpy()
-            X_active = X_full[mask]
-
-            # 计算对称正交化矩阵 (基于池内样本)
-            S = np.corrcoef(X_active, rowvar=False)
-            # 检查 S 是否包含 NaN (如果某因子在池内全为 Null)
-            if np.isnan(S).any():
-                return df
-
-            eig_vals, eig_vecs = np.linalg.eigh(S + np.eye(len(factor_cols)) * 1e-6)
-            S_inv_sqrt = eig_vecs @ np.diag(1.0 / np.sqrt(eig_vals)) @ eig_vecs.T
-
-            # 投影并写回
-            X_ortho_active = X_active @ S_inv_sqrt
-            X_res = np.full_like(X_full, np.nan)
-            X_res[mask] = X_ortho_active
-
-            res_df = pl.from_numpy(X_res, schema=factor_cols)
-            return pl.concat([df.drop(factor_cols), res_df], how="horizontal").select(
-                df.columns
-            )
-
-        # 5. 分组执行并清理（map_groups 需要显式传入 schema）
-        _schema = processed_lf.collect_schema()
-        processed_lf = (
-            processed_lf.group_by(F.DATE)
-            .map_groups(_apply_ortho, schema=_schema)
-            .drop(["_mv_rank"])
-        )
+        # # 4. 对称正交化：矩阵运算必须只针对池内样本
+        # def _apply_ortho(df: pl.DataFrame) -> pl.DataFrame:
+        #     # 获取池内掩码
+        #     mask = df[F.POOL_MASK].to_numpy()
+        #     # 如果该截面没有符合条件的股票，直接返回
+        #     if not mask.any():
+        #         return df
+        #
+        #     # 提取因子矩阵
+        #     X_full = df.select(factor_cols).to_numpy()
+        #     X_active = X_full[mask]
+        #
+        #     # 计算对称正交化矩阵 (基于池内样本)
+        #     S = np.corrcoef(X_active, rowvar=False)
+        #     # 检查 S 是否包含 NaN (如果某因子在池内全为 Null)
+        #     if np.isnan(S).any():
+        #         return df
+        #
+        #     eig_vals, eig_vecs = np.linalg.eigh(S + np.eye(len(factor_cols)) * 1e-6)
+        #     S_inv_sqrt = eig_vecs @ np.diag(1.0 / np.sqrt(eig_vals)) @ eig_vecs.T
+        #
+        #     # 投影并写回
+        #     X_ortho_active = X_active @ S_inv_sqrt
+        #     X_res = np.full_like(X_full, np.nan)
+        #     X_res[mask] = X_ortho_active
+        #
+        #     res_df = pl.from_numpy(X_res, schema=factor_cols)
+        #     return pl.concat([df.drop(factor_cols), res_df], how="horizontal").select(
+        #         df.columns
+        #     )
+        #
+        # # 5. 分组执行并清理（map_groups 需要显式传入 schema）
+        # _schema = processed_lf.collect_schema()
+        # processed_lf = (
+        #     processed_lf.group_by(F.DATE)
+        #     .map_groups(_apply_ortho, schema=_schema)
+        #     .drop(["_mv_rank"])
+        # )
 
         return processed_lf if is_lazy else processed_lf.collect()

@@ -14,7 +14,7 @@ from expr_codegen import codegen_exec
 
 
 from alpha_factory.data_provider import TushareDataService
-from alpha_factory.data_provider.factorsprocessor import FactorsProcessor
+from alpha_factory.data_provider.factorsprocessor import FactorsAction
 from alpha_factory.data_provider.pool import PoolUniverse
 from alpha_factory.data_provider.stock_assets_manager import StockAssetsManager
 from alpha_factory.config.base import settings
@@ -78,9 +78,9 @@ class DataProvider:
         pool: PoolUniverse,
         start_date: DateLike,
         end_date: Optional[DateLike] = None,
-        exprs: Optional[List] = None,
-        processors: Optional[List[FactorsProcessor]] = None,
-        cache: Optional[Union[str, Path]] = None,
+        exprs: List[str] = None,
+        processors: List[FactorsAction] = None,
+        cache: str | Path = None,
     ) -> pl.LazyFrame:
         """按股票池加载数据，并支持两阶段缓存策略。
 
@@ -298,7 +298,7 @@ class DataProvider:
         pool: PoolUniverse,
         base_lf: pl.LazyFrame,
         exprs: Optional[List],
-        processors: Optional[List[FactorsProcessor]] = None,
+        processors: Optional[List[FactorsAction]] = None,
         final_cache_path: Optional[Path] = None,
     ) -> pl.LazyFrame:
         """在基础层数据上生成表达式列，并按需缓存最终结果。
@@ -315,7 +315,10 @@ class DataProvider:
         lf = self._finalize_projection(lf, select_cols, generated_expr_cols)
 
         for processor in processors or []:
-            lf = processor.process(lf)
+            # 转换为 DataFrame 以兼容 processor.process() 的 API
+            df = lf.collect() if isinstance(lf, pl.LazyFrame) else lf
+            df = processor.process(df)
+            lf = df.lazy() if isinstance(df, pl.DataFrame) else df
 
         if final_cache_path:
             return self._persist_cache_and_reload(lf, final_cache_path)

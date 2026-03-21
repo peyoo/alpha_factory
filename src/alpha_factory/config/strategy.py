@@ -64,8 +64,15 @@ class FactorRank(BaseModel):
 
     @property
     def expr_str(self) -> str:
-        """返回 DataProvider exprs 所需的 ``name = expression`` 格式字符串。"""
-        return f"{self.name} = {self.expression.strip()}"
+        """返回 DataProvider exprs 所需的 ``name = expression`` 格式字符串。
+
+        如果 direction == -1 且表达式不以负号开头，在外加括号和负号；
+        否则返回原始表达式，避免双重否定。
+        """
+        expr = self.expression.strip()
+        if self.direction == -1 and not expr.startswith("-"):
+            expr = f"-({expr})"
+        return f"{self.name} = {expr}"
 
 
 # ---------------------------------------------------------------------------
