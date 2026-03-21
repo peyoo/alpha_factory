@@ -1,5 +1,6 @@
-from typing import List, Callable, Dict
+from typing import List, Callable, Dict, Union
 import re
+import importlib
 
 import polars as pl
 
@@ -27,6 +28,40 @@ class FactorsAction:
         raise NotImplementedError("Subclasses must implement the process method")
 
 
+def _resolve_action_function(action_name: str) -> Callable[[pl.Expr], pl.Expr]:
+    """
+    从字符串名称解析为可调用函数对象。
+    优先从 pre_process_actions 模块查找，再从 polars_ta.wq 模块查找。
+
+    Args:
+        action_name: 函数名称（字符串）
+
+    Returns:
+        函数对象
+
+    Raises:
+        ValueError: 如果函数名无法解析
+    """
+    candidate_modules = [
+        "alpha_factory.data_provider.prcoessors.pre_process_actions",
+        "polars_ta.wq",
+    ]
+
+    for module_name in candidate_modules:
+        try:
+            module = importlib.import_module(module_name)
+            if hasattr(module, action_name):
+                return getattr(module, action_name)
+        except (ImportError, AttributeError):
+            continue
+
+    # 如果都找不到，抛出有用的错误信息
+    raise ValueError(
+        f"无法解析预处理函数 '{action_name}'。"
+        f"请确保该函数定义在 'pre_process_actions' 或 'polars_ta.wq' 模块中。"
+    )
+
+
 class FactorsComposite(FactorsAction):
     """因子合成器，继承自 FactorsAction，重写 process 方法实现因子合成"""
 
@@ -39,22 +74,50 @@ class FactorsComposite(FactorsAction):
 class FactorsPreProcessor(FactorsAction):
     """
     因子预处理器，继承自 FactorsAction，重写 process 方法实现预处理逻辑
-    actions 是一个函数列表，每个函数接受一个 DataFrame 并返回一个 DataFrame，预处理器会依次应用这些函数到指定的因子列上
+    actions 是一个函数列表，可以包含函数对象或字符串函数名。
+    字符串会在初始化时自动转换为对应的函数对象（从 pre_process_actions 或 polars_ta.wq 模块查找）。
+    预处理器会依次应用这些函数到指定的因子列上。
     比如，actions 可以包含去极值、标准化、回归残差等函数，这些函数会被依次应用到 factors 指定的列上，生成新的列覆盖原列
 
+    示例：
+        # 使用函数对象
+        processor = FactorsPreProcessor(
+            factors=['alpha1', 'alpha2'],
+            actions=[my_function]
+        )
+
+        # 使用字符串函数名（自动查找）
+        processor = FactorsPreProcessor(
+            factors=['alpha1', 'alpha2'],
+            actions=['my_cs_mad_zscore_resid', 'other_function']
+        )
+
+        # 混合使用
+        processor = FactorsPreProcessor(
+            factors=['alpha1', 'alpha2'],
+            actions=['my_cs_mad_zscore_resid', my_function]
+        )
     """
 
     def __init__(
         self,
         factors: List[str] | str,
-        actions: List[Callable[[pl.Expr], pl.Expr]],
+        actions: List[Union[str, Callable[[pl.Expr], pl.Expr]]],
         use_pool_mask: bool = True,
     ):
         super().__init__(factors)
-        # 预处理动作列表，每个动作都是一个函数，接受一个 pl.Expr 并返回一个 pl.Expr
+        # 预处理动作列表，每个动作都是一个函数或字符串
+        # 字符串会被转换为对应的函数对象
         # 所有的预处理动作都是截面函数，在 DATE 维度上应用
         # https://github.com/wukan1986/polars_ta/blob/main/polars_ta/wq/preprocess.py
-        self.actions = actions
+        self.actions: List[Callable[[pl.Expr], pl.Expr]] = []
+        for action in actions:
+            if isinstance(action, str):
+                # 字符串函数名，需要解析
+                self.actions.append(_resolve_action_function(action))
+            else:
+                # 已经是函数对象
+                self.actions.append(action)
         self.use_pool_mask = use_pool_mask
 
     def _apply_actions_to_cols(self, cols: List[str]) -> List[pl.Expr]:
