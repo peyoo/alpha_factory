@@ -18,7 +18,6 @@ from typing import Optional
 import numpy as np
 import polars as pl
 import typer
-from polars_ta.wq import cs_mad, cs_zscore
 from rich.console import Console
 from rich.table import Table
 
@@ -145,12 +144,8 @@ def compute_ann_ret(nav_series: pl.Series) -> float:
 # ---------------------------------------------------------------------------
 # 预处理器定义
 # ---------------------------------------------------------------------------
-# 因子市值中性化：使用 cs_mad_zscore_resid 计算残差
-# cs_mad_zscore_resid(y, x) 中 y 是要处理的因子，x 是中性化目标
-# 直接使用 TOTAL_MV 而不是 mv_rank 来避免缓存同步问题
-# pre_processor = lambda x: cs_mad_zscore_resid(x, pl.col('MV_RANK'))
-
-pre_processors = [cs_mad, cs_zscore]
+# 预处理函数现在从 StrategyConfig.preprocess 字段读取
+# 示例在 YAML 中: preprocess: [my_cs_mad_zscore_resid, ...]
 
 
 # ---------------------------------------------------------------------------
@@ -278,12 +273,20 @@ def quant_opt(
         f"共 {len(ranks)} 个因子，时间范围 {start_date} ~ {end_date or '最新'}"
     )
 
+    # 从配置读取预处理函数，如果未指定则不预处理
+    preprocess_actions = cfg.preprocess if cfg.preprocess else []
+    processors = (
+        [FactorsPreProcessor(factors=factor_names, actions=preprocess_actions)]
+        if preprocess_actions
+        else []
+    )
+
     lf = dp.load_pool_data(
         pool_instance,
         start_date,
         end_date,
         exprs=cfg.factor_exprs,
-        processors=[FactorsPreProcessor(factors=factor_names, actions=pre_processors)],
+        processors=processors,
     )
     base_df = lf.collect()
     console.print(

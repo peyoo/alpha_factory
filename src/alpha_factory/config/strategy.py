@@ -91,6 +91,9 @@ class StrategyConfig(BaseModel):
         股票池名称，对应 ``PoolUniverseEnum`` 可选值。
     pool_mask
         股票池过滤规则列表，逐条 AND 叠加。
+    preprocess
+        预处理函数名列表（字符串），将依次应用于所有 ranks 因子。
+        如果缺省则表示因子不需要预处理。示例: ``['my_cs_mad_zscore_resid']``
     ranks
         参与合成排名的因子列表，至少需要 2 个因子方可执行权重优化。
     bt_mode
@@ -127,6 +130,12 @@ class StrategyConfig(BaseModel):
     pool_mask: List[ExprFilter] = Field(
         default_factory=list,
         description="股票池额外过滤规则（AND 叠加）",
+    )
+
+    # ---------- 因子预处理 ----------
+    preprocess: List[str] = Field(
+        default_factory=list,
+        description="预处理函数名列表，依次应用于所有 ranks 因子",
     )
 
     # ---------- 因子列表 ----------

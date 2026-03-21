@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-import polars as pl
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -246,22 +245,23 @@ def _run_bt_from_yaml(
             FactorsPreProcessor,
             FactorsRankComposite,
         )
-        from polars_ta.wq import cs_mad_zscore_resid
 
         factor_names = cfg.factor_names
 
-        # 定义预处理器：市值中性化
-        def pre_processor(x):
-            return cs_mad_zscore_resid(x, pl.col(F.TOTAL_MV))
+        # 从配置读取预处理函数，如果未指定则不预处理
+        preprocess_actions = cfg.preprocess if cfg.preprocess else []
+        processors = (
+            [FactorsPreProcessor(factors=factor_names, actions=preprocess_actions)]
+            if preprocess_actions
+            else []
+        )
 
         lf = dp.load_pool_data(
             pool_instance,
             start_date,
             end_date,
             exprs=cfg.factor_exprs,
-            processors=[
-                FactorsPreProcessor(factors=factor_names, actions=[pre_processor])
-            ],
+            processors=processors,
         )
         base_df = lf.collect()
         raw_w = np.array(cfg.factor_weights, dtype=float)

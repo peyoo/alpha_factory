@@ -70,19 +70,6 @@ class PoolUniverse:
         """
         return [F.POOL_MASK, F.LABEL_FOR_IC, F.LABEL_FOR_RET, F.LABEL_FOR_RET_CC]
 
-    # def preprocessor(
-    #     self,
-    #     df: Union[pl.DataFrame, pl.LazyFrame],
-    #     factors: Union[str, List[str]] = r"^factor_.*",
-    # ) -> Union[pl.DataFrame, pl.LazyFrame]:
-    #     """
-    #     对于池内股票，进行因子预处理（如中性化、标准化等），提升后续分析的质量和稳定性。
-    #     1. 过滤：仅保留在池内且必要列非空的行
-    #     2. 中性化：对指定因子进行市值和换手率中性化处理，减少规模和流动性偏差
-    #     3. 标准化：对中性化后的因子值进行 Rank Gaussian 标准化，提升分布特征
-    #     """
-    #     return df
-
     @property
     def pool_dir(self):
         return settings.OUTPUT_DIR / self.name
@@ -214,7 +201,7 @@ class MainSmallPool(PoolUniverse):
             & ~pl.col("IS_UP_LIMIT")
             & ~pl.col("IS_DOWN_LIMIT")
             & (pl.col("CLOSE_RAW_MA60") > 2)
-            & ~pl.col(F.APRIL_DISCLOSURE_SIGNAL)
+            # & ~pl.col(F.APRIL_DISCLOSURE_SIGNAL)
         )
 
         result = (
