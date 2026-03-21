@@ -57,35 +57,46 @@ class FactorsPreProcessor(FactorsAction):
         self.actions = actions
         self.use_pool_mask = use_pool_mask
 
+    def _apply_actions_to_cols(self, cols: List[str]) -> List[pl.Expr]:
+        """构建嵌套应用所有actions后的表达式列表"""
+        final_exprs = []
+        for c in cols:
+            expr = pl.col(c)
+            for action in self.actions:
+                expr = action(expr)
+            final_exprs.append(expr.over(F.DATE).alias(c))
+        return final_exprs
+
     def process(self, df: pl.DataFrame) -> pl.DataFrame:
         cols = self._cols_to_process(df)
+        if not cols:
+            return df
+
         has_mask = self.use_pool_mask and F.POOL_MASK in df.columns
+        final_exprs = self._apply_actions_to_cols(cols)
 
+        # 无mask 情况：直接应用预处理
         if not has_mask:
-            lf = df.lazy()
-            for action in self.actions:
-                lf = lf.with_columns(
-                    action(pl.col(c)).over(F.DATE).alias(c) for c in cols
-                )
-            return lf.collect()
+            return df.lazy().with_columns(final_exprs).collect()
 
+        # 有mask 情况：Step 1 & 2
         # Step 1: 只保留池内股票，截面统计量只含池内数据（正确）
-        lf_pool = df.lazy().filter(pl.col(F.POOL_MASK))
-
-        # Step 2: 在池内截面上应用 cs_ 操作，.over(DATE) 确保截面统计量仅含池内股票
-        for action in self.actions:
-            lf_pool = lf_pool.with_columns(
-                action(pl.col(c)).over(F.DATE).alias(c) for c in cols
-            )
+        # Step 2: 在池内截面上应用预处理，.over(DATE) 确保截面统计量仅含池内股票
+        lf_pool = df.lazy().filter(pl.col(F.POOL_MASK)).with_columns(final_exprs)
 
         # Step 3: join 回原表
-        # Bug Fix: 使用 coalesce 优先取处理后的值（_new），
-        # 若为 null（非池内行 join 不到）则回退到原始值，避免用 null 覆盖原值
+        # 使用 when-then-otherwise 确保非池内行保持原值，池内行使用新值
         keys = [F.DATE, F.ASSET]
         result = (
             df.lazy()
             .join(lf_pool.select(keys + cols), on=keys, how="left", suffix="_new")
-            .with_columns(pl.coalesce([f"{c}_new", c]).alias(c) for c in cols)
+            .with_columns(
+                pl.when(pl.col(F.POOL_MASK))
+                .then(pl.col(f"{c}_new"))
+                .otherwise(pl.col(c))
+                .alias(c)
+                for c in cols
+            )
             .drop([f"{c}_new" for c in cols])
         )
         return result.collect()
