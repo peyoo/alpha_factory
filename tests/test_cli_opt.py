@@ -188,7 +188,8 @@ class TestStrategyConfigLoad:
         yaml_file = tmp_path / "s1.yaml"
         yaml_file.write_text(self._make_yaml_content(2), encoding="utf-8")
         cfg = StrategyConfig.from_yaml(yaml_file)
-        assert cfg.factor_names == ["f1", "f2"]
+        # 所有因子名字在 from_yaml 时统一生成为 rank_f1、rank_f2...
+        assert cfg.factor_names == ["rank_f1", "rank_f2"]
 
     def test_missing_file_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError):
@@ -257,13 +258,15 @@ class TestYamlWriteback:
         yaml_file = tmp_path / "test_strat2.yaml"
         yaml_file.write_text(self._make_yaml_content(), encoding="utf-8")
 
-        # 写回不改变 expression / direction / name
+        # 更新 weight，然后写回
         cfg = StrategyConfig.from_yaml(yaml_file)
         for rank_item in cfg.ranks:
             rank_item.weight = 0.5
         cfg.to_yaml(yaml_file)
 
         cfg2 = StrategyConfig.from_yaml(yaml_file)
+        # expression 和 direction 保持不变
         assert cfg2.ranks[0].expression == "CLOSE.shift(1)"
         assert cfg2.ranks[1].direction == -1
-        assert cfg2.ranks[0].name == "f1"
+        # 名字在 from_yaml 时统一生成为 rank_f1、rank_f2...
+        assert cfg2.ranks[0].name == "rank_f1"

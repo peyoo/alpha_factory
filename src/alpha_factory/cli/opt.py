@@ -281,11 +281,13 @@ def quant_opt(
         else []
     )
 
+    # 合并因子表达式和过滤表达式，一起计算
+    all_exprs = cfg.factor_exprs + cfg.get_filter_exprs()
     lf = dp.load_pool_data(
         pool_instance,
         start_date,
         end_date,
-        exprs=cfg.factor_exprs,
+        exprs=all_exprs,
         actions=processors,
     )
     base_df = lf.collect()
@@ -297,18 +299,21 @@ def quant_opt(
     # ---- 3. 定义 Optuna 目标函数（仅加权合成 + 回测，无 I/O） ----
     # 注：方向已在 expr_str 中通过负号编码，权重直接为正
     def objective(trial: "optuna.Trial") -> float:
+        logger.info(f"🔍 Trial {trial.number + 1}/{n_trials} 开始: 采样权重并执行回测…")
         raw = np.array(
             [trial.suggest_float(f"w_{name}", 0.0, 1.0) for name in factor_names]
         )
         signed_weights = {
             name: float(w) for name, w in zip(factor_names, softmax_weights(raw))
         }
+        logger.info(f"Trial {trial.number + 1}: 计算组合因子并回测…")
         try:
             df_trial = FactorsRankComposite(
                 factors=factor_names,
                 name=_COMPOSITE_COL,
                 weights=signed_weights,
             ).process(base_df)
+            logger.info(f"Trial {trial.number + 1}: 权重 = {signed_weights}")
             result = backtest_daily_evolving(
                 df_input=df_trial,
                 factor_col=_COMPOSITE_COL,

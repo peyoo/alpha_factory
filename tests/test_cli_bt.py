@@ -113,7 +113,8 @@ def test_bt_single_factor_loads_raw_expr(tmp_path: Path):
 
     assert result.exit_code == 0, result.output
     call_exprs = mock_dp_cls.return_value.load_pool_data.call_args.kwargs["exprs"]
-    assert call_exprs == ["f1 = -ts_mean(AMOUNT, 60)"]
+    # 因子名字在 from_yaml 时统一生成为 rank_f1
+    assert call_exprs == ["rank_f1 = -ts_mean(AMOUNT, 60)"]
 
 
 def test_bt_single_factor_direction_minus1_ascending_false(tmp_path: Path):

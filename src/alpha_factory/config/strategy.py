@@ -13,10 +13,53 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from pathlib import Path
 from typing import List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, model_validator
+
+from alpha_factory.utils.schema import F
+
+
+# ---------------------------------------------------------------------------
+# 命名工具
+# ---------------------------------------------------------------------------
+
+
+class AutoNameGenerator:
+    """统一的自动命名生成器。
+
+    为所有内部列名（因子、过滤条件、复合器等）提供一致的命名策略。
+    格式：{prefix}_{counter}
+
+    示例::
+        gen = AutoNameGenerator()
+        gen.next_name("rank_f")      # "rank_f1"
+        gen.next_name("rank_f")      # "rank_f2"
+        gen.next_name("pool_mask")   # "pool_mask1"
+        gen.next_name("pool_mask")   # "pool_mask2"
+    """
+
+    def __init__(self) -> None:
+        """初始化计数器字典。"""
+        self._counters: dict[str, int] = defaultdict(int)
+
+    def next_name(self, prefix: str) -> str:
+        """生成下一个名字。
+
+        Args:
+            prefix: 名字前缀，如 "rank_f"、"pool_mask"、"buy_able" 等。
+
+        Returns:
+            格式为 "{prefix}{counter}" 的名字。
+        """
+        self._counters[prefix] += 1
+        return f"{prefix}{self._counters[prefix]}"
+
+    def reset(self) -> None:
+        """重置所有计数器（仅用于测试）。"""
+        self._counters.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -24,8 +67,8 @@ from pydantic import BaseModel, Field, model_validator
 # ---------------------------------------------------------------------------
 
 
-class ExprFilter(BaseModel):
-    """单条表达式过滤规则。
+class ExprCondition(BaseModel):
+    """单条表达式规则。
 
     用于 ``pool_mask`` / ``not_sell_able`` / ``sell_able`` /
     ``not_buy_able`` / ``buy_able`` 列表中的每个元素。
@@ -37,7 +80,7 @@ class ExprFilter(BaseModel):
     """
 
     expression: str = ""
-    name: str = Field(default="", description="过滤规则名称（可选）")
+    name: str = Field(default="", description="规则名称（可选）")
 
 
 class FactorRank(BaseModel):
@@ -127,7 +170,7 @@ class StrategyConfig(BaseModel):
     pool: str = Field(default="main_small_pool", description="股票池名称")
 
     # ---------- 股票池过滤 ----------
-    pool_mask: List[ExprFilter] = Field(
+    pool_mask: List[ExprCondition] = Field(
         default_factory=list,
         description="股票池额外过滤规则（AND 叠加）",
     )
@@ -145,11 +188,8 @@ class StrategyConfig(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _auto_fill_rank_names(self) -> "StrategyConfig":
-        """为未命名的因子自动生成 rank_f1 / rank_f2 … 形式的名称。"""
-        for idx, rank in enumerate(self.ranks, start=1):
-            if not rank.name:
-                rank.name = f"rank_f{idx}"
+    def _validate(self) -> "StrategyConfig":
+        """验证阶段（命名已在 from_yaml 时统一生成）。"""
         return self
 
     # ---------- 回测模式 ----------
@@ -167,16 +207,16 @@ class StrategyConfig(BaseModel):
     sell_rank: int = Field(default=30, ge=1, description="触发卖出排名阈值")
 
     # ---------- 交易约束 ----------
-    not_sell_able: List[ExprFilter] = Field(
+    not_sell_able: List[ExprCondition] = Field(
         default_factory=list, description="不可卖出条件列表,or 叠加"
     )
-    sell_able: List[ExprFilter] = Field(
+    sell_able: List[ExprCondition] = Field(
         default_factory=list, description="可卖出白名单条件列表,and 叠加"
     )
-    not_buy_able: List[ExprFilter] = Field(
+    not_buy_able: List[ExprCondition] = Field(
         default_factory=list, description="不可买入条件列表,or 叠加"
     )
-    buy_able: List[ExprFilter] = Field(
+    buy_able: List[ExprCondition] = Field(
         default_factory=list, description="可买入白名单条件列表,and 叠加"
     )
 
@@ -188,11 +228,14 @@ class StrategyConfig(BaseModel):
     def from_yaml(cls, path: Union[str, Path]) -> "StrategyConfig":
         """从 YAML 文件加载策略配置并进行 Pydantic 校验。
 
+        加载后会统一生成所有内部名字（因子、过滤条件等），覆盖 YAML 中可能存在的
+        自定义名字，以确保名字的一致性和可预测性。
+
         Args:
             path: YAML 文件路径（绝对或相对于当前工作目录）。
 
         Returns:
-            经过校验的 :class:`StrategyConfig` 实例。
+            经过校验和名字统一化的 :class:`StrategyConfig` 实例。
 
         Raises:
             FileNotFoundError: 文件不存在。
@@ -207,7 +250,32 @@ class StrategyConfig(BaseModel):
         with path.open("r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
 
-        return cls.model_validate(data or {})
+        if not data:
+            data = {}
+
+        # 统一生成所有内部名字（覆盖 YAML 中可能存在的名字）
+        gen = AutoNameGenerator()
+
+        # 1. 为 ranks（因子）统一生成名字
+        if "ranks" in data and isinstance(data["ranks"], list):
+            for rank in data["ranks"]:
+                if isinstance(rank, dict):
+                    rank["name"] = gen.next_name("rank_f")
+
+        # 2. 为所有过滤条件统一生成名字
+        for filter_key in [
+            "pool_mask",
+            "buy_able",
+            "not_buy_able",
+            "sell_able",
+            "not_sell_able",
+        ]:
+            if filter_key in data and isinstance(data[filter_key], list):
+                for condition in data[filter_key]:
+                    if isinstance(condition, dict):
+                        condition["name"] = gen.next_name(filter_key)
+
+        return cls.model_validate(data)
 
     def to_yaml(
         self,
@@ -217,15 +285,28 @@ class StrategyConfig(BaseModel):
     ) -> None:
         """将策略配置序列化写回 YAML 文件。
 
+        注释保留原理：
+        - 若原文件存在且 preserve_comments=True，从原文件用 ruamel.yaml 加载 CommentedMap
+        - CommentedMap 保留原始注释信息
+        - 使用智能合并：只更新已存在的字段，但允许更新嵌套对象的属性值
+          （如 ranks 列表中的 weight、direction）
+        - 若原文件不存在，使用标准 PyYAML 输出（无注释）
+
+        合并策略：
+        - 顶级字段：只在已存在的字段上修改值，不新增字段
+        - 嵌套列表对象：按位置匹配（ranks[0]、ranks[1]...），更新其所有字段值
+        - 这样既保留注释结构，又允许优化结果（weight、direction）被保存
+
         Args:
             path: 目标文件路径。
-            preserve_comments: 若为 ``True`` 则使用 ``ruamel.yaml`` 保留原有注释
-                （需要已安装 ``ruamel.yaml``）；否则使用标准 ``PyYAML``。
+            preserve_comments: 若为 True 且原文件存在，则保留原有注释；
+                否则生成无注释的 YAML。
         """
         path = Path(path)
         data = self.model_dump()
 
-        if preserve_comments:
+        # 尝试保留原文件的注释
+        if preserve_comments and path.exists():
             try:
                 from ruamel.yaml import YAML as RuamelYAML
             except ImportError as exc:
@@ -233,11 +314,74 @@ class StrategyConfig(BaseModel):
                     "preserve_comments=True 需要 ruamel.yaml，请执行 `uv sync`"
                 ) from exc
 
-            _yaml = RuamelYAML()
-            _yaml.preserve_quotes = True
-            with path.open("w", encoding="utf-8") as f:
-                _yaml.dump(data, f)
+            try:
+                # 加载原文件为 CommentedMap（保留注释）
+                yaml_obj = RuamelYAML()
+                yaml_obj.preserve_quotes = True
+                with path.open("r", encoding="utf-8") as f:
+                    commented = yaml_obj.load(f)
+
+                if commented is None:
+                    commented = {}
+
+                # 智能合并：保留结构同时允许更新嵌套对象的字段值
+                def merge_preserve_structure(target: dict, source: dict) -> None:
+                    """智能递归合并，保留目标结构同时更新值。
+
+                    策略：
+                    1. 只更新目标中已有的字段（不新增）
+                    2. 对于嵌套列表，按位置匹配并更新列表项的字段
+                    3. 对于嵌套字典，递归处理
+                    """
+                    for key in list(target.keys()):
+                        if key not in source:
+                            continue
+
+                        src_value = source[key]
+                        tgt_value = target[key]
+
+                        # 情况1：都是列表 -> 按位置匹配更新列表项
+                        if isinstance(tgt_value, list) and isinstance(src_value, list):
+                            # 对每个位置的列表项进行更新
+                            for i, (tgt_item, src_item) in enumerate(
+                                zip(tgt_value, src_value)
+                            ):
+                                if isinstance(tgt_item, dict) and isinstance(
+                                    src_item, dict
+                                ):
+                                    # 列表中的字典对象：更新所有字段
+                                    tgt_item.update(src_item)
+                                else:
+                                    # 列表中的简单值：直接替换
+                                    tgt_value[i] = src_item
+                        # 情况2：都是字典 -> 递归处理
+                        elif isinstance(tgt_value, dict) and isinstance(
+                            src_value, dict
+                        ):
+                            merge_preserve_structure(tgt_value, src_value)
+                        # 情况3：其他类型 -> 直接替换
+                        else:
+                            target[key] = src_value
+
+                merge_preserve_structure(commented, data)
+
+                # 写回 CommentedMap（注释被保留）
+                with path.open("w", encoding="utf-8") as f:
+                    yaml_obj.dump(commented, f)
+            except Exception:  # noqa: BLE001
+                # 如果处理失败，回退到基础 YAML 输出
+                import yaml
+
+                with path.open("w", encoding="utf-8") as f:
+                    yaml.dump(
+                        data,
+                        f,
+                        allow_unicode=True,
+                        sort_keys=False,
+                        default_flow_style=False,
+                    )
         else:
+            # 原文件不存在或用户不需要保留注释，直接输出
             import yaml
 
             with path.open("w", encoding="utf-8") as f:
@@ -273,11 +417,47 @@ class StrategyConfig(BaseModel):
         """返回所有因子的 ``name = expression`` 字符串列表，供 DataProvider 使用。"""
         return [r.expr_str for r in self.ranks]
 
-    def build_actions(self) -> List:
-        """构建完整的 actions 管道（预处理、合成等）。
+    def get_filter_exprs(self) -> List[str]:
+        """收集所有条件表达式（pool_mask, buy_able, not_buy_able, sell_able, not_sell_able）。
 
-        对于单因子策略，返回空列表 []。
-        对于多因子策略，返回 [预处理器（如有）, 合成器]。
+        名字已在 from_yaml 时统一生成，此方法只需收集表达式。
+        返回 ``name = expression`` 格式的列表。
+        这些表达式会被 DataProvider 一起计算成列。
+
+        Returns:
+            表达式列表，格式：["name_1 = expr_1", "name_2 = expr_2", ...]
+        """
+        exprs: List[str] = []
+
+        def _process_filters(filters: List[ExprCondition]) -> None:
+            """处理一组条件规则，直接使用已生成的名称。"""
+            for f in filters:
+                if not f.expression.strip():
+                    continue
+                exprs.append(f"{f.name} = {f.expression.strip()}")
+
+        # 按顺序收集所有过滤表达式
+        _process_filters(self.pool_mask)
+        _process_filters(self.buy_able)
+        _process_filters(self.not_buy_able)
+        _process_filters(self.sell_able)
+        _process_filters(self.not_sell_able)
+
+        return exprs
+
+    def build_actions(self) -> List:
+        """构建完整的 actions 管道。
+
+        返回顺序（关键：因子处理在 pool_mask 之后，后续过滤之前）：
+        1. pool_mask AND 合成
+        2. 因子预处理（多因子）
+        3. 因子合成（多因子）
+        4. buy_able AND 合成（全部条件满足）
+        5. not_buy_able OR 合成（任一条件成立则禁止）
+        6. sell_able AND 合成（全部条件满足）
+        7. not_sell_able OR 合成（任一条件成立则禁止）
+
+        所有内部列名已在 from_yaml 时统一生成。
 
         Returns:
             FactorsAction 对象列表，供 DataProvider.load_pool_data 使用。
@@ -286,21 +466,32 @@ class StrategyConfig(BaseModel):
             FactorsPreProcessor,
             FactorsRankComposite,
         )
+        from alpha_factory.data_provider.prcoessors import And, Or
         from alpha_factory.cli.opt import _COMPOSITE_COL
 
         actions: List = []
 
-        # 多因子时才添加 actions
+        def _collect_filter_names(filters: List[ExprCondition]) -> List[str]:
+            """收集过滤条件的已生成名称。"""
+            return [f.name for f in filters if f.expression.strip()]
+
+        # 1. Pool mask AND 合成
+        if self.pool_mask:
+            names = _collect_filter_names(self.pool_mask)
+            if names:
+                actions.append(And(factors=names, name=F.POOL_MASK))
+
+        # 2. 因子预处理（多因子）
         if len(self.ranks) > 1:
             factor_names = self.factor_names
 
-            # 1. 预处理（如果配置了）
+            # 预处理（如果配置了）
             if self.preprocess:
                 actions.append(
                     FactorsPreProcessor(factors=factor_names, actions=self.preprocess)
                 )
 
-            # 2. 合成（权重直接使用，FactorsRankComposite 内部会做自动归一化）
+            # 3. 因子合成（权重直接使用，FactorsRankComposite 内部会做自动归一化）
             signed_weights = {
                 name: float(w) for name, w in zip(factor_names, self.factor_weights)
             }
@@ -311,5 +502,29 @@ class StrategyConfig(BaseModel):
                     weights=signed_weights,
                 )
             )
+
+        # 4. buy_able AND 合成（全部条件满足才允许购买）
+        if self.buy_able:
+            names = _collect_filter_names(self.buy_able)
+            if names:
+                actions.append(And(factors=names, name="buy_able"))
+
+        # 5. not_buy_able OR 合成（任一条件成立则禁止购买）
+        if self.not_buy_able:
+            names = _collect_filter_names(self.not_buy_able)
+            if names:
+                actions.append(Or(factors=names, name="not_buy_able"))
+
+        # 6. sell_able AND 合成（全部条件满足才允许卖出）
+        if self.sell_able:
+            names = _collect_filter_names(self.sell_able)
+            if names:
+                actions.append(And(factors=names, name="sell_able"))
+
+        # 7. not_sell_able OR 合成（任一条件成立则禁止卖出）
+        if self.not_sell_able:
+            names = _collect_filter_names(self.not_sell_able)
+            if names:
+                actions.append(Or(factors=names, name="not_sell_able"))
 
         return actions

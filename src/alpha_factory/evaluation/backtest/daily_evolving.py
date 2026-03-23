@@ -31,6 +31,8 @@ def backtest_daily_evolving(
       - 交易费用 = turnover × cost_rate × 前日净值，从现金中扣除
     """
 
+    logger.info(f"📊 回测参数 | 因子: {factor_col} | 买入数量")
+
     # --- 1. 数据预处理 ---
     lf = df_input if isinstance(df_input, pl.LazyFrame) else df_input.lazy()
 

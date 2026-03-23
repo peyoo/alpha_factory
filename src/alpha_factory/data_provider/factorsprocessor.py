@@ -183,6 +183,8 @@ class FactorsRankComposite(FactorsComposite):
         cols = self._cols_to_process(df)
         if not cols:
             return df
+        # df = df.sort(F.DATE)
+        lf = df.lazy().sort(F.DATE)
 
         resolved_weights = [float(self.weights.get(col, 0.0)) for col in cols]
         total_weight = sum(resolved_weights)
@@ -200,7 +202,7 @@ class FactorsRankComposite(FactorsComposite):
         ]
         composite_expr = pl.sum_horizontal(terms)
 
-        return df.with_columns(composite_expr.alias(self.name))
+        return lf.with_columns(composite_expr.alias(self.name)).collect()
 
 
 class FactorsProcessor:

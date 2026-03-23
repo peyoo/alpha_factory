@@ -1,3 +1,3 @@
-from alpha_factory.config.strategy import ExprFilter, FactorRank, StrategyConfig
+from alpha_factory.config.strategy import ExprCondition, FactorRank, StrategyConfig
 
-__all__ = ["ExprFilter", "FactorRank", "StrategyConfig"]
+__all__ = ["ExprCondition", "FactorRank", "StrategyConfig"]
