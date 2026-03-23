@@ -28,10 +28,10 @@ from alpha_factory.config.strategy import FactorRank, StrategyConfig
 from alpha_factory.data_provider.data_provider import DataProvider
 from alpha_factory.data_provider.factorsprocessor import (
     FactorsPreProcessor,
-    FactorsRankComposite,
 )
 from alpha_factory.data_provider.pool import PoolUniverse
-from alpha_factory.evaluation.backtest.daily_evolving import backtest_daily_evolving
+from alpha_factory.data_provider.prcoessors.rank import Rank
+from alpha_factory.evaluation.backtest.quick_daily import backtest_quick_daily
 from alpha_factory.evaluation.batch.ic_summary import batch_ic_summary
 from alpha_factory.utils.schema import F
 
@@ -172,7 +172,7 @@ def quant_opt(
         "--end-date",
         help="回测结束日期 YYYYMMDD（默认取仓库最新日期）",
     ),
-    n_trials: int = typer.Option(50, "--n-trials", help="Optuna 试验次数"),
+    n_trials: int = typer.Option(100, "--n-trials", help="Optuna 试验次数"),
     seed: int = typer.Option(42, "--seed", help="随机种子，确保结果可复现"),
     show_progress: bool = typer.Option(
         True, "--progress/--no-progress", help="是否显示优化进度条"
@@ -299,22 +299,22 @@ def quant_opt(
     # ---- 3. 定义 Optuna 目标函数（仅加权合成 + 回测，无 I/O） ----
     # 注：方向已在 expr_str 中通过负号编码，权重直接为正
     def objective(trial: "optuna.Trial") -> float:
-        logger.info(f"🔍 Trial {trial.number + 1}/{n_trials} 开始: 采样权重并执行回测…")
+        # logger.info(f"🔍 Trial {trial.number + 1}/{n_trials} 开始: 采样权重并执行回测…")
         raw = np.array(
             [trial.suggest_float(f"w_{name}", 0.0, 1.0) for name in factor_names]
         )
         signed_weights = {
             name: float(w) for name, w in zip(factor_names, softmax_weights(raw))
         }
-        logger.info(f"Trial {trial.number + 1}: 计算组合因子并回测…")
+        # logger.info(f"Trial {trial.number + 1}: 计算组合因子并回测…")
         try:
-            df_trial = FactorsRankComposite(
+            df_trial = Rank(
                 factors=factor_names,
                 name=_COMPOSITE_COL,
                 weights=signed_weights,
             ).process(base_df)
-            logger.info(f"Trial {trial.number + 1}: 权重 = {signed_weights}")
-            result = backtest_daily_evolving(
+            # logger.info(f"Trial {trial.number + 1}: 权重 = {signed_weights}")
+            result = backtest_quick_daily(
                 df_input=df_trial,
                 factor_col=_COMPOSITE_COL,
                 n_buy=cfg.hold_num,
@@ -331,7 +331,9 @@ def quant_opt(
     study = optuna.create_study(direction="maximize", sampler=sampler)
 
     _DE_MODULE = "alpha_factory.evaluation.backtest.daily_evolving"
-    logger.disable(_DE_MODULE)
+    logger.disable("alpha_factory.evaluation.backtest.daily_evolving")
+    logger.disable("alpha_factory.evaluation.backtest.quick_daily")
+
     try:
         if show_progress:
             from rich.progress import (

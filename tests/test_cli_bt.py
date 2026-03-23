@@ -102,7 +102,7 @@ def test_bt_single_factor_loads_raw_expr(tmp_path: Path):
     with (
         patch("alpha_factory.cli.backtest.DataProvider") as mock_dp_cls,
         patch(
-            "alpha_factory.cli.backtest.backtest_daily_evolving",
+            "alpha_factory.cli.backtest.backtest_quick_daily",
             side_effect=_fake_backtest,
         ),
         patch("alpha_factory.cli.backtest._print_summary"),
@@ -124,7 +124,7 @@ def test_bt_single_factor_direction_minus1_ascending_false(tmp_path: Path):
     with (
         patch("alpha_factory.cli.backtest.DataProvider") as mock_dp_cls,
         patch(
-            "alpha_factory.cli.backtest.backtest_daily_evolving",
+            "alpha_factory.cli.backtest.backtest_quick_daily",
             side_effect=_fake_backtest,
         ) as mock_bt,
         patch("alpha_factory.cli.backtest._print_summary"),
@@ -148,7 +148,7 @@ def test_bt_single_factor_direction_1_ascending_false(tmp_path: Path):
     with (
         patch("alpha_factory.cli.backtest.DataProvider") as mock_dp_cls,
         patch(
-            "alpha_factory.cli.backtest.backtest_daily_evolving",
+            "alpha_factory.cli.backtest.backtest_quick_daily",
             side_effect=_fake_backtest,
         ) as mock_bt,
         patch("alpha_factory.cli.backtest._print_summary"),
@@ -189,7 +189,7 @@ def test_bt_multi_factor_uses_composite(tmp_path: Path):
     with (
         patch("alpha_factory.cli.backtest.DataProvider") as mock_dp_cls,
         patch(
-            "alpha_factory.cli.backtest.backtest_daily_evolving",
+            "alpha_factory.cli.backtest.backtest_quick_daily",
             side_effect=_fake_backtest,
         ) as mock_bt,
         patch("alpha_factory.cli.backtest._print_summary"),
@@ -213,14 +213,14 @@ def test_bt_multi_factor_uses_composite(tmp_path: Path):
 
 
 def test_bt_backtest_params_from_yaml(tmp_path: Path):
-    """hold_num / sell_rank / cost 应从 YAML 透传到 backtest_daily_evolving。"""
+    """hold_num / sell_rank / cost 应从 YAML 透传到 backtest_quick_daily。"""
     data = {**_SINGLE_RANK_YAML, "hold_num": 25, "sell_rank": 50, "cost": 0.001}
     yaml_path = _write_yaml(tmp_path, data)
 
     with (
         patch("alpha_factory.cli.backtest.DataProvider") as mock_dp_cls,
         patch(
-            "alpha_factory.cli.backtest.backtest_daily_evolving",
+            "alpha_factory.cli.backtest.backtest_quick_daily",
             side_effect=_fake_backtest,
         ) as mock_bt,
         patch("alpha_factory.cli.backtest._print_summary"),

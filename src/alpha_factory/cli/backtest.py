@@ -9,7 +9,7 @@ from rich.table import Table
 
 from alpha_factory.config.strategy import StrategyConfig
 from alpha_factory.data_provider.data_provider import DataProvider
-from alpha_factory.evaluation.backtest.daily_evolving import backtest_daily_evolving
+from alpha_factory.evaluation.backtest.quick_daily import backtest_quick_daily
 from alpha_factory.evaluation.backtest.utils import generate_and_open_report
 from alpha_factory.cli.utils import resolve_yaml_path
 from alpha_factory.utils.schema import F
@@ -243,7 +243,7 @@ def _run_bt_from_yaml(
         f"费率={cfg.cost:.4f} | 执行价={cfg.exe_price}"
     )
 
-    result = backtest_daily_evolving(
+    result = backtest_quick_daily(
         df_input=df,
         factor_col=factor_col,
         n_buy=cfg.hold_num,
