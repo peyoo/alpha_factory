@@ -276,12 +276,13 @@ class StrategyConfig(BaseModel):
     # ---------------------------------------------------------------------------
 
     def run_opt_trial(self, trial: Any, dp: Any, base_df: Any) -> Any:
-        """一次 Optuna trial：动态条件采样 → eval → And/Or 聚合 → 因子合成。"""
+        """一次 Optuna trial：动态条件采样 → 含动态条件的组 And/Or 重聚合 → 权重采样。
+
+        base_df 已包含：因子预处理结果 + 静态条件列 + 无动态参数组的 And/Or 聚合列。
+        此方法只处理每 trial 变化的部分。
+        """
         import polars as pl
-        from alpha_factory.data_provider.factorsprocessor import (
-            FactorsPreProcessor,
-            FactorsRankComposite,
-        )
+        from alpha_factory.data_provider.factorsprocessor import FactorsRankComposite
         from alpha_factory.data_provider.prcoessors import And, Or
         from alpha_factory.cli.opt import _COMPOSITE_COL
 
@@ -296,27 +297,30 @@ class StrategyConfig(BaseModel):
         if dynamic_exprs:
             df = dp.eval_exprs_on_df(df, dynamic_exprs)
 
+        # 只对含动态条件的组重新聚合；静态组 And/Or 已在 base_df 中预计算
         def _names(g):
             return [c.name for c in g if c.expression.strip()]
 
-        if ns := _names(self.pool_mask):
+        def _has_dyn(g):
+            return any(c.has_opt_params for c in g)
+
+        if _has_dyn(self.pool_mask) and (ns := _names(self.pool_mask)):
             df = And(factors=ns, name=F.POOL_MASK).process(df)
-        if ns := _names(self.buy_able):
+        if _has_dyn(self.buy_able) and (ns := _names(self.buy_able)):
             df = And(factors=ns, name="buy_able").process(df)
-        if ns := _names(self.not_buy_able):
+        if _has_dyn(self.not_buy_able) and (ns := _names(self.not_buy_able)):
             df = Or(factors=ns, name="not_buy_able").process(df)
-        if ns := _names(self.sell_able):
+        if _has_dyn(self.sell_able) and (ns := _names(self.sell_able)):
             df = And(factors=ns, name="sell_able").process(df)
-        if ns := _names(self.not_sell_able):
+        if _has_dyn(self.not_sell_able) and (ns := _names(self.not_sell_able)):
             df = Or(factors=ns, name="not_sell_able").process(df)
 
-        fnames = self.factor_names
-        if self.preprocess and fnames:
-            df = FactorsPreProcessor(factors=fnames, actions=self.preprocess).process(
-                df
-            )
         df = FactorsRankComposite(
-            factors=fnames, name=_COMPOSITE_COL, opt=True, trial=trial, use_rank=False
+            factors=self.factor_names,
+            name=_COMPOSITE_COL,
+            opt=True,
+            trial=trial,
+            use_rank=False,
         ).process(df)
         return df
 

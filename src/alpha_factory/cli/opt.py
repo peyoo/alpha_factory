@@ -272,13 +272,39 @@ def quant_opt(
         f"共 {len(ranks)} 个因子，时间范围 {start_date} ~ {end_date or '最新'}"
     )
 
-    # 仅预计算无可优化参数的静态条件；有 opt 参数的条件在每个 trial 内动态计算
+    # 构建预计算 actions：因子预处理 + 无动态参数的条件 And/Or 聚合（所有 trial 共享）
+    from alpha_factory.data_provider.factorsprocessor import FactorsPreProcessor
+    from alpha_factory.data_provider.prcoessors import And, Or
+
+    def _g_names(g):
+        return [c.name for c in g if c.expression.strip()]
+
+    def _has_dyn(g):
+        return any(c.has_opt_params for c in g)
+
+    precompute_actions = []
+    if cfg.preprocess and cfg.factor_names:
+        precompute_actions.append(
+            FactorsPreProcessor(factors=cfg.factor_names, actions=cfg.preprocess)
+        )
+    if (ns := _g_names(cfg.pool_mask)) and not _has_dyn(cfg.pool_mask):
+        precompute_actions.append(And(factors=ns, name=F.POOL_MASK))
+    if (ns := _g_names(cfg.buy_able)) and not _has_dyn(cfg.buy_able):
+        precompute_actions.append(And(factors=ns, name="buy_able"))
+    if (ns := _g_names(cfg.not_buy_able)) and not _has_dyn(cfg.not_buy_able):
+        precompute_actions.append(Or(factors=ns, name="not_buy_able"))
+    if (ns := _g_names(cfg.sell_able)) and not _has_dyn(cfg.sell_able):
+        precompute_actions.append(And(factors=ns, name="sell_able"))
+    if (ns := _g_names(cfg.not_sell_able)) and not _has_dyn(cfg.not_sell_able):
+        precompute_actions.append(Or(factors=ns, name="not_sell_able"))
+
     all_exprs = cfg.ranked_factor_exprs + cfg.get_static_condition_exprs()
     lf = dp.load_pool_data(
         pool_instance,
         start_date,
         end_date,
         exprs=all_exprs,
+        actions=precompute_actions or None,
     )
     base_df = lf.collect()
     console.print(
@@ -287,7 +313,6 @@ def quant_opt(
     )
 
     # ---- 3. 定义 Optuna 目标函数（仅加权合成 + 回测，无 I/O） ----
-    # cfg.run_opt_trial 统一负责：动态条件采样 + 因子预处理 + FactorsRankComposite 权重采样
     def objective(trial: "optuna.Trial") -> float:
         try:
             df_trial = cfg.run_opt_trial(trial, dp, base_df)
