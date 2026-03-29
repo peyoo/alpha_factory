@@ -1,10 +1,17 @@
-from typing import List, Callable, Dict, Union
+from typing import Any, List, Callable, Dict, Optional, Union
 import re
 import importlib
 
+import numpy as np
 import polars as pl
 
 from alpha_factory.utils.schema import F
+
+
+def _softmax_weights(x: np.ndarray) -> np.ndarray:
+    """将任意实数向量映射为正权重，且 sum=1（softmax）。"""
+    e = np.exp(x - x.max())
+    return e / e.sum()
 
 
 class FactorsAction:
@@ -166,40 +173,79 @@ class FactorsPreProcessor(FactorsAction):
 
 
 class FactorsRankComposite(FactorsComposite):
-    """因子排名合成器，继承自 FactorsComposite，重写 process 方法实现因子排名合成"""
+    """因子排名合成器，继承自 FactorsComposite，重写 process 方法实现因子排名合成。
+
+    参数:
+        factors:   待合成的因子列名（列表或正则字符串）。
+        weights:   各因子权重字典。opt=True 时可省略（由 Optuna trial 自动采样）。
+        name:      合成列名，默认 "RANK"。
+        ascending: 排名方向，默认 False（值越大排名越靠前）。
+        use_rank:  是否对各因子做截面 rank 后再加权，默认 True。
+                   若因子已经过预处理（如 z-score），可设为 False 直接加权求和。
+        opt:       是否使用 Optuna 自动采样权重，默认 False。
+                   为 True 时必须同时传入 trial。
+        trial:     Optuna Trial 对象。opt=True 时必须提供。
+    """
 
     def __init__(
         self,
         factors: List[str] | str,
-        weights: Dict[str, float],
+        weights: Optional[Dict[str, float]] = None,
         name: str = "RANK",
         ascending: bool = False,
+        use_rank: bool = True,
+        opt: bool = False,
+        trial: Optional[Any] = None,
     ):
         super().__init__(factors, name)
         self.ascending = ascending
-        self.weights = weights
+        self.use_rank = use_rank
+        self.opt = opt
+        self.trial = trial
+        if opt:
+            if trial is None:
+                raise ValueError("opt=True 时必须提供 trial（Optuna Trial 对象）")
+            self.weights: Dict[str, float] = {}
+        else:
+            if weights is None:
+                raise ValueError("opt=False 时必须提供 weights 字典")
+            self.weights = weights
 
     def process(self, df: pl.DataFrame) -> pl.DataFrame:
         cols = self._cols_to_process(df)
         if not cols:
             return df
-        # df = df.sort(F.DATE)
         lf = df.lazy().sort(F.DATE)
 
-        resolved_weights = [float(self.weights.get(col, 0.0)) for col in cols]
-        total_weight = sum(resolved_weights)
-        if total_weight == 0:
-            resolved_weights = [1.0 / len(cols)] * len(cols)  # 等权重
+        if self.opt:
+            # Optuna 模式：通过 trial.suggest_float 采样原始权重，再经 softmax 归一化
+            raw = np.array(
+                [self.trial.suggest_float(f"w_{col}", 0.0, 1.0) for col in cols]
+            )
+            resolved_weights = _softmax_weights(raw).tolist()
         else:
-            resolved_weights = [
-                w / total_weight for w in resolved_weights
-            ]  # 权重归一化
+            # 普通模式：使用预设权重字典并归一化
+            resolved_weights = [float(self.weights.get(col, 0.0)) for col in cols]
+            total_weight = sum(resolved_weights)
+            if total_weight == 0:
+                resolved_weights = [1.0 / len(cols)] * len(cols)  # 等权重
+            else:
+                resolved_weights = [
+                    w / total_weight for w in resolved_weights
+                ]  # 权重归一化
 
-        # 修复：descending 逻辑应为 self.ascending 的相反值
-        terms = [
-            pl.col(col).rank(descending=self.ascending).over(F.DATE) * w
-            for col, w in zip(cols, resolved_weights)
-        ]
+        if self.use_rank:
+            # 截面排名后加权：消除因子量纲差异（适合未预处理的原始因子）
+            terms = [
+                pl.col(col).rank(descending=self.ascending).over(F.DATE) * w
+                for col, w in zip(cols, resolved_weights)
+            ]
+        else:
+            # 直接加权求和：适合已经过预处理（如 z-score）的因子
+            terms = [
+                pl.col(col).cast(pl.Float64) * w
+                for col, w in zip(cols, resolved_weights)
+            ]
         composite_expr = pl.sum_horizontal(terms)
 
         return lf.with_columns(composite_expr.alias(self.name)).collect()

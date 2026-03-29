@@ -295,7 +295,7 @@ def main():
     factor_col = cfg.ranks[0].name
 
     dp = DataProvider()
-    all_exprs = cfg.factor_exprs + cfg.get_filter_exprs()
+    all_exprs = cfg.ranked_factor_exprs + cfg.get_condition_exprs()
     lf = dp.load_pool_data(
         pool_instance,
         START_DATE,

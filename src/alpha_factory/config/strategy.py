@@ -430,12 +430,15 @@ class StrategyConfig(BaseModel):
         return [r.direction for r in self.ranks]
 
     @property
-    def factor_exprs(self) -> List[str]:
-        """返回所有因子的 ``name = expression`` 字符串列表，供 DataProvider 使用。"""
+    def ranked_factor_exprs(self) -> List[str]:
+        """
+        返回所有线性加权因子的 ``name = expression`` 字符串列表，供 DataProvider 使用。
+        """
         return [r.expr_str for r in self.ranks]
 
-    def get_filter_exprs(self) -> List[str]:
-        """收集所有条件表达式（pool_mask, buy_able, not_buy_able, sell_able, not_sell_able）。
+    def get_condition_exprs(self) -> List[str]:
+        """
+        收集所有条件表达式（pool_mask, buy_able, not_buy_able, sell_able, not_sell_able）。
 
         名字已在 from_yaml 时统一生成，此方法只需收集表达式。
         返回 ``name = expression`` 格式的列表。
@@ -517,6 +520,7 @@ class StrategyConfig(BaseModel):
                     factors=factor_names,
                     name=_COMPOSITE_COL,
                     weights=signed_weights,
+                    use_rank=False,  # 因子已经过 FactorsPreProcessor 预处理，直接加权求和
                 )
             )
 

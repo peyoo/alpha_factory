@@ -319,7 +319,7 @@ def quant_opt2(
     )
 
     # 合并因子表达式和过滤表达式，一起计算
-    all_exprs = cfg.factor_exprs + cfg.get_filter_exprs()
+    all_exprs = cfg.ranked_factor_exprs + cfg.get_condition_exprs()
     lf = dp.load_pool_data(
         pool_instance,
         start_date,
