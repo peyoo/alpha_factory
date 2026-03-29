@@ -29,9 +29,9 @@ from alpha_factory.config.strategy import FactorRank, StrategyConfig
 from alpha_factory.data_provider.data_provider import DataProvider
 from alpha_factory.data_provider.factorsprocessor import (
     FactorsPreProcessor,
+    FactorsRankComposite,
 )
 from alpha_factory.data_provider.pool import PoolUniverse
-from alpha_factory.data_provider.prcoessors.rank import Rank
 from alpha_factory.evaluation.backtest.quick_daily import backtest_quick_daily
 from alpha_factory.evaluation.batch.ic_summary import batch_ic_summary
 from alpha_factory.utils.schema import F
@@ -431,7 +431,7 @@ def quant_opt2(
             }
 
             # 合成排序因子并回测
-            df_trial = Rank(
+            df_trial = FactorsRankComposite(
                 factors=factor_names,
                 name=_COMPOSITE_COL,
                 weights=signed_weights,

@@ -2,7 +2,7 @@
 
 覆盖：
   - softmax_weights：归一化约束（sum=1, w≥0）
-  - Rank.process：合成与加权逻辑（替代原 make_composite 测试）
+  - FactorsRankComposite.process：合成与加权逻辑（替代原 make_composite 测试）
   - compute_ann_ret：年化收益率计算
   - StrategyConfig 加载：YAML 解析与校验（替代原 _extract_ranks 测试）
   - CLI smoke test：--help 可正常响应（不依赖真实数据）
@@ -20,7 +20,7 @@ from alpha_factory.cli.opt import (
     compute_ann_ret,
     softmax_weights,
 )
-from alpha_factory.data_provider.prcoessors.rank import Rank
+from alpha_factory.data_provider.factorsprocessor import FactorsRankComposite
 from alpha_factory.cli.main import app
 from alpha_factory.config.strategy import StrategyConfig
 
@@ -61,7 +61,7 @@ class TestSoftmaxWeights:
 
 
 class TestMakeComposite:
-    """TestMakeComposite - 验证因子列的加权合成逻辑（使用 Rank.process）。"""
+    """TestMakeComposite - 验证因子列的加权合成逻辑（使用 FactorsRankComposite.process）。"""
 
     def _make_base_df(self, n_days: int = 4, n_stocks: int = 3):
         """Minimal DataFrame with factor columns (w/o _RANK_ prefix)."""
@@ -83,17 +83,17 @@ class TestMakeComposite:
 
     def test_composite_column_created(self):
         df = self._make_base_df()
-        result = Rank(
-            factors=["f1", "f2"], name="COMPOSITE_OPT", weights={"f1": 0.5, "f2": 0.5}
+        result = FactorsRankComposite(
+            factors=["f1", "f2"], weights={"f1": 0.5, "f2": 0.5}, name="COMPOSITE_OPT"
         ).process(df)
         assert "COMPOSITE_OPT" in result.columns
 
     def test_weighted_sum_correctness(self):
-        """composite = w1*f1 + w2*f2，direction 通过权重符号体现。"""
+        """composite = w1*rank(f1) + w2*rank(f2)，对 2 只股票时 rank 值与原值相同。"""
         df = self._make_base_df(n_days=1, n_stocks=2)
-        # f1=[1,2], f2=[2,1], w={f1:0.8, f2:0.2}
-        result = Rank(
-            factors=["f1", "f2"], name="COMPOSITE_OPT", weights={"f1": 0.8, "f2": 0.2}
+        # f1=[1,2], f2=[2,1], rank(f1)=[1,2], rank(f2)=[2,1], w={f1:0.8, f2:0.2}
+        result = FactorsRankComposite(
+            factors=["f1", "f2"], weights={"f1": 0.8, "f2": 0.2}, name="COMPOSITE_OPT"
         ).process(df.head(2))
         expected = [
             0.8 * 1 + 0.2 * 2,  # 1.2
@@ -102,19 +102,21 @@ class TestMakeComposite:
         assert result["COMPOSITE_OPT"].to_list() == pytest.approx(expected, rel=1e-6)
 
     def test_pure_first_factor(self):
-        """When weights={f1:1, f2:0}, composite == f1."""
+        """When weights={f1:1, f2:0}, composite == cross-sectional rank of f1."""
         df = self._make_base_df(n_days=2, n_stocks=2)
-        result = Rank(
-            factors=["f1", "f2"], name="COMPOSITE_OPT", weights={"f1": 1.0, "f2": 0.0}
+        result = FactorsRankComposite(
+            factors=["f1", "f2"], weights={"f1": 1.0, "f2": 0.0}, name="COMPOSITE_OPT"
         ).process(df)
+        # FactorsRankComposite 对每个截面日期做 rank，2 只股票 rank 值为 [1.0, 2.0]
+        expected_ranks = [1.0, 2.0, 1.0, 2.0]
         assert result["COMPOSITE_OPT"].to_list() == pytest.approx(
-            result["f1"].to_list(), rel=1e-6
+            expected_ranks, rel=1e-6
         )
 
     def test_original_df_not_mutated(self):
         df = self._make_base_df()
-        _ = Rank(
-            factors=["f1", "f2"], name="COMPOSITE_OPT", weights={"f1": 0.5, "f2": 0.5}
+        _ = FactorsRankComposite(
+            factors=["f1", "f2"], weights={"f1": 0.5, "f2": 0.5}, name="COMPOSITE_OPT"
         ).process(df)
         assert "COMPOSITE_OPT" not in df.columns
 

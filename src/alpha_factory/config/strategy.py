@@ -19,7 +19,6 @@ from typing import ClassVar, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, model_validator
 
-from alpha_factory.data_provider.prcoessors.rank import Rank
 from alpha_factory.utils.schema import F
 
 
@@ -480,7 +479,10 @@ class StrategyConfig(BaseModel):
         Returns:
             FactorsAction 对象列表，供 DataProvider.load_pool_data 使用。
         """
-        from alpha_factory.data_provider.factorsprocessor import FactorsPreProcessor
+        from alpha_factory.data_provider.factorsprocessor import (
+            FactorsPreProcessor,
+            FactorsRankComposite,
+        )
         from alpha_factory.data_provider.prcoessors import And, Or
         from alpha_factory.cli.opt import _COMPOSITE_COL
 
@@ -511,7 +513,7 @@ class StrategyConfig(BaseModel):
                 name: float(w) for name, w in zip(factor_names, self.factor_weights)
             }
             actions.append(
-                Rank(
+                FactorsRankComposite(
                     factors=factor_names,
                     name=_COMPOSITE_COL,
                     weights=signed_weights,

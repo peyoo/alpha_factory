@@ -234,7 +234,7 @@ def _run_bt_from_yaml(
     else:
         from alpha_factory.cli.opt import _COMPOSITE_COL
 
-        # build_actions() 已在 actions 管道中包含 Rank 合成步骤，
+        # build_actions() 已在 actions 管道中包含 FactorsRankComposite 合成步骤，
         # load_pool_data 执行后 COMPOSITE_OPT 列已存在于 df 中。
         factor_col = _COMPOSITE_COL
         mode_label = f"多因子 ({len(cfg.ranks)} 因子)"
