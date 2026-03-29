@@ -26,10 +26,6 @@ from loguru import logger
 from alpha_factory.cli.utils import PoolUniverseEnum, resolve_yaml_path
 from alpha_factory.config.strategy import FactorRank, StrategyConfig
 from alpha_factory.data_provider.data_provider import DataProvider
-from alpha_factory.data_provider.factorsprocessor import (
-    FactorsPreProcessor,
-    FactorsRankComposite,
-)
 from alpha_factory.data_provider.pool import PoolUniverse
 from alpha_factory.evaluation.backtest.quick_daily import backtest_quick_daily
 from alpha_factory.evaluation.batch.ic_summary import batch_ic_summary
@@ -230,6 +226,9 @@ def quant_opt(
         typer.echo(f"❌ 加载策略配置失败: {exc}", err=True)
         raise typer.Exit(code=1)
 
+    # 开启优化模式：build_actions() 返回空，由 run_opt_trial() 接管所有计算
+    cfg.opt_mode = True
+
     if len(cfg.ranks) < 2:
         typer.echo(
             f"❌ 策略 {cfg.name!r} 的 ranks 数量 < 2，无需优化",
@@ -273,22 +272,13 @@ def quant_opt(
         f"共 {len(ranks)} 个因子，时间范围 {start_date} ~ {end_date or '最新'}"
     )
 
-    # 从配置读取预处理函数，如果未指定则不预处理
-    preprocess_actions = cfg.preprocess if cfg.preprocess else []
-    processors = (
-        [FactorsPreProcessor(factors=factor_names, actions=preprocess_actions)]
-        if preprocess_actions
-        else []
-    )
-
-    # 合并因子表达式和过滤表达式，一起计算
-    all_exprs = cfg.ranked_factor_exprs + cfg.get_condition_exprs()
+    # 仅预计算无可优化参数的静态条件；有 opt 参数的条件在每个 trial 内动态计算
+    all_exprs = cfg.ranked_factor_exprs + cfg.get_static_condition_exprs()
     lf = dp.load_pool_data(
         pool_instance,
         start_date,
         end_date,
         exprs=all_exprs,
-        actions=processors,
     )
     base_df = lf.collect()
     console.print(
@@ -297,15 +287,10 @@ def quant_opt(
     )
 
     # ---- 3. 定义 Optuna 目标函数（仅加权合成 + 回测，无 I/O） ----
-    # 注：方向已在 expr_str 中通过负号编码，权重直接为正
+    # cfg.run_opt_trial 统一负责：动态条件采样 + 因子预处理 + FactorsRankComposite 权重采样
     def objective(trial: "optuna.Trial") -> float:
         try:
-            df_trial = FactorsRankComposite(
-                factors=factor_names,
-                name=_COMPOSITE_COL,
-                opt=True,
-                trial=trial,
-            ).process(base_df)
+            df_trial = cfg.run_opt_trial(trial, dp, base_df)
             result = backtest_quick_daily(
                 df_input=df_trial,
                 factor_col=_COMPOSITE_COL,
@@ -361,9 +346,7 @@ def quant_opt(
     # ---- 5. 提取最优权重 ----
     best_raw = np.array([study.best_params[f"w_{name}"] for name in factor_names])
     best_weights = softmax_weights(best_raw)
-    best_ann_ret = study.best_value
-
-    # ---- 6. 打印对比表 ----
+    best_ann_ret = study.best_value  # ---- 6. 打印对比表 ----
     table = Table(
         title=f"优化结果 — 策略: {strat_name}",
         show_header=True,
@@ -392,9 +375,44 @@ def quant_opt(
         f"  (第 {study.best_trial.number + 1} 次 / 共 {n_trials} 次试验)"
     )
 
+    # 打印条件参数优化结果（若存在）
+    if cfg.has_condition_opt_params():
+        cond_table = Table(
+            title="条件参数优化结果",
+            show_header=True,
+            header_style="bold magenta",
+        )
+        cond_table.add_column("条件名", style="cyan")
+        cond_table.add_column("参数", style="yellow")
+        cond_table.add_column("原始 default", justify="right")
+        cond_table.add_column("最优值", justify="right", style="bold green")
+        for group in (
+            cfg.pool_mask,
+            cfg.buy_able,
+            cfg.not_buy_able,
+            cfg.sell_able,
+            cfg.not_sell_able,
+        ):
+            for cond in group:
+                if not cond.has_opt_params:
+                    continue
+                for param_name, spec in cond.opt.items():
+                    key = f"{cond.name}__{param_name}"
+                    orig_default = spec.get("default", "N/A")
+                    best_val = study.best_params.get(key, "N/A")
+                    cond_table.add_row(
+                        cond.name, param_name, str(orig_default), str(best_val)
+                    )
+        console.print(cond_table)
+
     # ---- 7. 写回原 YAML（通过 StrategyConfig.to_yaml，保留注释） ----
     for rank_item, opt_w in zip(cfg.ranks, best_weights):
         rank_item.weight = round(float(opt_w), 6)
+
+    # 将条件参数的最优值写回 opt.default —— 下次非优化模式直接使用最优值
+    if cfg.has_condition_opt_params():
+        cfg.apply_best_condition_params(study.best_params)
+        console.print("[cyan]✓ 条件参数最优值已写回 opt.default 字段[/cyan]")
 
     cfg.to_yaml(yaml_file)
 

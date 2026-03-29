@@ -115,6 +115,28 @@ class DataProvider:
         # 在最后阶段过滤到 start_dt 及以后（表达式计算已完成，可以安全过滤）
         return lf.filter(pl.col("DATE") >= start_dt)
 
+    def eval_exprs_on_df(
+        self,
+        df: pl.DataFrame,
+        exprs: List[str],
+    ) -> pl.DataFrame:
+        """在已有 DataFrame 上追加表达式列，返回新 DataFrame。
+
+        用于 Optuna trial 内的动态条件表达式计算（每个 trial 参数不同，不缓存）。
+        复用内部 ``_apply_column_exprs``，底层由 ``codegen_exec`` 驱动。
+
+        Args:
+            df:    输入 DataFrame（通常为 ``base_df`` 预计算结果）。
+            exprs: ``name = expression`` 格式的表达式列表。
+
+        Returns:
+            追加了新列的 DataFrame（原有列保留）。
+        """
+        if not exprs:
+            return df
+        lf, _ = self._apply_column_exprs(df.lazy(), exprs)
+        return lf.collect()
+
     def _build_pool_base_data(
         self,
         pool: PoolUniverse,
