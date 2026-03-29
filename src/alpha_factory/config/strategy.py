@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from pathlib import Path
-from typing import List, Literal, Optional, Union
+from typing import ClassVar, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -80,6 +80,7 @@ class ExprCondition(BaseModel):
           - expression: "TOTAL_MV > 1000000000"
     """
 
+    opt: ClassVar[dict] = {}
     expression: str = ""
     name: str = Field(default="", description="规则名称（可选）")
 
@@ -219,6 +220,22 @@ class StrategyConfig(BaseModel):
     )
     buy_able: List[ExprCondition] = Field(
         default_factory=list, description="可买入白名单条件列表,and 叠加"
+    )
+
+    # ---------- 评估相关配置（用于 evals 命令及其他评估工具） ----------
+    start_date: Optional[str] = Field(
+        default=None, description="数据起始日期（YYYYMMDD），可由命令行覆盖"
+    )
+    end_date: Optional[str] = Field(
+        default=None, description="数据结束日期（YYYYMMDD），可由命令行覆盖"
+    )
+    ic_decay: bool = Field(default=False, description="是否计算 IC Decay（衰减评估）")
+    turnover_decay: bool = Field(
+        default=False, description="是否计算 Turnover Decay（换手率衰减）"
+    )
+    cluster: bool = Field(default=False, description="是否进行因子聚类分析")
+    relevance_threshold: float = Field(
+        default=0.7, ge=0.0, le=1.0, description="聚类相关性阈值（0~1），越高聚类越严格"
     )
 
     # ---------------------------------------------------------------------------

@@ -9,7 +9,7 @@ from alpha_factory.utils.schema import F
 def batch_calc_factor_ic_decay(
     df: Union[pl.DataFrame, pl.LazyFrame],
     factors: Union[str, List[str]] = r"^factor_.*",
-    label_for_ret: str = F.LABEL_FOR_RET,
+    label_for_ret: str = F.LABEL_FOR_IC,
     max_lag: int = 5,
     date_col: str = F.DATE,
     asset_col: str = F.ASSET,
@@ -50,18 +50,27 @@ def batch_calc_factor_ic_decay(
 
     # --- 2. 构造收益率滞后序列并 Rank (Spearman 准备) ---
     # 我们预先对收益率做 Rank，后续直接计算 Pearson 即可等价于 Spearman
+    # 注意：必须分拆 shift 和 rank 操作，链式操作在 Polars 中会导致全 NaN
     target_lags = [f"target_lag_{i}" for i in range(max_lag)]
+
+    # 首先进行所有 shift 操作
     q = lf.with_columns(
         [
-            pl.col(label_for_ret)
-            .shift(-i)
-            .over(asset_col)
-            .rank()
-            .over(date_col)
-            .alias(f"target_lag_{i}")
+            pl.col(label_for_ret).shift(-i).over(asset_col).alias(f"shift_lag_{i}")
             for i in range(max_lag)
         ]
     )
+
+    # 然后进行所有 rank 操作
+    q = q.with_columns(
+        [
+            pl.col(f"shift_lag_{i}").rank().over(date_col).alias(f"target_lag_{i}")
+            for i in range(max_lag)
+        ]
+    )
+
+    # 删除中间列以节省内存
+    q = q.drop([f"shift_lag_{i}" for i in range(max_lag)])
 
     # --- 3. 长表化处理：将因子维度打散 ---
     # 这一步是为了避免写 Python 循环，充分利用 Polars 的并行聚合能力
@@ -72,7 +81,7 @@ def batch_calc_factor_ic_decay(
         value_name="factor_value",
     ).with_columns(
         # 因子值截面 Rank
-        pl.col("factor_value").rank().over([date_col, "factor"])
+        pl.col("factor_value").rank().over([date_col, "factor"]).alias("factor_value")
     )
 
     # --- 4. 核心聚合计算 IC 时间序列 ---
@@ -92,13 +101,13 @@ def batch_calc_factor_ic_decay(
         .agg(
             [
                 *[
-                    pl.col(f"lag_{i}").mean().alias(f"IC_Mean_Lag_{i}")
+                    pl.col(f"lag_{i}").fill_nan(None).mean().alias(f"IC_Mean_Lag_{i}")
                     for i in range(max_lag)
                 ],
                 *[
                     (
-                        pl.col(f"lag_{i}").mean()
-                        / pl.col(f"lag_{i}").std().fill_nan(1e-9)
+                        pl.col(f"lag_{i}").fill_nan(None).mean()
+                        / pl.col(f"lag_{i}").fill_nan(None).std().fill_nan(1e-9)
                     ).alias(f"IR_Lag_{i}")
                     for i in range(max_lag)
                 ],
