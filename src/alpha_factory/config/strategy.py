@@ -382,3 +382,179 @@ class StrategyConfig(BaseModel):
             actions.append(Or(factors=ns, name="not_sell_able"))
 
         return actions
+
+    # ---------------------------------------------------------------------------
+    # 潜在交易生成
+    # ---------------------------------------------------------------------------
+
+    def generate_potential_trades(
+        self,
+        df: "pl.DataFrame",  # noqa: F821
+        factor_col: Optional[str] = None,
+        *,
+        ascending: bool = False,
+        include_open: bool = True,
+    ) -> "pl.DataFrame":  # noqa: F821
+        """对每个资产运行买卖信号状态机，返回所有潜在交易记录。
+
+        信号规则（与 ``backtest_quick_daily`` 对齐）：
+          - 买入：``rank <= buy_rank`` 且当前未持仓
+          - 卖出：``rank > sell_rank`` 且当前持仓中
+
+        参数:
+            df: 已 collect 的 DataFrame，须包含 ``DATE, ASSET, POOL_MASK,
+                CLOSE`` 及 ``factor_col`` 列。数据加载方式参考
+                ``quant bt``（``DataProvider.load_pool_data`` + ``build_actions``）。
+            factor_col: 用于排名的因子列名。单因子策略可省略（自动取
+                ``ranks[0].name``）；多因子策略须与 ``_COMPOSITE_COL`` 保持一致。
+            ascending: 排名方向，默认 ``False``（值越大排名越靠前）。
+            include_open: 末尾仍持仓的交易是否纳入结果（sell_date 等字段为
+                ``null``）。
+
+        返回:
+            ``pl.DataFrame``，列：
+
+            * ``ASSET`` — 资产代码
+            * ``buy_date`` — 买入信号触发日
+            * ``sell_date`` — 卖出信号触发日（开放持仓为 ``null``）
+            * ``hold_days`` — 持仓交易日数（开放持仓为 ``null``）
+            * ``rank_val`` — 买入日排名值
+            * ``sell_rank_val`` — 卖出日排名值（开放持仓为 ``null``）
+            * ``pnl_ret`` — 收益率 ``sell_close/buy_close - 1``（开放持仓为 ``null``）
+        """
+        import polars as pl
+
+        # --- 1. factor_col 推断 ---
+        if factor_col is None:
+            if len(self.ranks) != 1:
+                raise ValueError(
+                    "多因子策略须显式传入 factor_col（通常为 _COMPOSITE_COL）"
+                )
+            factor_col = self.ranks[0].name
+
+        # --- 2. 计算截面 RANK（与 backtest_quick_daily 保持一致）---
+        df_ranked = df.with_columns(
+            pl.when(pl.col(F.POOL_MASK))
+            .then(pl.col(factor_col))
+            .otherwise(None)
+            .rank(descending=not ascending, method="random")
+            .over(F.DATE)
+            .fill_null(999999)
+            .alias("_RANK")
+        ).sort([F.DATE, F.ASSET])
+
+        buy_rank = self.buy_rank
+        sell_rank = self.sell_rank
+
+        # --- 3. per-asset 状态机 ---
+        records: list[dict] = []
+
+        for asset_df in df_ranked.partition_by(F.ASSET, maintain_order=True):
+            in_position = False
+            buy_date = None
+            buy_close = None
+            buy_rank_val = None
+            dates = asset_df[F.DATE].to_list()
+            closes = asset_df[F.CLOSE].to_list()
+            ranks = asset_df["_RANK"].to_list()
+
+            for date, close, rank in zip(dates, closes, ranks):
+                if not in_position:
+                    if rank <= buy_rank:
+                        in_position = True
+                        buy_date = date
+                        buy_close = close
+                        buy_rank_val = rank
+                else:
+                    if rank > sell_rank:
+                        records.append(
+                            {
+                                F.ASSET: asset_df[F.ASSET][0],
+                                "buy_date": buy_date,
+                                "sell_date": date,
+                                "hold_days": None,  # 先 None，下面用 polars 计算
+                                "rank_val": float(buy_rank_val),
+                                "sell_rank_val": float(rank),
+                                "buy_close": float(buy_close)
+                                if buy_close is not None
+                                else None,
+                                "sell_close": float(close)
+                                if close is not None
+                                else None,
+                            }
+                        )
+                        in_position = False
+                        buy_date = buy_close = buy_rank_val = None
+
+            # 末尾仍持仓
+            if in_position and include_open:
+                records.append(
+                    {
+                        F.ASSET: asset_df[F.ASSET][0],
+                        "buy_date": buy_date,
+                        "sell_date": None,
+                        "hold_days": None,
+                        "rank_val": float(buy_rank_val),
+                        "sell_rank_val": None,
+                        "buy_close": float(buy_close)
+                        if buy_close is not None
+                        else None,
+                        "sell_close": None,
+                    }
+                )
+
+        if not records:
+            return pl.DataFrame(
+                {
+                    F.ASSET: pl.Series([], dtype=pl.Utf8),
+                    "buy_date": pl.Series([], dtype=pl.Date),
+                    "sell_date": pl.Series([], dtype=pl.Date),
+                    "hold_days": pl.Series([], dtype=pl.Int32),
+                    "rank_val": pl.Series([], dtype=pl.Float64),
+                    "sell_rank_val": pl.Series([], dtype=pl.Float64),
+                    "pnl_ret": pl.Series([], dtype=pl.Float64),
+                }
+            )
+
+        # --- 4. 构建 DataFrame，计算 hold_days + pnl_ret ---
+        # 显式 cast 日期列，避免全为 null 时 Polars 推断为 Null 类型导致减法失败
+        result = (
+            (
+                pl.DataFrame(records).with_columns(
+                    pl.col("buy_date").cast(pl.Date),
+                    pl.col("sell_date").cast(pl.Date),
+                )
+            )
+            .with_columns(
+                pl.when(
+                    pl.col("sell_date").is_not_null() & pl.col("buy_date").is_not_null()
+                )
+                .then(
+                    (pl.col("sell_date") - pl.col("buy_date"))
+                    .dt.total_days()
+                    .cast(pl.Int32)
+                )
+                .otherwise(None)
+                .alias("hold_days"),
+                pl.when(
+                    pl.col("sell_close").is_not_null()
+                    & pl.col("buy_close").is_not_null()
+                )
+                .then(pl.col("sell_close") / pl.col("buy_close") - 1.0)
+                .otherwise(None)
+                .alias("pnl_ret"),
+            )
+            .select(
+                [
+                    F.ASSET,
+                    "buy_date",
+                    "sell_date",
+                    "hold_days",
+                    "rank_val",
+                    "sell_rank_val",
+                    "pnl_ret",
+                ]
+            )
+        )
+
+        return result

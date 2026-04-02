@@ -114,6 +114,8 @@ class MainSmallPool(PoolUniverse):
             F.LABEL_FOR_RET_CC,
             "MV_RANK",  # 市值截面排名，用于因子中性化
             "LOG_MV",  # 市值对数，用于因子中性化
+            F.PE,  # 市盈率，交易时快照特征
+            F.PB,  # 市净率，交易时快照特征
         ]
 
     def pool(
