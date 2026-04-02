@@ -1,17 +1,18 @@
 """quant evals —— 批量因子评估命令
 
-支持直接指定 --expr 表达式、--csv-file 文件，或自动扫描股票池目录。
+支持通过 --expr 或 --csv-file 直接提供因子表达式，
+或在无输入时自动扫描 pool 目录中的 CSV 文件。
 
 示例用法:
 
-    # 直接传入表达式评估
-    quant evals -s 20220101 --expr "f1=ts_mean(AMOUNT,40)"
+    # 直接评估表达式
+    quant evals -s 20220101 --expr "factor1=ts_mean(AMOUNT,40)"
 
-    # 从 CSV 文件批量评估
+    # 从 CSV 文件加载因子
     quant evals -s 20220101 --csv-file factors.csv
 
-    # 自动扫描 pool 目录，评估所有 CSV 因子
-    quant evals -s 20220101
+    # 自动扫描 pool 目录，输出到指定文件
+    quant evals -s 20220101 -o results.csv
 """
 
 from __future__ import annotations
@@ -31,19 +32,6 @@ from alpha_factory.evaluation.batch.full_metrics import batch_full_metrics
 
 console = Console()
 
-_DEFAULT_N_BINS = 10
-_DEFAULT_LS_MODE = "long_only"
-_DEFAULT_FEE = 0.003
-_DEFAULT_START_DATE = "20190101"
-
-
-def _parse_expr(expr_str: str, idx: int) -> tuple[str, str]:
-    """解析 'name=expression' 或 'expression'（自动命名为 factor_{idx}）。"""
-    if "=" in expr_str:
-        name, _, expr = expr_str.partition("=")
-        return name.strip(), expr.strip()
-    return f"factor_{idx}", expr_str.strip()
-
 
 def _load_csv_factors(
     csv_path: Path,
@@ -57,7 +45,6 @@ def _load_csv_factors(
         console.print(f"[red]❌ 读取 CSV 文件失败: {e}[/red]")
         raise typer.Exit(code=1)
 
-    # 自动回退列名搜索（兼容历史 CSV）
     resolved_name_col = name_col
     if resolved_name_col not in df.columns:
         for alias in ["name", "factor_name", "因子名"]:
@@ -85,40 +72,19 @@ def _load_csv_factors(
     return factors
 
 
-def _scan_pool_dir(
-    pool_dir: Path,
-    name_col: str = "factor",
-    expr_col: str = "expression",
-) -> list[tuple[str, str]]:
-    """扫描池目录中的所有 CSV，按因子名去重后返回列表。"""
-    csv_files = sorted(pool_dir.glob("*.csv"))
-    seen: dict[str, str] = {}
-    for csv_file in csv_files:
-        try:
-            df = pl.read_csv(csv_file)
-            actual_name = (
-                name_col
-                if name_col in df.columns
-                else next(
-                    (c for c in ["name", "factor_name", "因子名"] if c in df.columns),
-                    None,
-                )
-            )
-            actual_expr = (
-                expr_col
-                if expr_col in df.columns
-                else next(
-                    (c for c in ["expression", "expr", "公式"] if c in df.columns), None
-                )
-            )
-            if actual_name and actual_expr:
-                for row in df.select([actual_name, actual_expr]).to_dicts():
-                    n, e = row[actual_name], row[actual_expr]
-                    if n not in seen:
-                        seen[n] = e
-        except Exception:
-            pass
-    return list(seen.items())
+def _parse_expr_args(exprs: list[str]) -> list[tuple[str, str]]:
+    """解析 --expr 参数列表，支持 'name=expression' 或无名格式。"""
+    result = []
+    for i, raw in enumerate(exprs):
+        if "=" in raw:
+            idx = raw.index("=")
+            name = raw[:idx].strip()
+            expression = raw[idx + 1 :].strip()
+        else:
+            name = f"factor_{i}"
+            expression = raw.strip()
+        result.append((name, expression))
+    return result
 
 
 def _print_result_table(result_df: pl.DataFrame, top_n: int = 20) -> None:
@@ -133,166 +99,266 @@ def _print_result_table(result_df: pl.DataFrame, top_n: int = 20) -> None:
         "direction",
     ]
     cols_to_show = [c for c in display_cols if c in result_df.columns]
-
     table = Table(title=f"批量因子评估结果（Top {min(top_n, len(result_df))}）")
     for col in cols_to_show:
         if col == "factor":
             table.add_column(col, style="cyan", no_wrap=True)
         else:
             table.add_column(col, style="white")
-
     for row in result_df.head(top_n).to_dicts():
         table.add_row(
             *[
-                f"{row[col]:.4f}"
-                if isinstance(row[col], float)
-                else str(int(row[col]))
-                if isinstance(row[col], int)
-                else str(row[col])
+                (
+                    f"{row[col]:.4f}"
+                    if isinstance(row[col], float)
+                    else (
+                        str(int(row[col]))
+                        if isinstance(row[col], int)
+                        else str(row[col])
+                    )
+                )
                 for col in cols_to_show
             ]
         )
     console.print(table)
 
 
+def _run_batched_eval(
+    lf: pl.LazyFrame,
+    factor_names: list[str],
+    batch_size: int,
+) -> pl.DataFrame:
+    """分批调用 batch_full_metrics 并合并结果。"""
+    batches = [
+        factor_names[i : i + batch_size]
+        for i in range(0, len(factor_names), batch_size)
+    ]
+    parts: list[pl.DataFrame] = []
+    for batch in batches:
+        part = batch_full_metrics(lf, factors=batch)
+        if not part.is_empty():
+            parts.append(part)
+    if not parts:
+        return pl.DataFrame()
+    return pl.concat(parts, how="vertical_relaxed")
+
+
 def quant_evals(
+    yaml_file: Optional[Path] = typer.Option(
+        None,
+        "-y",
+        "--yaml",
+        help="StrategyConfig YAML 文件路径（基于配置的完整评估模式）",
+    ),
+    expr: Optional[List[str]] = typer.Option(
+        None, "--expr", help="因子表达式，支持 'name=expression' 格式，可重复"
+    ),
     start_date: Optional[str] = typer.Option(
         None, "-s", "--start-date", help="开始日期（YYYYMMDD）"
     ),
     end_date: Optional[str] = typer.Option(
         None, "-e", "--end-date", help="结束日期（YYYYMMDD）"
     ),
-    expr: Optional[List[str]] = typer.Option(
-        None, "--expr", help="因子表达式，格式 'name=expr' 或 'expr'，可重复"
+    csv_file: Optional[Path] = typer.Option(
+        None, "--csv-file", help="CSV 因子文件路径（--yaml 模式下作为补充因子）"
     ),
-    csv_file: Optional[Path] = typer.Option(None, "--csv-file", help="CSV 因子文件"),
-    name_col: str = typer.Option("factor", "--name-col", help="CSV 中因子名列"),
-    expr_col: str = typer.Option("expression", "--expr-col", help="CSV 中表达式列"),
+    name_col: str = typer.Option("factor", "--name-col", help="CSV 中因子名所在列"),
+    expr_col: str = typer.Option("expression", "--expr-col", help="CSV 中表达式所在列"),
+    ic_decay: bool = typer.Option(
+        False, "--ic-decay", help="计算 IC Decay（仅 --yaml 模式）"
+    ),
+    turnover_decay: bool = typer.Option(
+        False, "--turnover-decay", help="计算 Turnover Decay（仅 --yaml 模式）"
+    ),
+    cluster: bool = typer.Option(
+        False, "--cluster", help="因子聚类分析（仅 --yaml 模式）"
+    ),
+    relevance_threshold: Optional[float] = typer.Option(
+        None,
+        "--relevance-threshold",
+        min=0.0,
+        max=1.0,
+        help="聚类相关性阈值，0~1（仅 --yaml 模式）",
+    ),
     batch_size: int = typer.Option(100, "--batch-size", min=1, help="评估批大小"),
-    top_n: int = typer.Option(20, "--top-n", help="显示前 N 条结果"),
-    output: Optional[Path] = typer.Option(None, "-o", "--output", help="输出 CSV 路径"),
-    min_sharpe: float = typer.Option(1.0, "--min-sharpe", help="质量过滤：最低 Sharpe"),
+    top_n: int = typer.Option(20, "--top-n", help="终端显示前 N 条结果"),
+    min_sharpe: float = typer.Option(1.0, "--min-sharpe", help="最低 Sharpe 过滤阈值"),
     min_ann_ret: float = typer.Option(
-        0.20, "--min-ann-ret", help="质量过滤：最低年化收益"
+        0.20, "--min-ann-ret", help="最低年化收益过滤阈值"
     ),
-):
+    output: Optional[Path] = typer.Option(
+        None, "-o", "--output", help="输出 CSV 文件路径"
+    ),
+) -> None:
+    """批量因子评估。
+
+    [bold]模式 1[/bold] — 基于 YAML 配置（支持 IC Decay / Turnover Decay / 聚类）：
+
+      quant evals -y s1.yaml -s 20220101 --ic-decay --cluster
+
+    [bold]模式 2[/bold] — 直接指定表达式：
+
+      quant evals --expr "f1=ts_mean(AMOUNT,40)" --expr "f2=rank(CLOSE)"
+
+    [bold]模式 3[/bold] — 从 CSV 文件加载：
+
+      quant evals --csv-file factors.csv
+
+    [bold]模式 4[/bold] — 自动扫描 pool 目录：
+
+      quant evals -s 20220101
     """
-    批量因子评估。
+    # ── YAML 模式 ────────────────────────────────────────────────────────────
+    if yaml_file is not None:
+        from alpha_factory.cli.eval_core import run_eval_pipeline
+        from alpha_factory.config.strategy import StrategyConfig
 
-    支持 --expr 直接指定表达式、--csv-file 文件批量输入，或自动扫描股票池目录。
+        console.print(f"[cyan]加载 YAML 配置: {yaml_file}[/cyan]")
+        try:
+            config = StrategyConfig.from_yaml(yaml_file)
+        except Exception as e:
+            console.print(f"[red]❌ 加载 YAML 失败: {e}[/red]")
+            raise typer.Exit(code=1)
 
-    [bold]示例 1[/bold] — 直接指定表达式：
+        if start_date:
+            config.start_date = start_date
+        if end_date:
+            config.end_date = end_date
+        if ic_decay:
+            config.ic_decay = True
+        if turnover_decay:
+            config.turnover_decay = True
+        if cluster:
+            config.cluster = True
+        if relevance_threshold is not None:
+            config.relevance_threshold = relevance_threshold
 
-      quant evals -s 20220101 --expr "f1=ts_mean(AMOUNT,40)"
+        console.print(f"[dim]策略: {config.name} | 池: {config.pool}[/dim]")
 
-    [bold]示例 2[/bold] — 从 CSV 批量输入：
+        csv_factors = None
+        if csv_file:
+            csv_factors = _load_csv_factors(csv_file, name_col, expr_col)
 
-      quant evals -s 20220101 --csv-file factors.csv
+        eval_start_ts = perf_counter()
+        try:
+            result_df = run_eval_pipeline(
+                config=config,
+                csv_factors=csv_factors,
+                start_date=start_date,
+                end_date=end_date,
+                batch_size=batch_size,
+            )
+        except Exception as e:
+            console.print(f"[red]❌ 评估执行失败: {e}[/red]")
+            raise typer.Exit(code=1)
+        total_eval_seconds = perf_counter() - eval_start_ts
 
-    [bold]示例 3[/bold] — 启用质量过滤，输出结果：
+        if result_df.is_empty():
+            console.print(
+                "[yellow]⚠️ 评估结果为空，请检查因子表达式或数据范围。[/yellow]"
+            )
+            raise typer.Exit(code=0)
 
-      quant evals --expr "f1=ts_mean(AMOUNT,40)" --min-sharpe 0.5 -o results.csv
-    """
-    t0 = perf_counter()
-
-    # ── 1. 收集因子对 ──────────────────────────────────────────────────────
-    factor_pairs: list[tuple[str, str]] = []
-    auto_pool_mode = False
-
-    if expr:
-        for i, e in enumerate(expr):
-            factor_pairs.append(_parse_expr(e, i))
-
-    if csv_file:
-        csv_factors = _load_csv_factors(csv_file, name_col, expr_col)
-        factor_pairs.extend(csv_factors)
-
-    if not factor_pairs:
-        # 自动扫描池目录
-        pool_dir = MainSmallPool().pool_dir
-        if pool_dir.exists():
-            console.print(f"[dim]扫描池目录: {pool_dir}[/dim]")
-            factor_pairs = _scan_pool_dir(pool_dir, name_col, expr_col)
-            auto_pool_mode = True
-
-    if not factor_pairs:
-        console.print(
-            "[red]❌ 至少提供 --expr 或 --csv-file，或在 pool 目录放置 CSV 文件。[/red]"
-        )
-        raise typer.Exit(code=1)
-
-    # 按因子名去重
-    seen: dict[str, str] = {}
-    for n, e in factor_pairs:
-        if n not in seen:
-            seen[n] = e
-    factor_pairs = list(seen.items())
-
-    console.print(f"[bold]准备评估 {len(factor_pairs)} 个因子[/bold]")
-
-    # ── 2. 加载数据 ────────────────────────────────────────────────────────
-    actual_start = start_date or _DEFAULT_START_DATE
-    pool = MainSmallPool()
-    dp = DataProvider()
-    exprs_for_loader = [f"{n}={e}" for n, e in factor_pairs]
-    lf = dp.load_pool_data(pool, actual_start, end_date, exprs=exprs_for_loader)
-
-    # ── 3. 批量评估 ────────────────────────────────────────────────────────
-    factor_names = [n for n, _ in factor_pairs]
-    batches = [
-        factor_names[i : i + batch_size]
-        for i in range(0, len(factor_names), batch_size)
-    ]
-    result_parts: list[pl.DataFrame] = []
-    for batch_factors in batches:
-        part = batch_full_metrics(
-            lf,
-            factors=batch_factors,
-            n_bins=_DEFAULT_N_BINS,
-            mode=_DEFAULT_LS_MODE,
-            fee=_DEFAULT_FEE,
-        )
-        if not part.is_empty():
-            result_parts.append(part)
-
-    result_df = (
-        pl.concat(result_parts, how="vertical_relaxed")
-        if result_parts
-        else pl.DataFrame()
-    )
-
-    # ── 4. 质量过滤 ────────────────────────────────────────────────────────
-    if not result_df.is_empty() and "sharpe" in result_df.columns:
-        filtered = result_df.filter(
+        filtered_df = result_df.filter(
             (pl.col("sharpe") >= min_sharpe) & (pl.col("ann_ret") >= min_ann_ret)
         )
-        if filtered.is_empty():
+        if filtered_df.is_empty():
             console.print(
-                f"[yellow]⚠️ 过滤后无可用因子（min_sharpe={min_sharpe}, "
-                f"min_ann_ret={min_ann_ret}）[/yellow]"
+                f"[yellow]⚠️ 过滤后无可用因子"
+                f"（min_sharpe={min_sharpe}, min_ann_ret={min_ann_ret}）。[/yellow]"
             )
-        result_df = filtered
+            raise typer.Exit(code=0)
 
-    total_seconds = perf_counter() - t0
-    console.print(f"[dim]时间统计: 总耗时 {total_seconds:.3f}s[/dim]")
+        _print_result_table(filtered_df, top_n)
+        console.print(f"[dim]时间统计: 耗时 {total_eval_seconds:.3f}s[/dim]")
+        if output:
+            out_path = Path(output)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            filtered_df.write_csv(out_path)
+            console.print(f"[green]✅ 完整结果已写入: {out_path}[/green]")
+        console.print(
+            f"[bold cyan]批量评估完成[/bold cyan] | {len(filtered_df)} 个因子通过筛选"
+        )
+        return
 
-    # ── 5. 展示结果 ────────────────────────────────────────────────────────
-    if not result_df.is_empty():
-        _print_result_table(result_df, top_n)
-
-    # ── 6. 保存 --output ──────────────────────────────────────────────────
-    if output and not result_df.is_empty():
-        output.parent.mkdir(parents=True, exist_ok=True)
-        result_df.write_csv(output)
-        console.print(f"[green]✅ 完整结果已写入: {output}[/green]")
-
-    # ── 7. 自动池模式：落盘到 pool_dir ────────────────────────────────────
-    if auto_pool_mode and not result_df.is_empty():
-        pool_out = MainSmallPool().pool_dir / "main_small_pool.csv"
-        result_df.write_csv(pool_out)
-        console.print(f"[green]✅ 自动保存至: {pool_out}[/green]")
-
-    console.print(f"[bold cyan]批量评估完成[/bold cyan] | 评估因子 {len(result_df)} 个")
+    # ── 表达式 / CSV / 自动扫描模式 ──────────────────────────────────────────
+    auto_pool_mode = False
+    pool = MainSmallPool()
+    factor_pairs: list[tuple[str, str]] = []
+    if expr:
+        factor_pairs = _parse_expr_args(list(expr))
+    elif csv_file:
+        factor_pairs = _load_csv_factors(csv_file, name_col, expr_col)
+    else:
+        pool_dir = pool.pool_dir
+        csv_files = sorted(
+            f for f in pool_dir.glob("*.csv") if f.name != "main_small_pool.csv"
+        )
+        if not csv_files:
+            console.print(
+                "[red]❌ 至少提供 --expr 或 --csv-file，"
+                "或在 pool 目录中放置 CSV 文件。[/red]"
+            )
+            console.print(
+                "[dim]使用 --expr 指定因子表达式，"
+                "例如：--expr 'factor1=ts_mean(AMOUNT,40)'[/dim]"
+            )
+            raise typer.Exit(code=1)
+        auto_pool_mode = True
+        console.print(
+            f"[dim]扫描池目录 {pool_dir}，发现 {len(csv_files)} 个 CSV 文件[/dim]"
+        )
+        seen_names: set[str] = set()
+        for csv_path in csv_files:
+            try:
+                batch = _load_csv_factors(csv_path, "factor", "expression")
+            except SystemExit:
+                continue
+            for name, expression in batch:
+                if name not in seen_names:
+                    seen_names.add(name)
+                    factor_pairs.append((name, expression))
+        if not factor_pairs:
+            console.print(
+                "[red]❌ 至少提供 --expr 或 --csv-file，"
+                "或确保 pool 目录中 CSV 包含有效因子。[/red]"
+            )
+            raise typer.Exit(code=1)
+    console.print(f"[bold]准备评估 {len(factor_pairs)} 个因子[/bold]")
+    actual_start = start_date or "20190101"
+    exprs_for_loader = [f"{name}={expression}" for name, expression in factor_pairs]
+    factor_names = [name for name, _ in factor_pairs]
+    dp = DataProvider()
+    lf = dp.load_pool_data(pool, actual_start, end_date, exprs=exprs_for_loader)
+    eval_start_ts = perf_counter()
+    result_df = _run_batched_eval(lf, factor_names, batch_size)
+    total_eval_seconds = perf_counter() - eval_start_ts
+    if result_df.is_empty():
+        console.print("[yellow]⚠️ 评估结果为空，请检查因子表达式或数据范围。[/yellow]")
+        raise typer.Exit(code=0)
+    filtered_df = result_df.filter(
+        (pl.col("sharpe") >= min_sharpe) & (pl.col("ann_ret") >= min_ann_ret)
+    )
+    if filtered_df.is_empty():
+        console.print(
+            f"[yellow]⚠️ 过滤后无可用因子"
+            f"（min_sharpe={min_sharpe}, min_ann_ret={min_ann_ret}）。[/yellow]"
+        )
+        raise typer.Exit(code=0)
+    _print_result_table(filtered_df, top_n)
+    console.print(
+        f"[dim]时间统计: 评估 {len(factor_pairs)} 个因子耗时 {total_eval_seconds:.3f}s[/dim]"
+    )
+    if auto_pool_mode and output is None:
+        output = pool.pool_dir / "main_small_pool.csv"
+    if output:
+        out_path = Path(output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        filtered_df.write_csv(out_path)
+        console.print(f"[green]✅ 完整结果已写入: {out_path}[/green]")
+    console.print(
+        f"[bold cyan]批量评估完成[/bold cyan] | {len(filtered_df)} 个因子通过筛选"
+    )
 
 
 __all__ = ["quant_evals"]
