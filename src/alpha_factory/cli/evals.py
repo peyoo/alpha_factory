@@ -342,8 +342,10 @@ def quant_evals(
     # ── YAML 模式 ────────────────────────────────────────────────────────────
     if yaml_file is not None:
         from alpha_factory.cli.eval_core import run_eval_pipeline
+        from alpha_factory.cli.utils import resolve_yaml_path
         from alpha_factory.config.strategy import StrategyConfig
 
+        yaml_file = resolve_yaml_path(yaml_file)
         console.print(f"[cyan]加载 YAML 配置: {yaml_file}[/cyan]")
         try:
             config = StrategyConfig.from_yaml(yaml_file)
