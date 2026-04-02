@@ -88,23 +88,61 @@ def _parse_expr_args(exprs: list[str]) -> list[tuple[str, str]]:
 
 
 def _print_result_table(result_df: pl.DataFrame, top_n: int = 20) -> None:
-    """使用 Rich 打印评估结果表格。"""
+    """使用 Rich 打印评估结果表格。
+
+    Args:
+        result_df: 评估结果 DataFrame
+        top_n: 显示前 N 条结果
+    """
+    # 选择要显示的列
+    # 主表全列展示（含 cluster 列）
     display_cols = [
         "factor",
+        "expression",
         "ic_mean",
         "ic_ir",
         "ann_ret",
         "sharpe",
         "turnover_est",
         "direction",
+        "cluster",
     ]
     cols_to_show = [c for c in display_cols if c in result_df.columns]
+
+    # 检查是否有 IC Decay 列
+    decay_cols = sorted(
+        [c for c in result_df.columns if c.startswith(("IC_Mean_Lag", "IR_Lag"))]
+    )
+    decay_cols_with_data = [
+        c for c in decay_cols if result_df[c].is_not_null().sum() > 0
+    ]
+
+    # 检查是否有 Turnover Decay 列
+    turnover_decay_cols = [
+        c for c in result_df.columns if c in ["avg_turnover", "turnover_std", "side"]
+    ]
+
+    # 如果有 IC Decay 或 Turnover Decay 列，使用简化显示
+    if decay_cols_with_data or turnover_decay_cols:
+        # 仅显示关键列，避免表格过宽
+        cols_to_show = [
+            c
+            for c in cols_to_show
+            if c in ["factor", "expression", "sharpe", "ic_ir", "ann_ret"]
+        ]
+    else:
+        cols_to_show = [c for c in display_cols if c in result_df.columns]
+
     table = Table(title=f"批量因子评估结果（Top {min(top_n, len(result_df))}）")
+
     for col in cols_to_show:
         if col == "factor":
             table.add_column(col, style="cyan", no_wrap=True)
+        elif col == "expression":
+            table.add_column(col, style="dim", overflow="fold", min_width=20)
         else:
             table.add_column(col, style="white")
+
     for row in result_df.head(top_n).to_dicts():
         table.add_row(
             *[
@@ -120,7 +158,100 @@ def _print_result_table(result_df: pl.DataFrame, top_n: int = 20) -> None:
                 for col in cols_to_show
             ]
         )
+
     console.print(table)
+
+    # 如果有 IC Decay 列，拆成 IC 表和 IR 表单独显示
+    if decay_cols_with_data:
+        ic_cols = [c for c in decay_cols_with_data if c.startswith("IC_Mean_Lag")]
+        ir_cols = [c for c in decay_cols_with_data if c.startswith("IR_Lag")]
+
+        def _decay_row(row: dict, cols: list[str]) -> list[str]:
+            values = [row["factor"]]
+            for col in cols:
+                val = row[col]
+                if isinstance(val, float) and val == val:
+                    values.append(f"{val:.4f}")
+                else:
+                    values.append("-")
+            return values
+
+        if ic_cols:
+            console.print("\n[bold]IC Decay（IC Mean）：[/bold]")
+            ic_table = Table(title="各因子在不同滞后期的 IC Mean")
+            ic_table.add_column("factor", style="cyan", no_wrap=True, min_width=8)
+            for col in ic_cols:
+                lag_num = col.replace("IC_Mean_Lag_", "")
+                ic_table.add_column(
+                    f"IC_lag{lag_num}", style="white", min_width=8, no_wrap=True
+                )
+            for row in result_df.head(top_n).to_dicts():
+                ic_table.add_row(*_decay_row(row, ic_cols))
+            console.print(ic_table)
+
+        if ir_cols:
+            console.print("\n[bold]IC Decay（IR = IC Mean / IC Std）：[/bold]")
+            ir_table = Table(title="各因子在不同滞后期的 IR")
+            ir_table.add_column("factor", style="cyan", no_wrap=True, min_width=8)
+            for col in ir_cols:
+                lag_num = col.replace("IR_Lag_", "")
+                ir_table.add_column(
+                    f"IR_lag{lag_num}", style="white", min_width=8, no_wrap=True
+                )
+            for row in result_df.head(top_n).to_dicts():
+                ir_table.add_row(*_decay_row(row, ir_cols))
+            console.print(ir_table)
+
+    # 如果有 Turnover Decay 列，单独显示
+    if turnover_decay_cols:
+        console.print("\n[bold]Turnover Decay 分析：[/bold]")
+        turnover_table = Table(title="因子换手率与方向")
+        turnover_table.add_column("factor", style="cyan", no_wrap=True)
+
+        # 添加 turnover 相关列
+        for col in ["side", "direction", "avg_turnover", "turnover_std"]:
+            if col in result_df.columns:
+                turnover_table.add_column(col, style="white")
+
+        for row in result_df.head(top_n).to_dicts():
+            values = [row["factor"]]
+            for col in ["side", "direction", "avg_turnover", "turnover_std"]:
+                if col in result_df.columns:
+                    val = row[col]
+                    if isinstance(val, float):
+                        if val == val:  # 检查 NaN
+                            values.append(f"{val:.4f}")
+                        else:
+                            values.append("-")
+                    else:
+                        values.append(str(val))
+            turnover_table.add_row(*values)
+
+        console.print(turnover_table)
+
+    # 如果有聚类结果，显示簇摘要
+    if "cluster" in result_df.columns:
+        console.print("\n[bold]因子聚类结果：[/bold]")
+        # 按 cluster 分组
+        cluster_groups: dict[int, list[str]] = {}
+        for row in result_df.to_dicts():
+            cid = int(row["cluster"])
+            cluster_groups.setdefault(cid, []).append(row["factor"])
+
+        cluster_table = Table(title=f"共 {len(cluster_groups)} 个簇")
+        cluster_table.add_column("簇 ID", style="cyan", no_wrap=True)
+        cluster_table.add_column("因子数", style="white")
+        cluster_table.add_column("因子列表", style="dim")
+        for cid in sorted(cluster_groups.keys()):
+            names = cluster_groups[cid]
+            style = "bold yellow" if len(names) > 1 else "white"
+            cluster_table.add_row(
+                str(cid),
+                str(len(names)),
+                ", ".join(names),
+                style=style,
+            )
+        console.print(cluster_table)
 
 
 def _run_batched_eval(
@@ -171,7 +302,7 @@ def quant_evals(
         False, "--turnover-decay", help="计算 Turnover Decay（仅 --yaml 模式）"
     ),
     cluster: bool = typer.Option(
-        False, "--cluster", help="因子聚类分析（仅 --yaml 模式）"
+        True, "--cluster", help="因子聚类分析（仅 --yaml 模式）"
     ),
     relevance_threshold: Optional[float] = typer.Option(
         None,
