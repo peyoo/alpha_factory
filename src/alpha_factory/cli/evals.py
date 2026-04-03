@@ -343,7 +343,7 @@ def quant_evals(
     ),
     batch_size: int = typer.Option(100, "--batch-size", min=1, help="评估批大小"),
     top_n: int = typer.Option(20, "--top-n", help="终端显示前 N 条结果"),
-    min_sharpe: float = typer.Option(0.5, "--min-sharpe", help="最低 Sharpe 过滤阈值"),
+    min_sharpe: float = typer.Option(0.3, "--min-sharpe", help="最低 Sharpe 过滤阈值"),
     min_ann_ret: float = typer.Option(
         0.1, "--min-ann-ret", help="最低年化收益过滤阈值"
     ),
@@ -433,7 +433,7 @@ def quant_evals(
             raise typer.Exit(code=0)
 
         filtered_df = result_df.filter(
-            (pl.col("sharpe") >= min_sharpe) & (pl.col("ann_ret") >= min_ann_ret)
+            (pl.col("sharpe") > min_sharpe) & (pl.col("ann_ret") > min_ann_ret)
         )
         if filtered_df.is_empty():
             console.print(
@@ -545,7 +545,7 @@ def quant_evals(
         console.print("[yellow]⚠️ 评估结果为空，请检查因子表达式或数据范围。[/yellow]")
         raise typer.Exit(code=0)
     filtered_df = result_df.filter(
-        (pl.col("sharpe") >= min_sharpe) & (pl.col("ann_ret") >= min_ann_ret)
+        (pl.col("sharpe") > min_sharpe) & (pl.col("ann_ret") > min_ann_ret)
     )
     if filtered_df.is_empty():
         console.print(
