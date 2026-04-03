@@ -29,6 +29,7 @@ from rich.table import Table
 from alpha_factory.data_provider.data_provider import DataProvider
 from alpha_factory.data_provider.pool import MainSmallPool
 from alpha_factory.evaluation.batch.full_metrics import batch_full_metrics
+from alpha_factory.evaluation.batch.overlap import batch_topn_overlap
 
 console = Console()
 
@@ -254,6 +255,35 @@ def _print_result_table(result_df: pl.DataFrame, top_n: int = 20) -> None:
         console.print(cluster_table)
 
 
+def _print_overlap_table(overlap_df: pl.DataFrame, topn: int) -> None:
+    """使用 Rich 打印因子 Top-N 持仓重合度（Hit Rate）表格。"""
+    if overlap_df.is_empty():
+        console.print("[yellow]⚠️ 无可用重合度数据。[/yellow]")
+        return
+
+    table = Table(title=f"因子 Top-{topn} 持仓重合度（Hit Rate，按降序）")
+    table.add_column("因子 A", style="cyan", no_wrap=True)
+    table.add_column("因子 B", style="cyan", no_wrap=True)
+    table.add_column("Hit Rate", style="bold")
+
+    for row in overlap_df.to_dicts():
+        rate = row["hit_rate"]
+        if rate >= 0.5:
+            rate_str = f"[bold red]{rate:.1%}[/bold red]"
+        elif rate >= 0.3:
+            rate_str = f"[yellow]{rate:.1%}[/yellow]"
+        else:
+            rate_str = f"[green]{rate:.1%}[/green]"
+        table.add_row(row["factor_a"], row["factor_b"], rate_str)
+
+    console.print(table)
+    console.print(
+        "[dim]颜色说明: [bold red]红色[/bold red] ≥50% 高重合 "
+        "| [yellow]黄色[/yellow] 30~50% 中等 "
+        "| [green]绿色[/green] <30% 低重合[/dim]"
+    )
+
+
 def _run_batched_eval(
     lf: pl.LazyFrame,
     factor_names: list[str],
@@ -313,12 +343,18 @@ def quant_evals(
     ),
     batch_size: int = typer.Option(100, "--batch-size", min=1, help="评估批大小"),
     top_n: int = typer.Option(20, "--top-n", help="终端显示前 N 条结果"),
-    min_sharpe: float = typer.Option(1.0, "--min-sharpe", help="最低 Sharpe 过滤阈值"),
+    min_sharpe: float = typer.Option(0.5, "--min-sharpe", help="最低 Sharpe 过滤阈值"),
     min_ann_ret: float = typer.Option(
-        0.20, "--min-ann-ret", help="最低年化收益过滤阈值"
+        0.1, "--min-ann-ret", help="最低年化收益过滤阈值"
     ),
     output: Optional[Path] = typer.Option(
         None, "-o", "--output", help="输出 CSV 文件路径"
+    ),
+    overlap_topn: Optional[int] = typer.Option(
+        None,
+        "--overlap-topn",
+        min=1,
+        help="计算任意两因子 Top-N 持仓重合度（Hit Rate），设置 N 即启用，默认不计算",
     ),
 ) -> None:
     """批量因子评估。
@@ -338,6 +374,10 @@ def quant_evals(
     [bold]模式 4[/bold] — 自动扫描 pool 目录：
 
       quant evals -s 20220101
+
+    [bold]持仓重合度[/bold] — 任意模式下追加 --overlap-topn N 即可计算：
+
+      quant evals --expr "f1=..." --expr "f2=..." --overlap-topn 50
     """
     # ── YAML 模式 ────────────────────────────────────────────────────────────
     if yaml_file is not None:
@@ -404,6 +444,41 @@ def quant_evals(
 
         _print_result_table(filtered_df, top_n)
         console.print(f"[dim]时间统计: 耗时 {total_eval_seconds:.3f}s[/dim]")
+
+        # ── Top-N 持仓重合度（YAML 模式）
+        if overlap_topn is not None:
+            filtered_names = filtered_df["factor"].to_list()
+            if len(filtered_names) < 2:
+                console.print(
+                    "[yellow]⚠️ 至少需要 2 个因子才能计算持仓重合度。[/yellow]"
+                )
+            else:
+                console.print(
+                    f"\n[bold]计算 Top-{overlap_topn} 持仓重合度"
+                    f"（{len(filtered_names)} 个因子，"
+                    f"{len(filtered_names) * (len(filtered_names) - 1) // 2} 对）...[/bold]"
+                )
+                from alpha_factory.cli.eval_core import _get_pool_universe, _load_data
+
+                _pool = _get_pool_universe(config.pool)
+                _factor_pairs_all = [
+                    (row["factor"], row["expression"])
+                    for row in filtered_df.select(["factor", "expression"]).to_dicts()
+                    if "expression" in filtered_df.columns
+                ]
+                if not _factor_pairs_all:
+                    console.print(
+                        "[dim]（YAML 模式下需要 expression 列以重建数据，跳过重合度计算）[/dim]"
+                    )
+                else:
+                    _overlap_lf = _load_data(
+                        config, _factor_pairs_all, start_date, end_date
+                    )
+                    _overlap_df = batch_topn_overlap(
+                        _overlap_lf, filtered_names, overlap_topn
+                    )
+                    _print_overlap_table(_overlap_df, overlap_topn)
+
         if output:
             out_path = Path(output)
             out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -482,6 +557,21 @@ def quant_evals(
     console.print(
         f"[dim]时间统计: 评估 {len(factor_pairs)} 个因子耗时 {total_eval_seconds:.3f}s[/dim]"
     )
+
+    # ── Top-N 持仓重合度（非 YAML 模式，lf 直接可用）
+    if overlap_topn is not None:
+        filtered_names = filtered_df["factor"].to_list()
+        if len(filtered_names) < 2:
+            console.print("[yellow]⚠️ 至少需要 2 个因子才能计算持仓重合度。[/yellow]")
+        else:
+            console.print(
+                f"\n[bold]计算 Top-{overlap_topn} 持仓重合度"
+                f"（{len(filtered_names)} 个因子，"
+                f"{len(filtered_names) * (len(filtered_names) - 1) // 2} 对）...[/bold]"
+            )
+            overlap_df = batch_topn_overlap(lf, filtered_names, overlap_topn)
+            _print_overlap_table(overlap_df, overlap_topn)
+
     if auto_pool_mode and output is None:
         output = pool.pool_dir / "main_small_pool.csv"
     if output:
