@@ -168,7 +168,7 @@ def quant_opt(
         "--end-date",
         help="回测结束日期 YYYYMMDD（默认取仓库最新日期）",
     ),
-    n_trials: int = typer.Option(500, "--n-trials", help="Optuna 试验次数"),
+    n_trials: int = typer.Option(100, "--n-trials", help="Optuna 试验次数"),
     seed: int = typer.Option(42, "--seed", help="随机种子，确保结果可复现"),
     show_progress: bool = typer.Option(
         True, "--progress/--no-progress", help="是否显示优化进度条"
@@ -297,6 +297,8 @@ def quant_opt(
         precompute_actions.append(And(factors=ns, name="sell_able"))
     if (ns := _g_names(cfg.not_sell_able)) and not _has_dyn(cfg.not_sell_able):
         precompute_actions.append(Or(factors=ns, name="not_sell_able"))
+
+    # precompute_actions.append(SymmetricOrtho(factors=cfg.factor_names))
 
     all_exprs = cfg.ranked_factor_exprs + cfg.get_static_condition_exprs()
     lf = dp.load_pool_data(

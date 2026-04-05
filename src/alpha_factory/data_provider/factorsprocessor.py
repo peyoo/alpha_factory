@@ -220,7 +220,7 @@ class FactorsRankComposite(FactorsComposite):
         if self.opt:
             # Optuna 模式：通过 trial.suggest_float 采样原始权重，再经 softmax 归一化
             raw = np.array(
-                [self.trial.suggest_float(f"w_{col}", -1.0, 1.0) for col in cols]
+                [self.trial.suggest_float(f"w_{col}", 0.0, 1.0) for col in cols]
             )
             resolved_weights = _softmax_weights(raw).tolist()
         else:

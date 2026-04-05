@@ -335,7 +335,7 @@ def quant_evals(
         True, "--cluster", help="因子聚类分析（仅 --yaml 模式）"
     ),
     relevance_threshold: Optional[float] = typer.Option(
-        None,
+        0.8,
         "--relevance-threshold",
         min=0.0,
         max=1.0,
@@ -351,7 +351,7 @@ def quant_evals(
         None, "-o", "--output", help="输出 CSV 文件路径"
     ),
     overlap_topn: Optional[int] = typer.Option(
-        None,
+        50,
         "--overlap-topn",
         min=1,
         help="计算任意两因子 Top-N 持仓重合度（Hit Rate），设置 N 即启用，默认不计算",
