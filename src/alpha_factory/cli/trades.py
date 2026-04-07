@@ -43,24 +43,6 @@ console = Console()
 # ---------------------------------------------------------------------------
 # 特征定义（买入时刻快照）
 # ---------------------------------------------------------------------------
-_SNAPSHOT_COLS = [
-    F.TOTAL_MV,
-    F.PE,
-    F.PB,
-    F.TURNOVER_RATE,
-    F.OPEN,
-    F.CLOSE,
-    F.CLOSE_RAW,
-    F.HIGH,
-    F.LOW,
-    F.AMOUNT,
-    F.VOLUME,
-    "ILLIQ",
-    F.CIRC_MV,
-    F.VWAP,
-    F.RET,
-    F.VWAP_RET,
-]
 FEATURE_COLS: list[str] = [
     F.TOTAL_MV,
     F.PE,
@@ -125,6 +107,11 @@ def quant_trades(
         "--full-diag/--no-full-diag",
         help="开启全量诊断模式：额外计算 SHAP Interaction 图（计算量较大）",
     ),
+    run_rank: bool = typer.Option(
+        False,
+        "--rank/--no-rank",
+        help="是否执行 rank（选优）分析（默认关闭）",
+    ),
 ):
     """
     策略潜在交易分析：生成所有交易 → 建立买入特征 → filter（排雷）+ rank（选优）双模型分析。
@@ -173,7 +160,7 @@ def quant_trades(
     factor_col = cfg.ranks[0].name if len(cfg.ranks) == 1 else _COMPOSITE_COL
 
     # 确保 snapshot 列存在（某些策略可能没加载这些列）
-    missing = [c for c in _SNAPSHOT_COLS if c not in df.columns]
+    missing = [c for c in FEATURE_COLS if c not in df.columns]
     if missing:
         console.print(
             f"[yellow]⚠ DataFrame 缺少快照列 {missing}，对应特征将为 null[/yellow]"
@@ -206,7 +193,7 @@ def quant_trades(
 
     # --- 两种分析 ---
     filter_result = _run_filter_analysis(trades_feat, bad_threshold, test_ratio)
-    rank_result = _run_rank_analysis(trades_feat, test_ratio)
+    rank_result = _run_rank_analysis(trades_feat, test_ratio) if run_rank else None
 
     # --- 终端打印摘要 ---
     _print_analysis_summary(trades_feat, bad_threshold, filter_result, rank_result)
@@ -224,11 +211,13 @@ def quant_trades(
             console.print(
                 f"[bold green]📄 Filter 报告（排雷）[/bold green] → {filter_path}"
             )
-            console.print(
-                f"[bold green]📄 Rank 报告（选优）[/bold green] → {rank_path}"
-            )
+            if rank_path is not None:
+                console.print(
+                    f"[bold green]📄 Rank 报告（选优）[/bold green] → {rank_path}"
+                )
             webbrowser.open(filter_path.as_uri())
-            webbrowser.open(rank_path.as_uri())
+            if rank_path is not None:
+                webbrowser.open(rank_path.as_uri())
         except Exception as exc:  # noqa: BLE001
             console.print(f"[yellow]⚠ 报告生成失败: {exc}[/yellow]")
 
@@ -256,7 +245,7 @@ def _attach_buy_features(
         .alias("_RANK_SNAP")
     )
 
-    snap_cols = [c for c in _SNAPSHOT_COLS if c in df.columns]
+    snap_cols = [c for c in FEATURE_COLS if c in df.columns]
     snap_df = rank_df.select(
         [F.DATE, F.ASSET, pl.col("_RANK_SNAP").alias("rank_val")]
         + [pl.col(c) for c in snap_cols]
@@ -459,7 +448,7 @@ def _print_analysis_summary(
     trades_feat: pl.DataFrame,
     bad_threshold: float,
     filter_result: dict,
-    rank_result: dict,
+    rank_result: dict | None,
 ) -> None:
     pnl = trades_feat["pnl_ret"]
     n = len(pnl)
@@ -486,12 +475,13 @@ def _print_analysis_summary(
     table.add_row("Precision", f"{filter_result.get('precision', float('nan')):.4f}")
     table.add_row("Recall", f"{filter_result.get('recall', float('nan')):.4f}")
 
-    table.add_row("[bold]── rank 分析 ──[/bold]", "")
-    table.add_row(
-        "训练/测试样本", f"{rank_result['n_train']} / {rank_result['n_test']}"
-    )
-    table.add_row("Spearman IC", f"{rank_result.get('ic', float('nan')):.4f}")
-    table.add_row("R²", f"{rank_result.get('r2', float('nan')):.4f}")
+    if rank_result is not None:
+        table.add_row("[bold]── rank 分析 ──[/bold]", "")
+        table.add_row(
+            "训练/测试样本", f"{rank_result['n_train']} / {rank_result['n_test']}"
+        )
+        table.add_row("Spearman IC", f"{rank_result.get('ic', float('nan')):.4f}")
+        table.add_row("R²", f"{rank_result.get('r2', float('nan')):.4f}")
 
     console.print(table)
 
@@ -821,7 +811,7 @@ def _shap_decision_plots(
 
 def _build_diagnosis_html(
     filter_result: dict,
-    rank_result: dict,
+    rank_result: dict | None,
     bad_threshold: float,
     mode: str = "both",
 ) -> str:
@@ -830,32 +820,38 @@ def _build_diagnosis_html(
         import numpy as np
 
         f_shap = filter_result.get("shap_values")
-        r_shap = rank_result.get("shap_values")
+        r_shap = rank_result.get("shap_values") if rank_result is not None else None
         f_names = filter_result.get("feature_names", [])
-        r_names = rank_result.get("feature_names", [])
+        r_names = (
+            rank_result.get("feature_names", []) if rank_result is not None else []
+        )
 
-        if f_shap is None or r_shap is None:
+        if f_shap is None:
             return ""
 
         f_mean = np.abs(f_shap).mean(axis=0)
-        r_mean = np.abs(r_shap).mean(axis=0)
 
         # 坏交易最危险因子：filter top-3
         f_top_idx = np.argsort(f_mean)[::-1][:3]
         f_top = [(f_names[i], float(f_mean[i])) for i in f_top_idx if i < len(f_names)]
 
-        # 高收益核心因子：rank top-3
-        r_top_idx = np.argsort(r_mean)[::-1][:3]
-        r_top = [(r_names[i], float(r_mean[i])) for i in r_top_idx if i < len(r_names)]
-
         # 双确认（同时出现在 filter top-5 和 rank top-5）
         f_top5_names = {
             f_names[i] for i in np.argsort(f_mean)[::-1][:5] if i < len(f_names)
         }
-        r_top5_names = {
-            r_names[i] for i in np.argsort(r_mean)[::-1][:5] if i < len(r_names)
-        }
-        dual = sorted(f_top5_names & r_top5_names)
+        r_top: list[tuple[str, float]] = []
+        dual: list[str] = []
+        if r_shap is not None:
+            r_mean = np.abs(r_shap).mean(axis=0)
+            # 高收益核心因子：rank top-3
+            r_top_idx = np.argsort(r_mean)[::-1][:3]
+            r_top = [
+                (r_names[i], float(r_mean[i])) for i in r_top_idx if i < len(r_names)
+            ]
+            r_top5_names = {
+                r_names[i] for i in np.argsort(r_mean)[::-1][:5] if i < len(r_names)
+            }
+            dual = sorted(f_top5_names & r_top5_names)
 
         def card(icon, title, body, color):
             return f"""<div style="background:{color};border-radius:8px;padding:12px 16px;margin:8px 0;border-left:4px solid #1a5276">
@@ -948,13 +944,17 @@ def _generate_html_report(
     trades_feat: pl.DataFrame,
     bad_threshold: float,
     filter_result: dict,
-    rank_result: dict,
+    rank_result: dict | None,
     full_diag: bool = False,
-) -> tuple[Path, Path]:
+) -> tuple[Path, Path | None]:
     import numpy as np
 
     f_names = filter_result.get("feature_names", FEATURE_COLS)
-    r_names = rank_result.get("feature_names", FEATURE_COLS)
+    r_names = (
+        rank_result.get("feature_names", FEATURE_COLS)
+        if rank_result is not None
+        else []
+    )
 
     # ── Section 1：Global Landscape（beeswarm + bar）──────────────────────
     console.print("[dim]  [1/5] Global landscape (beeswarm + bar)...[/dim]")
@@ -972,19 +972,27 @@ def _generate_html_report(
         "bar",
         "filter: Feature Importance",
     )
-    r_bee = _shap_to_base64(
-        rank_result["shap_values"],
-        rank_result["X_test_np"],
-        r_names,
-        "beeswarm",
-        "rank: SHAP beeswarm",
+    r_bee = (
+        _shap_to_base64(
+            rank_result["shap_values"],
+            rank_result["X_test_np"],
+            r_names,
+            "beeswarm",
+            "rank: SHAP beeswarm",
+        )
+        if rank_result is not None
+        else ""
     )
-    r_bar = _shap_to_base64(
-        rank_result["shap_values"],
-        rank_result["X_test_np"],
-        r_names,
-        "bar",
-        "rank: Feature Importance",
+    r_bar = (
+        _shap_to_base64(
+            rank_result["shap_values"],
+            rank_result["X_test_np"],
+            r_names,
+            "bar",
+            "rank: Feature Importance",
+        )
+        if rank_result is not None
+        else ""
     )
 
     # ── Section 2：Dependence Grid ────────────────────────────────────────
@@ -995,7 +1003,7 @@ def _generate_html_report(
         f_dep_imgs = _shap_dependence_grid(
             filter_result["shap_values"], filter_result["X_test_np"], f_names
         )
-    if rank_result.get("shap_values") is not None:
+    if rank_result is not None and rank_result.get("shap_values") is not None:
         r_dep_imgs = _shap_dependence_grid(
             rank_result["shap_values"], rank_result["X_test_np"], r_names
         )
@@ -1011,12 +1019,13 @@ def _generate_html_report(
             f_inter_img = _shap_interaction_plots(
                 filter_result["model"], X_full_f, f_names
             )
-        X_full_r = rank_result.get("X_full")
-        if X_full_r is not None and rank_result.get("model") is not None:
-            console.print("[dim]        → rank 模型...[/dim]")
-            r_inter_img = _shap_interaction_plots(
-                rank_result["model"], X_full_r, r_names
-            )
+        if rank_result is not None:
+            X_full_r = rank_result.get("X_full")
+            if X_full_r is not None and rank_result.get("model") is not None:
+                console.print("[dim]        → rank 模型...[/dim]")
+                r_inter_img = _shap_interaction_plots(
+                    rank_result["model"], X_full_r, r_names
+                )
     else:
         console.print("[dim]  [3/5] Interaction 已跳过（使用 --full-diag 开启）[/dim]")
 
@@ -1038,7 +1047,8 @@ def _generate_html_report(
             ],
         )
     if (
-        rank_result.get("shap_values") is not None
+        rank_result is not None
+        and rank_result.get("shap_values") is not None
         and rank_result.get("buy_dates_full") is not None
     ):
         r_heat_img = _shap_heatmap_by_time(
@@ -1074,7 +1084,8 @@ def _generate_html_report(
             f_names,
         )
     if (
-        rank_result.get("shap_values") is not None
+        rank_result is not None
+        and rank_result.get("shap_values") is not None
         and rank_result.get("pnl_test") is not None
         and rank_result.get("shap_explainer") is not None
     ):
@@ -1215,44 +1226,50 @@ def _generate_html_report(
         else ""
     )
     rank_html = (
-        f'<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"/>'
-        f"<title>Rank 分析 — 选优 · {cfg.name}</title>"
-        f"<style>{_CSS}</style></head><body>"
-        f"<h1>⚔ Rank 分析 — 选优 · {cfg.name}</h1>"
-        f'<p style="color:#666">生成时间：{gen_time} &nbsp;|&nbsp; {base_meta}</p>'
-        f'<p class="hint">目标：识别预测高 <b>pnl_ret</b> 的特征，'
-        f"建议将高权重因子加入 <code>ranks</code>。</p>"
-        f"{r_diag_html}{stats_section_html}"
-        f'<div class="section"><h2>📊 Section 1 — Global Landscape</h2>'
-        f'<p class="hint">LGBMRegressor：目标 pnl_ret，Spearman IC 越高则预测能力越强。'
-        f"正 SHAP → 推高收益 → 建议增权。</p>"
-        f"<table><tr><th>指标</th><th>数值</th></tr>"
-        f"<tr><td>训练样本</td><td>{rank_result['n_train']}</td></tr>"
-        f"<tr><td>测试样本</td><td>{rank_result['n_test']}</td></tr>"
-        f"<tr><td>Spearman IC</td><td>{fmt(rank_result.get('ic', float('nan')))}</td></tr>"
-        f"<tr><td>IC p-value</td><td>{fmt(rank_result.get('ic_pval', float('nan')))}</td></tr>"
-        f"<tr><td>R²</td><td>{fmt(rank_result.get('r2', float('nan')))}</td></tr>"
-        f"</table>"
-        f"<h4>SHAP Beeswarm</h4>{img_tag(r_bee, 'rank beeswarm')}"
-        f"<h4>Feature Importance</h4>{img_tag(r_bar, 'rank importance')}</div>"
-        f'<div class="section"><h2>🔍 Section 2 — 非线性边界检测（Dependence Plots）</h2>'
-        f'<p class="hint">散点 X=特征值，Y=SHAP 值，颜色=最高交互特征。红虚线为非线性阈值（若检测到）。</p>'
-        f"{dep_section(r_dep_imgs)}</div>"
-        f"{r_inter_section}"
-        f'<div class="section"><h2>🌡 Section 4 — 稳定性与风格漂移（SHAP 时间热图）</h2>'
-        f'<p class="hint">行=按时间排序的交易，列=特征，颜色=SHAP 值（红=正贡献，蓝=负贡献）。</p>'
-        f"{img_tag(r_heat_img, 'rank heatmap')}</div>"
-        f'<div class="section"><h2>🏚 Section 5 — 诊断调试（最差 {worst_n} 笔交易 Decision Plot）</h2>'
-        f'<p class="hint">Decision Plot 展示各特征如何将预测值从 baseline 推向最终输出。</p>'
-        f"{img_tag(r_dec_img, 'rank decision')}</div>"
-        "</body></html>"
+        (
+            f'<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"/>'
+            f"<title>Rank 分析 — 选优 · {cfg.name}</title>"
+            f"<style>{_CSS}</style></head><body>"
+            f"<h1>⚔ Rank 分析 — 选优 · {cfg.name}</h1>"
+            f'<p style="color:#666">生成时间：{gen_time} &nbsp;|&nbsp; {base_meta}</p>'
+            f'<p class="hint">目标：识别预测高 <b>pnl_ret</b> 的特征，'
+            f"建议将高权重因子加入 <code>ranks</code>。</p>"
+            f"{r_diag_html}{stats_section_html}"
+            f'<div class="section"><h2>📊 Section 1 — Global Landscape</h2>'
+            f'<p class="hint">LGBMRegressor：目标 pnl_ret，Spearman IC 越高则预测能力越强。'
+            f"正 SHAP → 推高收益 → 建议增权。</p>"
+            f"<table><tr><th>指标</th><th>数值</th></tr>"
+            f"<tr><td>训练样本</td><td>{rank_result['n_train']}</td></tr>"
+            f"<tr><td>测试样本</td><td>{rank_result['n_test']}</td></tr>"
+            f"<tr><td>Spearman IC</td><td>{fmt(rank_result.get('ic', float('nan')))}</td></tr>"
+            f"<tr><td>IC p-value</td><td>{fmt(rank_result.get('ic_pval', float('nan')))}</td></tr>"
+            f"<tr><td>R²</td><td>{fmt(rank_result.get('r2', float('nan')))}</td></tr>"
+            f"</table>"
+            f"<h4>SHAP Beeswarm</h4>{img_tag(r_bee, 'rank beeswarm')}"
+            f"<h4>Feature Importance</h4>{img_tag(r_bar, 'rank importance')}</div>"
+            f'<div class="section"><h2>🔍 Section 2 — 非线性边界检测（Dependence Plots）</h2>'
+            f'<p class="hint">散点 X=特征值，Y=SHAP 值，颜色=最高交互特征。红虚线为非线性阈值（若检测到）。</p>'
+            f"{dep_section(r_dep_imgs)}</div>"
+            f"{r_inter_section}"
+            f'<div class="section"><h2>🌡 Section 4 — 稳定性与风格漂移（SHAP 时间热图）</h2>'
+            f'<p class="hint">行=按时间排序的交易，列=特征，颜色=SHAP 值（红=正贡献，蓝=负贡献）。</p>'
+            f"{img_tag(r_heat_img, 'rank heatmap')}</div>"
+            f'<div class="section"><h2>🏚 Section 5 — 诊断调试（最差 {worst_n} 笔交易 Decision Plot）</h2>'
+            f'<p class="hint">Decision Plot 展示各特征如何将预测值从 baseline 推向最终输出。</p>'
+            f"{img_tag(r_dec_img, 'rank decision')}</div>"
+            "</body></html>"
+        )
+        if rank_result is not None
+        else None
     )
 
     report_dir = Path(settings.OUTPUT_DIR) / "html_reports"
     report_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     filter_path = report_dir / f"Trades_filter_{cfg.name}_{ts}.html"
-    rank_path = report_dir / f"Trades_rank_{cfg.name}_{ts}.html"
+    rank_path: Path | None = None
     filter_path.write_text(filter_html, encoding="utf-8")
-    rank_path.write_text(rank_html, encoding="utf-8")
+    if rank_html is not None:
+        rank_path = report_dir / f"Trades_rank_{cfg.name}_{ts}.html"
+        rank_path.write_text(rank_html, encoding="utf-8")
     return filter_path, rank_path

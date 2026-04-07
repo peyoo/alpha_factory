@@ -4,6 +4,7 @@ from alpha_factory.cli.clean import clean
 from alpha_factory.cli.data import sync
 from alpha_factory.cli.eval import quant_eval
 from alpha_factory.cli.evals import quant_evals
+from alpha_factory.cli.pure import quant_pure
 from alpha_factory.cli.gp import quant_gp
 from alpha_factory.cli.group import quant_group
 from alpha_factory.cli.ml import quant_ml
@@ -23,6 +24,7 @@ app.command(name="sync")(sync)
 app.command(name="eval")(quant_eval)
 app.command(name="evals")(quant_evals)
 app.command(name="bt")(quant_bt)
+app.command(name="pure")(quant_pure)
 app.command(name="gp")(quant_gp)
 app.command(name="group")(quant_group)
 app.command(name="ml")(quant_ml)
