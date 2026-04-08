@@ -197,13 +197,12 @@ class MainSmallPool(PoolUniverse):
 
         # CLOSE_RAW_MA60 已由 extra_cols() 在前序环节生成
         tradable = (
-            ~pl.col("IS_ST")
-            & ~pl.col("IS_SUSPENDED")
-            & (pl.col("LIST_DAYS") >= 180)
-            & ~pl.col("IS_UP_LIMIT")
-            & ~pl.col("IS_DOWN_LIMIT")
-            & (pl.col("CLOSE_RAW_MA60") > 2)
-            & ~pl.col(F.APRIL_DISCLOSURE_SIGNAL)
+            ~pl.col("IS_ST") & ~pl.col("IS_SUSPENDED") & (pl.col("LIST_DAYS") >= 180)
+            # & ~pl.col("IS_UP_LIMIT")
+            # & ~pl.col("IS_DOWN_LIMIT")
+            # & (pl.col("CLOSE_RAW_MA60") > 2)
+            # & ~pl.col(F.APRIL_DISCLOSURE_SIGNAL)
+            # & (pl.col("BIAS20") < 0.25)
         )
 
         result = (
@@ -251,7 +250,12 @@ class MainSmallPool(PoolUniverse):
             .with_columns(
                 [
                     # 直接复用上面算好的 RET，减少计算量
-                    (pl.col("RET").abs() / pl.col("AMOUNT") * 1e6).alias("ILLIQ")
+                    (pl.col("RET").abs() / pl.col("AMOUNT") * 1e6).alias("ILLIQ"),
+                    (
+                        pl.col(F.CLOSE)
+                        / pl.col(F.CLOSE).rolling_mean(window_size=20).over(F.ASSET)
+                        - 1
+                    ).alias("BIAS20"),
                 ]
             )
             # 建议只在 collect 之后或必要时填充，或者使用这种方式：

@@ -131,7 +131,7 @@ def quant_pure(
       quant pure -y s1.yaml --expr CLOSE/OPEN
       quant pure -y s1.yaml --expr "my_f=ts_mean(AMOUNT,40)" -s 20210101
     """
-    from alpha_factory.cli.opt import _resolve_pool
+    from alpha_factory.cli._loader import resolve_pool
 
     yaml_file = resolve_yaml_path(yaml_file)
 
@@ -156,7 +156,7 @@ def quant_pure(
     pure_col = factor_name
 
     try:
-        pool_instance = _resolve_pool(cfg.pool)
+        pool_instance = resolve_pool(cfg.pool)
     except ValueError as exc:
         typer.echo(f"❌ {exc}", err=True)
         raise typer.Exit(code=1)

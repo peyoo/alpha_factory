@@ -96,7 +96,7 @@ def _patch_all(ranks_empty: bool = False):
         return_value=MagicMock(load_pool_data=MagicMock(return_value=mock_lf)),
     )
     ctx_pool = patch(
-        "alpha_factory.cli.opt._resolve_pool",
+        "alpha_factory.cli._loader.resolve_pool",
         return_value=MagicMock(),
     )
     ctx_pure = patch(

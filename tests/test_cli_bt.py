@@ -106,7 +106,7 @@ def test_bt_single_factor_loads_raw_expr(tmp_path: Path):
             side_effect=_fake_backtest,
         ),
         patch("alpha_factory.cli.backtest._print_summary"),
-        patch("alpha_factory.cli.opt._resolve_pool"),
+        patch("alpha_factory.cli._loader.resolve_pool"),
     ):
         mock_dp_cls.return_value.load_pool_data.return_value = _build_mock_lf()
         result = runner.invoke(app, ["bt", "-y", str(yaml_path), "--no-report"])
@@ -128,7 +128,7 @@ def test_bt_single_factor_direction_minus1_ascending_false(tmp_path: Path):
             side_effect=_fake_backtest,
         ) as mock_bt,
         patch("alpha_factory.cli.backtest._print_summary"),
-        patch("alpha_factory.cli.opt._resolve_pool"),
+        patch("alpha_factory.cli._loader.resolve_pool"),
     ):
         mock_dp_cls.return_value.load_pool_data.return_value = _build_mock_lf()
         result = runner.invoke(app, ["bt", "-y", str(yaml_path), "--no-report"])
@@ -152,7 +152,7 @@ def test_bt_single_factor_direction_1_ascending_false(tmp_path: Path):
             side_effect=_fake_backtest,
         ) as mock_bt,
         patch("alpha_factory.cli.backtest._print_summary"),
-        patch("alpha_factory.cli.opt._resolve_pool"),
+        patch("alpha_factory.cli._loader.resolve_pool"),
     ):
         mock_dp_cls.return_value.load_pool_data.return_value = _build_mock_lf()
         result = runner.invoke(app, ["bt", "-y", str(yaml_path), "--no-report"])
@@ -193,7 +193,7 @@ def test_bt_multi_factor_uses_composite(tmp_path: Path):
             side_effect=_fake_backtest,
         ) as mock_bt,
         patch("alpha_factory.cli.backtest._print_summary"),
-        patch("alpha_factory.cli.opt._resolve_pool"),
+        patch("alpha_factory.cli._loader.resolve_pool"),
     ):
         mock_dp_cls.return_value.load_pool_data.return_value = mock_base_df.lazy()
         result = runner.invoke(app, ["bt", "-y", str(yaml_path), "--no-report"])
@@ -220,7 +220,7 @@ def test_bt_backtest_params_from_yaml(tmp_path: Path):
             side_effect=_fake_backtest,
         ) as mock_bt,
         patch("alpha_factory.cli.backtest._print_summary"),
-        patch("alpha_factory.cli.opt._resolve_pool"),
+        patch("alpha_factory.cli._loader.resolve_pool"),
     ):
         mock_dp_cls.return_value.load_pool_data.return_value = _build_mock_lf()
         result = runner.invoke(app, ["bt", "-y", str(yaml_path), "--no-report"])
@@ -246,7 +246,7 @@ def test_bt_yaml_empty_ranks_exits(tmp_path: Path):
     data = {**_SINGLE_RANK_YAML, "ranks": []}
     yaml_path = _write_yaml(tmp_path, data)
 
-    with patch("alpha_factory.cli.opt._resolve_pool"):
+    with patch("alpha_factory.cli._loader.resolve_pool"):
         result = runner.invoke(app, ["bt", "-y", str(yaml_path), "--no-report"])
 
     assert result.exit_code != 0

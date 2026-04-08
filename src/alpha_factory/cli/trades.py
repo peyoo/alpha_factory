@@ -7,20 +7,22 @@
 * **rank 分析**（选优）：以 ``pnl_ret`` 为目标做回归，找出预测高收益的特征 →
   建议强化 ``ranks`` 权重。
 
-两种分析均只使用买入时刻快照特征（无前瞻），特征列：
-``rank_val, TOTAL_MV, PE, PB, TURNOVER_RATE, month, weekday``
+两种分析均只使用买入时刻快照特征（无前瞻），特征由模块级 ``FEATURE_EXPRS``
+定义或通过 ``--feature`` 参数传入，支持 ``name=expr`` 命名或按顺序自动命名。
 
 示例::
 
     quant trades -y output/main_small_pool/s1.yaml
     quant trades -y s1 -s 20210101 --end 20241231 --no-report
     quant trades -y s1 --bad-threshold -0.03 --save-trades trades.csv
+    quant trades -y s1 --feature "mom5=CLOSE/CLOSE.shift(5)-1" --feature TOTAL_MV
 """
 
 from __future__ import annotations
 
 import base64
 import io
+import re
 import webbrowser
 from datetime import datetime
 from pathlib import Path
@@ -31,7 +33,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from alpha_factory.cli.opt import _COMPOSITE_COL, _resolve_pool
+from alpha_factory.cli._loader import resolve_pool
+from alpha_factory.cli.opt import _COMPOSITE_COL
 from alpha_factory.cli.utils import resolve_yaml_path
 from alpha_factory.config.base import settings
 from alpha_factory.config.strategy import StrategyConfig
@@ -41,26 +44,55 @@ from alpha_factory.utils.schema import F
 console = Console()
 
 # ---------------------------------------------------------------------------
-# 特征定义（买入时刻快照）
+# 特征表达式（买入时刻快照）
+# 格式："name = expr" 明确命名；无等号则按顺序自动命名 feature_0, feature_1, ...
 # ---------------------------------------------------------------------------
-FEATURE_COLS: list[str] = [
-    F.TOTAL_MV,
-    F.PE,
-    F.PB,
-    F.TURNOVER_RATE,
-    F.OPEN,
-    F.CLOSE,
-    F.CLOSE_RAW,
-    F.HIGH,
-    F.LOW,
-    F.AMOUNT,
-    F.VOLUME,
-    "ILLIQ",
-    F.CIRC_MV,
-    F.VWAP,
-    F.RET,
-    F.VWAP_RET,
+FEATURE_EXPRS: list[str] = [
+    # "total_mv = TOTAL_MV",
+    "bias20 = CLOSE/ts_mean(CLOSE, 20)-1",
+    # "bias120 = CLOSE/ts_mean(CLOSE, 120)-1",
+    # "bias200 = CLOSE/ts_mean(CLOSE, 200)-1",
+    # "pe = PE",
+    # "pb = PB",
+    # "turnover_rate = TURNOVER_RATE",
+    # "open_ = OPEN",
+    # "close = CLOSE",
+    # "amount = AMOUNT",
+    # "volume = VOLUME",
+    # "circ_mv = CIRC_MV",
+    # "vwap = VWAP",
+    # "ret = RET",
 ]
+
+
+# ---------------------------------------------------------------------------
+# 特征表达式解析
+# ---------------------------------------------------------------------------
+
+
+def _parse_feature_exprs(raw: list[str]) -> tuple[list[str], list[str]]:
+    """解析特征表达式列表，返回 (col_names, codegen_exprs)。
+
+    规则：
+    - ``"name = expr"`` 格式 → col_name=name，codegen_expr="name = expr"（规范化空格）
+    - 无 ``=`` 的裸表达式 → 按顺序自动命名 ``feature_0, feature_1, ...``
+    """
+    col_names: list[str] = []
+    codegen_exprs: list[str] = []
+    auto_idx = 0
+    for s in raw:
+        m = re.match(r"^(\w+)\s*=\s*(.+)$", s.strip(), re.DOTALL)
+        if m:
+            name = m.group(1).strip()
+            body = m.group(2).strip()
+            col_names.append(name)
+            codegen_exprs.append(f"{name} = {body}")
+        else:
+            name = f"feature_{auto_idx}"
+            auto_idx += 1
+            col_names.append(name)
+            codegen_exprs.append(f"{name} = {s.strip()}")
+    return col_names, codegen_exprs
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +114,7 @@ def quant_trades(
         None, "--end", "--end-date", help="数据结束日期 YYYYMMDD（默认至最新）"
     ),
     bad_threshold: float = typer.Option(
-        0.0,
+        -0.05,
         "--bad-threshold",
         help="filter 分析坏交易阈值：pnl_ret <= 该值为坏交易（label=1）。默认 0.0。",
     ),
@@ -112,6 +144,15 @@ def quant_trades(
         "--rank/--no-rank",
         help="是否执行 rank（选优）分析（默认关闭）",
     ),
+    feature_exprs: Optional[list[str]] = typer.Option(
+        None,
+        "--feature",
+        help=(
+            "特征表达式，可多次传入。格式：name=expr 或裸表达式（按顺序自动命名 feature_N）。"
+            "不传则使用模块默认 FEATURE_EXPRS。"
+        ),
+        show_default=False,
+    ),
 ):
     """
     策略潜在交易分析：生成所有交易 → 建立买入特征 → filter（排雷）+ rank（选优）双模型分析。
@@ -134,7 +175,7 @@ def quant_trades(
         raise typer.Exit(code=1)
 
     try:
-        pool_instance = _resolve_pool(cfg.pool)
+        pool_instance = resolve_pool(cfg.pool)
     except ValueError as exc:
         typer.echo(f"❌ {exc}", err=True)
         raise typer.Exit(code=1)
@@ -157,14 +198,14 @@ def quant_trades(
     )
     df = lf.collect()
 
-    factor_col = cfg.ranks[0].name if len(cfg.ranks) == 1 else _COMPOSITE_COL
+    # --- 解析并计算特征因子 ---
+    effective_exprs = feature_exprs or FEATURE_EXPRS
+    feat_col_names, feat_codegen_exprs = _parse_feature_exprs(effective_exprs)
+    if feat_codegen_exprs:
+        console.print(f"[dim]计算特征因子：{feat_col_names}...[/dim]")
+        df = dp.eval_exprs_on_df(df, feat_codegen_exprs)
 
-    # 确保 snapshot 列存在（某些策略可能没加载这些列）
-    missing = [c for c in FEATURE_COLS if c not in df.columns]
-    if missing:
-        console.print(
-            f"[yellow]⚠ DataFrame 缺少快照列 {missing}，对应特征将为 null[/yellow]"
-        )
+    factor_col = cfg.ranks[0].name if len(cfg.ranks) == 1 else _COMPOSITE_COL
 
     # --- 生成潜在交易（仅已平仓）---
     console.print("[dim]生成潜在交易...[/dim]")
@@ -179,21 +220,27 @@ def quant_trades(
     console.print(f"[green]✓[/green] 共 {len(trades)} 笔已平仓交易")
 
     # --- 特征拼接（买入时刻快照）---
-    trades_feat = _attach_buy_features(trades, df, factor_col)
+    trades_feat = _attach_buy_features(trades, df, factor_col, feat_col_names)
 
     # 丢弃特征有缺失的行（只对 DataFrame 中实际存在的列做 subset，避免 ColumnNotFoundError）
-    existing_feat_cols = [c for c in FEATURE_COLS if c in trades_feat.columns]
-    trades_feat = trades_feat.drop_nulls(subset=existing_feat_cols)
-    if len(trades_feat) < 20:
-        console.print("[yellow]⚠ 有效样本不足 20 条，无法训练模型[/yellow]")
-        raise typer.Exit(code=0)
+    # existing_feat_cols = [c for c in FEATURE_COLS if c in trades_feat.columns]
+    # trades_feat = trades_feat.drop_nulls(subset=existing_feat_cols)
+    # if len(trades_feat) < 20:
+    #     console.print("[yellow]⚠ 有效样本不足 20 条，无法训练模型[/yellow]")
+    #     raise typer.Exit(code=0)
 
     if save_trades is not None:
         _save_df(trades_feat, save_trades)
 
     # --- 两种分析 ---
-    filter_result = _run_filter_analysis(trades_feat, bad_threshold, test_ratio)
-    rank_result = _run_rank_analysis(trades_feat, test_ratio) if run_rank else None
+    filter_result = _run_filter_analysis(
+        trades_feat, bad_threshold, test_ratio, feat_col_names
+    )
+    rank_result = (
+        _run_rank_analysis(trades_feat, test_ratio, feat_col_names)
+        if run_rank
+        else None
+    )
 
     # --- 终端打印摘要 ---
     _print_analysis_summary(trades_feat, bad_threshold, filter_result, rank_result)
@@ -231,6 +278,7 @@ def _attach_buy_features(
     trades: pl.DataFrame,
     df: pl.DataFrame,
     factor_col: str,
+    feature_col_names: list[str],
 ) -> pl.DataFrame:
     """将买入日快照特征 join 到交易表。"""
     # 从 df 计算 RANK（与 generate_potential_trades 内部一致，直接复用已计算的列）
@@ -245,7 +293,7 @@ def _attach_buy_features(
         .alias("_RANK_SNAP")
     )
 
-    snap_cols = [c for c in FEATURE_COLS if c in df.columns]
+    snap_cols = [c for c in feature_col_names if c in df.columns]
     snap_df = rank_df.select(
         [F.DATE, F.ASSET, pl.col("_RANK_SNAP").alias("rank_val")]
         + [pl.col(c) for c in snap_cols]
@@ -273,13 +321,14 @@ def _run_filter_analysis(
     trades_feat: pl.DataFrame,
     bad_threshold: float,
     test_ratio: float,
+    feature_col_names: list[str],
 ) -> dict:
     """LGBMClassifier 分析坏交易特征。"""
     import numpy as np
     from lightgbm import LGBMClassifier
     from sklearn.metrics import roc_auc_score, precision_score, recall_score
 
-    X, y_raw, feat_names, buy_dates = _prepare_xy(trades_feat)
+    X, y_raw, feat_names, buy_dates = _prepare_xy(trades_feat, feature_col_names)
     y = (y_raw <= bad_threshold).astype(int)  # 1 = 坏交易
 
     split = max(1, int(len(X) * (1 - test_ratio)))
@@ -332,13 +381,17 @@ def _run_filter_analysis(
 # ---------------------------------------------------------------------------
 
 
-def _run_rank_analysis(trades_feat: pl.DataFrame, test_ratio: float) -> dict:
+def _run_rank_analysis(
+    trades_feat: pl.DataFrame,
+    test_ratio: float,
+    feature_col_names: list[str],
+) -> dict:
     """LGBMRegressor 分析高收益特征。"""
     import numpy as np
     from lightgbm import LGBMRegressor
     from scipy.stats import spearmanr
 
-    X, y, feat_names, buy_dates = _prepare_xy(trades_feat)
+    X, y, feat_names, buy_dates = _prepare_xy(trades_feat, feature_col_names)
 
     split = max(1, int(len(X) * (1 - test_ratio)))
     X_train, X_test = X.iloc[:split], X.iloc[split:]
@@ -391,13 +444,13 @@ def _run_rank_analysis(trades_feat: pl.DataFrame, test_ratio: float) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _prepare_xy(trades_feat: pl.DataFrame):
+def _prepare_xy(trades_feat: pl.DataFrame, feature_col_names: list[str]):
     """提取特征矩阵 X 和目标 y，按 buy_date 排序（时间序列，不打乱）。"""
     import numpy as np
     import pandas as pd
 
-    # 只选 DataFrame 中实际存在的特征列（某些策略数据可能缺少 PE/PB 等）
-    actual_feat_cols = [c for c in FEATURE_COLS if c in trades_feat.columns]
+    # 只选 DataFrame 中实际存在的特征列（某些策略数据可能缺少部分列）
+    actual_feat_cols = [c for c in feature_col_names if c in trades_feat.columns]
     df_sorted = trades_feat.sort("buy_date")
     # pandas DataFrame 保留列名，供 LightGBM 训练使用（避免 feature names warning）
     X_df = pd.DataFrame(
@@ -949,12 +1002,8 @@ def _generate_html_report(
 ) -> tuple[Path, Path | None]:
     import numpy as np
 
-    f_names = filter_result.get("feature_names", FEATURE_COLS)
-    r_names = (
-        rank_result.get("feature_names", FEATURE_COLS)
-        if rank_result is not None
-        else []
-    )
+    f_names = filter_result.get("feature_names", [])
+    r_names = rank_result.get("feature_names", []) if rank_result is not None else []
 
     # ── Section 1：Global Landscape（beeswarm + bar）──────────────────────
     console.print("[dim]  [1/5] Global landscape (beeswarm + bar)...[/dim]")

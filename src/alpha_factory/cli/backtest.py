@@ -179,7 +179,7 @@ def _run_bt_from_yaml(
     单因子：直接加载原始表达式，direction 控制 ascending 。
     多因子：截面 rank 预计算 + softmax 加权合成。
     """
-    from alpha_factory.cli.opt import _resolve_pool
+    from alpha_factory.cli._loader import resolve_pool
 
     yaml_file = resolve_yaml_path(yaml_file)
 
@@ -198,7 +198,7 @@ def _run_bt_from_yaml(
         raise typer.Exit(code=1)
 
     try:
-        pool_instance = _resolve_pool(cfg.pool)
+        pool_instance = resolve_pool(cfg.pool)
     except ValueError as exc:
         typer.echo(f"❌ {exc}", err=True)
         raise typer.Exit(code=1)

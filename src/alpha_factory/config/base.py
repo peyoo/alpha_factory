@@ -99,6 +99,10 @@ class Settings(BaseSettings):
     def WAREHOUSE_DIR(self) -> Path:
         return self.DATA_DIR / "warehouse"
 
+    @property
+    def BENCHMARKS_DIR(self) -> Path:
+        return self.WAREHOUSE_DIR / "benchmarks"
+
     # --- 输出子目录 ---
     @property
     def LOG_DIR(self) -> Path:
@@ -154,7 +158,7 @@ class Settings(BaseSettings):
 
     def make_dirs(self):
         """初始化必要的物理目录"""
-        paths = [self.RAW_DATA_DIR, self.WAREHOUSE_DIR]
+        paths = [self.RAW_DATA_DIR, self.WAREHOUSE_DIR, self.BENCHMARKS_DIR]
         for path in paths:
             path.mkdir(parents=True, exist_ok=True)
 

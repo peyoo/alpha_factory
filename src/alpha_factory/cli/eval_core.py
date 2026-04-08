@@ -14,10 +14,8 @@ import polars as pl
 from loguru import logger
 from rich.console import Console
 
-from alpha_factory.cli.utils import PoolUniverseEnum
+from alpha_factory.cli._loader import load_pool_lf, resolve_pool
 from alpha_factory.config.strategy import StrategyConfig
-from alpha_factory.data_provider.data_provider import DataProvider
-from alpha_factory.data_provider.pool import PoolUniverse
 from alpha_factory.evaluation.batch.cluster import batch_clustering
 from alpha_factory.evaluation.batch.full_metrics import batch_full_metrics
 from alpha_factory.evaluation.batch.ic_decay import batch_calc_factor_ic_decay
@@ -26,30 +24,6 @@ from alpha_factory.evaluation.batch.turnover_decay import (
 )
 
 console = Console()
-
-
-def _get_pool_universe(pool_name: str) -> PoolUniverse:
-    """从配置中的池名称获取 PoolUniverse 对象。
-
-    Args:
-        pool_name: 池名称（如 "main_small_pool"）
-
-    Returns:
-        PoolUniverse 对象
-
-    Raises:
-        ValueError: 如果池名称无法识别
-    """
-    # 尝试从 PoolUniverseEnum 中找到匹配的枚举值
-    for enum_member in PoolUniverseEnum:
-        # enum_member.value 返回 PoolUniverse 对象
-        pool_obj = enum_member.value()
-        if pool_obj.name == pool_name:
-            return pool_obj
-
-    # 默认返回 main_small 池
-    logger.warning(f"无法识别池名称 '{pool_name}'，使用默认池 'main_small_pool'")
-    return PoolUniverseEnum.main_small.value()
 
 
 def _collect_factors(
@@ -84,45 +58,6 @@ def _collect_factors(
         return result
     else:
         return yaml_factors
-
-
-def _load_data(
-    config: StrategyConfig,
-    factor_pairs: List[tuple[str, str]],
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-) -> pl.LazyFrame:
-    """加载评估所需的数据。
-
-    Args:
-        config: StrategyConfig 对象
-        factor_pairs: (name, expression) 对列表
-        start_date: 可选的开始日期（优先级高于 config.start_date）
-        end_date: 可选的结束日期（优先级高于 config.end_date）
-
-    Returns:
-        pl.LazyFrame: 包含因子列和标签列的惰性数据框
-    """
-    # 使用命令行参数覆盖配置文件中的日期
-    actual_start = start_date or config.start_date or "20190101"
-    actual_end = end_date or config.end_date
-
-    logger.info(f"加载数据: pool={config.pool}, start={actual_start}, end={actual_end}")
-
-    # 将池名称转换为 PoolUniverse 对象
-    pool_universe = _get_pool_universe(config.pool)
-
-    dp = DataProvider()
-    # 将 (name, expression) 对转换为 "name=expression" 格式
-    exprs_for_loader = [f"{name}={expression}" for name, expression in factor_pairs]
-
-    lf = dp.load_pool_data(
-        pool_universe,
-        actual_start,
-        actual_end,
-        exprs=exprs_for_loader,
-    )
-    return lf
 
 
 def _run_batch_eval(
@@ -353,7 +288,11 @@ def run_eval_pipeline(
 
     # 2. 加载数据
     logger.info("步骤 2：加载评估数据")
-    lf = _load_data(config, factor_pairs, start_date, end_date)
+    actual_start = start_date or config.start_date or "20190101"
+    actual_end = end_date or config.end_date
+    pool_universe = resolve_pool(config.pool)
+    exprs_for_loader = [f"{name}={expression}" for name, expression in factor_pairs]
+    lf = load_pool_lf(pool_universe, exprs_for_loader, actual_start, actual_end)
 
     # 3. 运行批量评估
     logger.info("步骤 3：执行批量评估")
@@ -434,7 +373,6 @@ def run_eval_pipeline(
 __all__ = [
     "run_eval_pipeline",
     "_collect_factors",
-    "_load_data",
     "_run_batch_eval",
     "_compute_ic_decay",
     "_compute_clustering",

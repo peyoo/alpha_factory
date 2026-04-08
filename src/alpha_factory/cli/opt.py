@@ -23,7 +23,8 @@ from rich.table import Table
 
 from loguru import logger
 
-from alpha_factory.cli.utils import PoolUniverseEnum, resolve_yaml_path
+from alpha_factory.cli._loader import resolve_pool
+from alpha_factory.cli.utils import resolve_yaml_path
 from alpha_factory.config.strategy import FactorRank, StrategyConfig
 from alpha_factory.data_provider.data_provider import DataProvider
 from alpha_factory.data_provider.pool import PoolUniverse
@@ -34,27 +35,6 @@ from alpha_factory.utils.schema import F
 console = Console()
 
 _COMPOSITE_COL = "COMPOSITE_OPT"
-
-
-# ---------------------------------------------------------------------------
-# Pool helpers
-# ---------------------------------------------------------------------------
-
-
-def _resolve_pool(pool_name: str) -> PoolUniverse:
-    """将股票池名称字符串解析为 PoolUniverse 实例。
-
-    遍历 PoolUniverseEnum，找到 name 匹配的成员并实例化返回。
-    若未找到则抛出 ValueError。
-    """
-    for member in PoolUniverseEnum:
-        instance = member.value()
-        if instance.name == pool_name:
-            return instance
-    raise ValueError(
-        f"未知股票池 {pool_name!r}，可选值: "
-        + ", ".join(m.value().name for m in PoolUniverseEnum)
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +225,7 @@ def quant_opt(
 
     # 将 pool 名称字符串解析为 PoolUniverse 实例
     try:
-        pool_instance = _resolve_pool(cfg.pool)
+        pool_instance = resolve_pool(cfg.pool)
     except ValueError as exc:
         typer.echo(f"❌ {exc}", err=True)
         raise typer.Exit(code=1)
