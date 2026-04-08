@@ -299,7 +299,7 @@ def test_pool_mask_false_excluded():
 
 def test_detect_shap_threshold_zero_crossing():
     """线性 shap 从 -1 到 +1，零点约在 x=0.5 处。"""
-    from alpha_factory.cli.trades import _detect_shap_threshold
+    from alpha_factory.cli._trades_viz import _detect_shap_threshold
     import numpy as np
 
     x = np.linspace(0.0, 1.0, 100)
@@ -311,7 +311,7 @@ def test_detect_shap_threshold_zero_crossing():
 
 def test_shap_dependence_grid_returns_one_per_feature():
     """_shap_dependence_grid 应为每个特征返回一个非空 base64 字符串。"""
-    from alpha_factory.cli.trades import _shap_dependence_grid
+    from alpha_factory.cli._trades_viz import _shap_dependence_grid
     import numpy as np
 
     rng = np.random.default_rng(0)
