@@ -6,8 +6,6 @@ _resolve_pool / _get_pool_universe 逻辑。
 
 from __future__ import annotations
 
-from typing import Optional
-
 import polars as pl
 from loguru import logger
 
@@ -34,8 +32,8 @@ def load_pool_lf(
     pool: PoolUniverse,
     exprs: list[str],
     start_date: str,
-    end_date: Optional[str],
-    actions: Optional[list] = None,
+    end_date: str | None,
+    actions: list | None = None,
 ) -> pl.LazyFrame:
     """初始化 DataProvider 并加载股票池数据，返回 LazyFrame。
 

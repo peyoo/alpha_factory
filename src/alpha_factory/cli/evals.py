@@ -458,9 +458,9 @@ def quant_evals(
                     f"（{len(filtered_names)} 个因子，"
                     f"{len(filtered_names) * (len(filtered_names) - 1) // 2} 对）...[/bold]"
                 )
-                from alpha_factory.cli.eval_core import _get_pool_universe, _load_data
+                from alpha_factory.cli._loader import resolve_pool, load_pool_lf
 
-                _pool = _get_pool_universe(config.pool)
+                _pool = resolve_pool(config.pool)
                 _factor_pairs_all = [
                     (row["factor"], row["expression"])
                     for row in filtered_df.select(["factor", "expression"]).to_dicts()
@@ -471,8 +471,9 @@ def quant_evals(
                         "[dim]（YAML 模式下需要 expression 列以重建数据，跳过重合度计算）[/dim]"
                     )
                 else:
-                    _overlap_lf = _load_data(
-                        config, _factor_pairs_all, start_date, end_date
+                    _exprs = [f"{n}={e}" for n, e in _factor_pairs_all]
+                    _overlap_lf = load_pool_lf(
+                        _pool, _exprs, config.start_date, config.end_date
                     )
                     _overlap_df = batch_topn_overlap(
                         _overlap_lf, filtered_names, overlap_topn
