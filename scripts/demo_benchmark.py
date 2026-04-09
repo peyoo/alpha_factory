@@ -186,9 +186,80 @@ print(extend_code)
 print("\n" + "=" * 70)
 print("✅ 演示完成！")
 print("=" * 70)
+
+# ============================================================================
+# 演示 6：MicroCapBenchmark - 微盘股基准（新增）
+# ============================================================================
+
+print("\n" + "=" * 70)
+print("演示 6: MicroCapBenchmark - 微盘股基准（新增）⭐️")
+print("=" * 70)
+
+microcap_code = """
+# MicroCapBenchmark 是一个特殊的基准，定义为：
+# - T-1 日市值排名 <= 400 的主板+创业板股票
+# - T 日计算这些股票的多维统计指标
+
+from alpha_factory.data_provider import MicroCapBenchmark
+from alpha_factory.data_provider.pool import MainSmallPool
+from datetime import datetime as dt
+
+# 第一步：初始化并更新
+bench = MicroCapBenchmark()
+print(f"Benchmark 名称: {bench.name}")
+bench.update()  # 计算并缓存多指标数据
+
+# 第二步：在因子表达式中使用（与 HS300 相同接口）
+# 优点：完全基于本地数据计算，零 API 消耗
+pool = MainSmallPool()
+lf = dp.load_pool_data(pool, "20240101", "20240131")
+start_dt = dt.strptime("20240101", "%Y%m%d").date()
+end_dt = dt.strptime("20240131", "%Y%m%d").date()
+lf = pool.join_benchmark(lf, bench, start_dt, end_dt, col_name="MICROCAP_RET")
+
+# 即可使用 MICROCAP_RET 在表达式中
+exprs = [
+    "vs_microcap = RET - MICROCAP_RET",  # 相对微盘股基准的超额收益
+]
+
+# 第三步：风险监控（新增功能）
+# MicroCapBenchmark 提供 8 个统计指标，用于风险评估
+stats = bench.load_statistics(start_dt, end_dt).collect()
+print(f"\\n📊 微盘股基准统计指标（{stats.height} 个交易日）：")
+print(f"  平均收益: {stats['ret_mean'].mean():.2%}")
+print(f"  收益中位数: {stats['ret_median'].mean():.2%}")
+print(f"  平均市值: ¥{stats['avg_mcap'].mean() / 1e8:.1f} 亿")
+print(f"  成交额中位数: ¥{stats['median_amt'].median() / 1e7:.1f} 千万")
+print(f"  平均换手率: {stats['turnover_rate_avg'].mean():.2%}")
+
+# 第四步：识别异常
+median_amt = stats["median_amt"].median()
+if median_amt < 3e7:
+    print(f"⚠️  流动性风险：成交额中位数 {median_amt/1e7:.1f} 千万，难以承载大资金")
+
+# 平均市值漂移
+avg_mcap_min = stats["avg_mcap"].min()
+avg_mcap_max = stats["avg_mcap"].max()
+drift_ratio = (avg_mcap_max - avg_mcap_min) / avg_mcap_min
+if drift_ratio > 0.1:  # 10% 以上
+    print(f"⚠️  风格漂移：市值范围 {avg_mcap_min/1e8:.1f}~{avg_mcap_max/1e8:.1f} 亿，漂移 {drift_ratio:.1%}")
+
+# 极端行情识别
+for date, mean, median in zip(stats["DATE"], stats["ret_mean"], stats["ret_median"]):
+    deviation = mean - median
+    if abs(deviation) > 0.02:  # 2% 以上偏差
+        print(f"⚠️  {date}：检测到极端行情（均值-中位数={deviation:.2%}）")
+"""
+
+print(microcap_code)
+
+print("\n" + "=" * 70)
+print("✅ 演示完成！")
+print("=" * 70)
 print("\n关键特性总结：")
 print("  1️⃣  增量更新：自动检测本地最新日期，只拉取之后的数据")
 print("  2️⃣  LazyFrame join：高效地在因子表中添加基准列")
 print("  3️⃣  因子表达式支持：基准可以像其他列一样参与表达式计算")
 print("  4️⃣  评估集成：report 可以自动对比基准")
 print("  5️⃣  扩展性：轻松添加新的基准子类（ZZ500, CSI1000 等）")
+print("  6️⃣  ⭐️ 微盘股基准：本地计算、多维统计、零 API 消耗、风险监控")

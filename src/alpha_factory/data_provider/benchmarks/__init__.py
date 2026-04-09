@@ -4,5 +4,6 @@
 """
 
 from alpha_factory.data_provider.benchmarks.hs300 import HS300Benchmark
+from alpha_factory.data_provider.benchmarks.micro_cap import MicroCapBenchmark
 
-__all__ = ["HS300Benchmark"]
+__all__ = ["HS300Benchmark", "MicroCapBenchmark"]

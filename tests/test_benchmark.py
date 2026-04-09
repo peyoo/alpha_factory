@@ -105,6 +105,54 @@ class TestPoolJoinBenchmark:
         assert "col_name" in params
 
 
+class TestMicroCapBenchmark:
+    """微盘股基准功能测试"""
+
+    def test_initialization(self):
+        """测试 MicroCapBenchmark 初始化"""
+        from alpha_factory.data_provider import MicroCapBenchmark
+
+        bench = MicroCapBenchmark()
+        assert bench.name == "MicroCap"
+        assert bench._default_start_date == date(2010, 1, 1)
+
+    def test_cache_path_exists(self):
+        """测试缓存路径是否设置正确"""
+        from alpha_factory.data_provider import MicroCapBenchmark
+
+        bench = MicroCapBenchmark()
+        expected_path = settings.BENCHMARKS_DIR / "MicroCap.parquet"
+        assert bench._cache_path == expected_path
+
+    def test_load_statistics_method_exists(self):
+        """测试 load_statistics 方法是否存在"""
+        from alpha_factory.data_provider import MicroCapBenchmark
+
+        bench = MicroCapBenchmark()
+        assert hasattr(bench, "load_statistics")
+        assert callable(bench.load_statistics)
+
+    def test_load_statistics_schema_when_no_data(self):
+        """测试当没有数据时 load_statistics 返回的 schema"""
+        from alpha_factory.data_provider import MicroCapBenchmark
+
+        bench = MicroCapBenchmark()
+        # 如果文件不存在，应该返回只有 DATE 和 ret 列的 LazyFrame
+        lf = bench.load_statistics(date(2024, 1, 1), date(2024, 1, 31))
+        assert lf is not None
+
+    def test_load_returns_method_works(self):
+        """测试 load_returns 方法（向后兼容）"""
+        from alpha_factory.data_provider import MicroCapBenchmark
+
+        bench = MicroCapBenchmark()
+        # 如果文件不存在，应该返回空的 LazyFrame
+        lf = bench.load_returns(date(2024, 1, 1), date(2024, 1, 31))
+        assert lf is not None
+        # 验证返回的是 LazyFrame
+        assert isinstance(lf, pl.LazyFrame)
+
+
 class TestBenchmarkIntegration:
     """集成测试"""
 

@@ -99,6 +99,26 @@ class Benchmark(ABC):
             .select([pl.col("DATE"), pl.col("ret")])
         )
 
+    def load_statistics(self, start_date: date, end_date: date) -> pl.LazyFrame:
+        """加载指定日期范围的完整统计指标 (LazyFrame)
+
+        基类默认只返回 (DATE, ret)。子类可Override以返回更多统计列。
+
+        Args:
+            start_date: 开始日期
+            end_date: 结束日期
+
+        Returns:
+            pl.LazyFrame with all available columns
+        """
+        if not self._cache_path.exists():
+            logger.warning(f"⚠️ {self.name} 数据文件不存在，请先调用 update()")
+            return pl.LazyFrame(schema={"DATE": pl.Date, "ret": pl.Float32})
+
+        return pl.scan_parquet(self._cache_path).filter(
+            (pl.col("DATE") >= start_date) & (pl.col("DATE") <= end_date)
+        )
+
     @abstractmethod
     def _fetch(self, start_date: date, end_date: date) -> pl.DataFrame:
         """子类实现：从数据源拉取 [start_date, end_date] 范围的数据

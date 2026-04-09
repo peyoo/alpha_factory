@@ -68,7 +68,73 @@ end_dt = dt.strptime("20240131", "%Y%m%d").date()
 lf = pool.join_benchmark(lf, bench, start_dt, end_dt, col_name="BENCH_RET")
 ```
 
-### 4. 评估层集成
+### 4. `MicroCapBenchmark` 实现 ⭐️ **新增**
+**位置**：`src/alpha_factory/data_provider/benchmarks/micro_cap.py`
+
+**定义**：微盘股基准 = $T-1$ 日市值排名 ≤ 400 的主板+创业板股票
+
+**数据源**：DataProvider 本地计算生成（零 API 消耗，确定性强）
+
+**时间逻辑**：$T-1$ 选股，$T$ 日计算
+- 根据前一交易日的市值排名确定成分股
+- 计算这些股票当日的多维统计指标
+
+**多维指标**（共 8 列）：
+
+| 指标 | 类型 | 说明 |
+|------|------|------|
+| **DATE** | Date | 交易日期 |
+| **ret** | Float32 | 等权平均收益（= ret_mean，向后兼容） |
+| **ret_mean** | Float32 | 等权平均收益，用于与策略对标 |
+| **ret_median** | Float32 | 收益中位数（剔除暴涨暴跌极端值，反映"普涨/普跌"） |
+| **cum_ret** | Float32 | 累计收益（用于绘制净值曲线） |
+| **avg_mcap** | Float32 | 平均市值（监控风格漂移） |
+| **median_amt** | Float32 | 成交额中位数（评估大资金承载能力，<3000万难以承载） |
+| **turnover_rate_avg** | Float32 | 平均换手率（评估活跃度与交易成本） |
+
+**使用示例**：
+
+```python
+from alpha_factory.data_provider import MicroCapBenchmark
+from alpha_factory.data_provider.pool import MainSmallPool
+from datetime import datetime as dt
+
+# 初始化
+bench = MicroCapBenchmark()
+bench.update()  # 计算并缓存数据
+
+# 用法 1: 因子表达式 join（与 HS300 相同接口）
+pool = MainSmallPool()
+lf = dp.load_pool_data(pool, "20240101", "20240131")
+start_dt = dt.strptime("20240101", "%Y%m%d").date()
+end_dt = dt.strptime("20240131", "%Y%m%d").date()
+lf = pool.join_benchmark(lf, bench, start_dt, end_dt, col_name="MICROCAP_RET")
+
+# 现在可以在表达式中计算超额收益
+exprs = ["excess = RET - MICROCAP_RET"]
+
+# 用法 2: 风险评估（新增接口）
+stats_df = bench.load_statistics(start_dt, end_dt).collect()
+print(stats_df)
+# 可以分析：平均市值是否稳定? 成交额是否支持承载?
+
+# 用法 3: 监控基准漂移
+median_mcap = stats_df["avg_mcap"].median()
+if median_mcap < 1e9:  # 低于 10 亿
+    print("⚠️  微盘股基准平均市值过小，风险增加")
+```
+
+**与 HS300Benchmark 的差异**：
+
+| 特性 | HS300Benchmark | MicroCapBenchmark |
+|------|----------------|-------------------|
+| 数据源 | Tushare API | DataProvider 计算 |
+| API 消耗 | 有 | 无 |
+| 指标个数 | 1 (ret) | 8 (完整统计) |
+| 定义 | 固定指数 | 基于市值排名（动态） |
+| 用途 | 绝对对标 | 相对对标、风格监控 |
+
+### 5. 评估层集成
 **位置**：`src/alpha_factory/evaluation/backtest/utils.py`
 
 **功能**：`generate_and_open_report` 函数支持传入 benchmark 参数
@@ -383,6 +449,49 @@ lf = pool.join_benchmark(lf, bench, start_dt, end_dt)
 lf = lf.with_columns(pl.col("BENCH_RET").forward_fill().over("DATE"))
 ```
 
+### Q6: MicroCapBenchmark 的 T-1 选股、T 计算是什么意思？
+
+**A**: 这是防止"未来函数"的关键设计：
+- **T-1 日**：查看所有股票的市值排名，选择排名 ≤ 400 的
+- **T 日**：计算这些选定股票在 T 日的收益率（不能用 T 日的排名）
+
+这样确保计算过程中不存在从未来向现在的数据流。
+
+例如：
+```
+2024-01-01（T-1）: 确定排名前 400 的股票
+2024-01-02（T）: 计算这 400 只股票的平均收益
+2024-01-03（T）: 根据 01-02 的排名重新选股，计算 01-03 的收益
+...
+```
+
+### Q7: 如何监控 MicroCapBenchmark 的风险漂移？
+
+**A**: 使用 `load_statistics()` 的多维指标：
+
+```python
+stats = bench.load_statistics(start_dt, end_dt).collect()
+
+# 1. 市值漂移：均值明显下降表示风格转向更小的公司
+avg_mcap_trend = stats["avg_mcap"].to_list()
+print(f"平均市值范围: {min(avg_mcap_trend):.0f} ~ {max(avg_mcap_trend):.0f}")
+
+# 2. 流动性风险：中位数成交额 < 3000 万难以承载大资金
+median_amt = stats["median_amt"].median()
+if median_amt < 3e7:
+    print("⚠️ 流动性不足，不适合大资金入场")
+
+# 3. 活跃度：高换手率可能暗示高波动性
+turnover_avg = stats["turnover_rate_avg"].mean()
+print(f"平均换手率: {turnover_avg:.2%}")
+
+# 4. 波动拆解：中位数 vs 均值反映极端值影响
+for date, mean, median in zip(stats["DATE"], stats["ret_mean"], stats["ret_median"]):
+    deviation = mean - median
+    if abs(deviation) > 0.02:  # 2% 以上
+        print(f"{date}：发生极端行情（差值={deviation:.2%}）")
+```
+
 ---
 
 ## 测试
@@ -403,12 +512,13 @@ uv run python scripts/demo_benchmark.py
 
 | 文件 | 说明 |
 |------|------|
-| `src/alpha_factory/data_provider/benchmark.py` | 基类定义 |
+| `src/alpha_factory/data_provider/benchmark.py` | 基类定义 + `load_statistics()` 方法 |
 | `src/alpha_factory/data_provider/benchmarks/hs300.py` | HS300 实现 |
+| `src/alpha_factory/data_provider/benchmarks/micro_cap.py` | **MicroCapBenchmark 实现** ⭐️ |
 | `src/alpha_factory/data_provider/benchmarks/__init__.py` | 模块暴露 |
 | `src/alpha_factory/data_provider/pool.py` | Pool join_benchmark 方法 |
 | `src/alpha_factory/evaluation/backtest/utils.py` | 评估层集成 |
-| `tests/test_benchmark.py` | 单元测试 |
+| `tests/test_benchmark.py` | 单元测试（含 5 个新测试） |
 | `scripts/demo_benchmark.py` | 演示脚本 |
 
 ---

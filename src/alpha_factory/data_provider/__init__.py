@@ -20,7 +20,7 @@ from alpha_factory.data_provider.tushare_service import TushareDataService
 
 # 2. 基准数据管理
 from alpha_factory.data_provider.benchmark import Benchmark
-from alpha_factory.data_provider.benchmarks import HS300Benchmark
+from alpha_factory.data_provider.benchmarks import HS300Benchmark, MicroCapBenchmark
 
 # 3. 统一读取接口 (L4)
 from alpha_factory.data_provider.data_provider import DataProvider
@@ -31,6 +31,7 @@ __all__ = [
     "DataProvider",
     "Benchmark",
     "HS300Benchmark",
+    "MicroCapBenchmark",
 ]
 
 
