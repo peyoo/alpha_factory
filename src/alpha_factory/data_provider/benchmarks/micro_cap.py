@@ -24,7 +24,7 @@ class MicroCapBenchmark(Benchmark):
     """
 
     def __init__(self):
-        super().__init__(name="MicroCap", default_start_date=date(2010, 1, 1))
+        super().__init__(name="MicroCap")
         self._pool = MainSmallPool()
 
     def _fetch(self, start_date: date, end_date: date) -> pl.DataFrame:

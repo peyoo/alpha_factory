@@ -23,7 +23,7 @@ class HS300Benchmark(Benchmark):
     """
 
     def __init__(self):
-        super().__init__(name="HS300", default_start_date=date(2010, 1, 1))
+        super().__init__(name="HS300")
         self._token = getattr(settings, "TUSHARE_TOKEN", None) or None
         self._is_vip = getattr(settings, "IS_VIP", True)
         self._rate_limiter = RateLimiter(is_vip=self._is_vip)

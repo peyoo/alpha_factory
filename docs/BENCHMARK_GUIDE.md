@@ -23,8 +23,11 @@ Benchmark 架构为 Alpha-Factory 提供了灵活的基准数据管理系统，�
 
 **关键方法**：
 ```python
+# 常量定义
+from alpha_factory.data_provider.benchmark import DEFAULT_BENCHMARK_START_DATE  # 默认2017-01-01
+
 class Benchmark(ABC):
-    def __init__(self, name: str, default_start_date: date = date(2010, 1, 1))
+    def __init__(self, name: str, default_start_date: date = DEFAULT_BENCHMARK_START_DATE)
     def update(self, end_date: Optional[date] = None) -> None
     def load_returns(self, start_date: date, end_date: date) -> pl.LazyFrame
 
@@ -267,14 +270,16 @@ exprs = [
 from datetime import date
 import polars as pl
 import tushare as ts
-from alpha_factory.data_provider.benchmark import Benchmark
+from alpha_factory.data_provider.benchmark import Benchmark, DEFAULT_BENCHMARK_START_DATE
 from alpha_factory.config.base import settings
 
 class ZZ500Benchmark(Benchmark):
     """中证500指数"""
 
     def __init__(self):
-        super().__init__(name="ZZ500", default_start_date=date(2012, 1, 1))
+        # 使用默认的统一起始日期 DEFAULT_BENCHMARK_START_DATE (2017-01-01)
+        # 若需要不同的起始日期，可传入 default_start_date 参数
+        super().__init__(name="ZZ500")
         self._token = getattr(settings, "TUSHARE_TOKEN", None)
         self._is_vip = getattr(settings, "IS_VIP", True)
 

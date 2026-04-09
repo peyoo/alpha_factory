@@ -7,6 +7,9 @@ from loguru import logger
 
 from alpha_factory.config.base import settings
 
+# 所有 Benchmark 的统一默认起始日期
+DEFAULT_BENCHMARK_START_DATE = date(2017, 1, 1)
+
 
 class Benchmark(ABC):
     """基准时间序列管理器
@@ -15,7 +18,9 @@ class Benchmark(ABC):
     支持增量更新、lazy加载、因子表达式中的join以及评估层的择时计算。
     """
 
-    def __init__(self, name: str, default_start_date: date = date(2010, 1, 1)):
+    def __init__(
+        self, name: str, default_start_date: date = DEFAULT_BENCHMARK_START_DATE
+    ):
         self.name = name
         self._cache_path = settings.BENCHMARKS_DIR / f"{self.name}.parquet"
         self._default_start_date = default_start_date

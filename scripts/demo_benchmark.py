@@ -154,16 +154,16 @@ extend_code = '''
 class ZZ500Benchmark(Benchmark):
     """中证500指数"""
     def __init__(self):
-        super().__init__(name="ZZ500", default_start_date=date(2010, 1, 1))
+        super().__init__(name="ZZ500")  # 使用 DEFAULT_BENCHMARK_START_DATE
 
     def _fetch(self, start_date: date, end_date: date) -> pl.DataFrame:
         # 从 Tushare 拉取 000905.SH 数据
         ...
 
 class CSI1000Benchmark(Benchmark):
-    """中证1000指数"""
+    """中证1000指数（如需自定义起始日期，可传入 default_start_date 参数）"""
     def __init__(self):
-        super().__init__(name="CSI1000", default_start_date=date(2015, 1, 1))
+        super().__init__(name="CSI1000")  # 使用 DEFAULT_BENCHMARK_START_DATE
 
     def _fetch(self, start_date: date, end_date: date) -> pl.DataFrame:
         # 从 Tushare 拉取 000852.SH 数据

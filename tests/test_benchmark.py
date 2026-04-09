@@ -21,10 +21,12 @@ class TestHS300Benchmark:
 
     def test_initialization(self):
         """测试 HS300Benchmark 初始化"""
+        from alpha_factory.data_provider.benchmark import DEFAULT_BENCHMARK_START_DATE
+
         bench = HS300Benchmark()
         assert bench.name == "HS300"
         assert isinstance(bench._cache_path, Path)
-        assert bench._default_start_date == date(2010, 1, 1)
+        assert bench._default_start_date == DEFAULT_BENCHMARK_START_DATE
 
     def test_cache_path_exists(self):
         """测试缓存路径是否正确"""
@@ -111,10 +113,11 @@ class TestMicroCapBenchmark:
     def test_initialization(self):
         """测试 MicroCapBenchmark 初始化"""
         from alpha_factory.data_provider import MicroCapBenchmark
+        from alpha_factory.data_provider.benchmark import DEFAULT_BENCHMARK_START_DATE
 
         bench = MicroCapBenchmark()
         assert bench.name == "MicroCap"
-        assert bench._default_start_date == date(2010, 1, 1)
+        assert bench._default_start_date == DEFAULT_BENCHMARK_START_DATE
 
     def test_cache_path_exists(self):
         """测试缓存路径是否设置正确"""
