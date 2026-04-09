@@ -10,8 +10,9 @@
 """
 
 import re
+from datetime import date
 from functools import lru_cache
-from typing import List
+from typing import List, TYPE_CHECKING
 
 import polars as pl
 from polars_ols.least_squares import OLSKwargs
@@ -23,6 +24,9 @@ from alpha_factory.data_provider.label import (
     label_CC_for_tradable,
 )
 from alpha_factory.utils.schema import F
+
+if TYPE_CHECKING:
+    from alpha_factory.data_provider.benchmark import Benchmark
 
 
 _ols_kwargs = OLSKwargs(null_policy="drop", solve_method="svd")
@@ -81,6 +85,45 @@ class PoolUniverse:
         例如，可以定义为：可交易（非停牌、非ST、上市超过180天）且不在涨跌停状态的股票。
         """
         return lf
+
+    def join_benchmark(
+        self,
+        lf: pl.LazyFrame,
+        benchmark: "Benchmark",
+        start_date: date,
+        end_date: date,
+        col_name: str = "BENCH_RET",
+    ) -> pl.LazyFrame:
+        """将基准数据 join 到因子表中，作为虚拟列参与因子表达式计算
+
+        基准数据按 DATE 进行左join，与所有 ASSET 进行笛卡尔广播。
+        这样因子表达式可以引用 BENCH_RET 进行相对收益率、信息比等计算。
+
+        Args:
+            lf: 包含 DATE 列的因子 LazyFrame
+            benchmark: Benchmark 实例
+            start_date: 基准数据开始日期
+            end_date: 基准数据结束日期
+            col_name: 基准收益率列名，默认 "BENCH_RET"
+
+        Returns:
+            join 后的 LazyFrame，新增 col_name 列
+
+        Examples:
+            >>> pool = MainSmallPool()
+            >>> from alpha_factory.data_provider.benchmarks import HS300Benchmark
+            >>> bench = HS300Benchmark()
+            >>> lf = dp.load_pool_data(pool, "20240101", "20240131")
+            >>> lf = pool.join_benchmark(lf, bench, start_date, end_date)
+            >>> # 现在表达式可以使用 BENCH_RET
+            >>> lf = dp.build_factors_view(
+            ...     pool, lf, exprs=["excess_ret = RET - BENCH_RET"], ...
+            ... )
+        """
+        bench_lf = benchmark.load_returns(start_date, end_date).rename(
+            {"ret": col_name}
+        )
+        return lf.join(bench_lf, on="DATE", how="left")
 
 
 class MainSmallPool(PoolUniverse):
