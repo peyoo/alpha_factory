@@ -198,7 +198,7 @@ class DataCleanerMixin:
             F.DOWN_LIMIT,
         ]
 
-        return (
+        result = (
             lf.sort([F.ASSET, F.DATE])
             .with_columns(additional_cols)
             .with_columns(
@@ -251,5 +251,7 @@ class DataCleanerMixin:
                     .alias(F.VWAP),
                 ]
             )
-            .drop([cs.starts_with("_TMP_")])
         )
+
+        # 清理临时列
+        return result.drop([cs.starts_with("_TMP_")])

@@ -2,38 +2,51 @@
 """Benchmark 架构演示脚本
 
 展示：
-1. 初始化和增量更新 HS300 基准
+1. Benchmark 数据的自动同步（通过 quant sync）
 2. 在因子表达式中 join 基准数据
 3. 在评估时使用基准进行对比
 """
 
-from datetime import date, timedelta
-from alpha_factory.data_provider import HS300Benchmark
+from datetime import date
+from alpha_factory.data_provider import HS300Benchmark, Benchmark
 from alpha_factory.data_provider.pool import MainSmallPool
 
 # ============================================================================
-# 演示 1：初始化 HS300 基准并同步数据
+# 演示 1：Benchmark 数据现在通过 quant sync 自动同步
 # ============================================================================
 
 print("=" * 70)
-print("演示 1: Benchmark 数据同步")
+print("演示 1: Benchmark 数据自动同步（集成到 quant sync）")
 print("=" * 70)
+
+print("\n📣 Benchmark 现在与因子数据统一管理！")
+print("\n推荐做法：")
+print("  $ quant sync                        # 增量更新")
+print("  $ quant sync -s 20240101 -e 20240131  # 指定日期范围")
+print("\n这些命令会自动执行：")
+print("  1. 同步 Tushare 原始数据")
+print("  2. 构建 L2 Parquet 因子库")
+print("  3. 📊 更新所有已注册的 Benchmark（HS300、MicroCap 等）")
+
+# 演示已注册的 Benchmark
+print("\n已注册的 Benchmark 子类：")
+registries = Benchmark.list_all_benchmarks()
+for name in registries:
+    bench = registries[name]()
+    print(f"  ✓ {name:20s} → {bench._cache_path.name}")
+
+print("\n💡 手动更新（如果需要在脚本中单独更新）：")
 
 bench = HS300Benchmark()
 print(f"\n📊 Benchmark 名称: {bench.name}")
 print(f"📁 缓存路径: {bench._cache_path}")
 
-# 首次同步：从 2024-01-01 到今天
-print("\n第一次同步（会从 API 拉取数据）...")
-try:
-    # 为演示起见，只拉取最近 5 天的数据
-    end_date = date.today()
-    start_date = end_date - timedelta(days=5)
-    bench.update(end_date=end_date)
-    print("✅ 初次同步完成")
-except Exception as e:
-    print(f"⚠️  同步失败（可能是因为未配置 TUSHARE_TOKEN）: {e}")
-    print("   请在 .env 或 settings 中配置 TUSHARE_TOKEN")
+# 手动更新的示例（通常不需要，因为 quant sync 已完成）
+print("\n第一次手动更新（通常无需这样做）...")
+print("  bench = HS300Benchmark()")
+print("  bench.update()  # 会自动检测已有数据并增量更新")
+print("\n  【操作】此演示脚本不执行实际更新，避免 API 调用")
+print("  【建议】使用 quant sync 命令统一管理所有数据同步")
 
 # ============================================================================
 # 演示 2：加载基准数据并进行 join

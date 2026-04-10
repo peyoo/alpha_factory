@@ -416,9 +416,46 @@ def generate_and_open_report(
 
 ### Q1: Benchmark 数据更新的频率如何？
 
-**A**: 根据需要手动调用 `benchmark.update()`。建议：
-- 开发阶段：每周更新一次
-- 生产环境：每日定时任务更新（例如交易日 18:00）
+**A**：Benchmark 现在**与因子数据自动同步**，通过 `quant sync` 命令统一管理：
+
+**自动更新流程**：
+```bash
+# 增量更新（推荐日常使用）
+quant sync
+# ↓ 自动执行：
+#   1. 同步股票日行情
+#   2. 构建 L2 因子库
+#   3. 更新所有已注册的 Benchmark（HS300、MicroCap 等）
+
+# 指定日期范围
+quant sync -s 20240101 -e 20240131
+# ↓ 在同步范围内更新所有 Benchmark
+```
+
+**工作流**：
+```python
+# sync 命令内部的自动流程
+quant sync
+  ├─ 同步 Tushare 原始数据（daily、adj_factor 等）
+  ├─ 构建 L2 Parquet 因子库
+  └─ 📡 更新所有 Benchmark
+      ├─ HS300Benchmark
+      ├─ MicroCapBenchmark
+      └─ 任何新增的 Benchmark 子类（自动发现）
+```
+
+**之前的手动更新方式（仍支持，但已过时）**：
+```python
+from alpha_factory.data_provider import HS300Benchmark
+
+bench = HS300Benchmark()
+bench.update()  # ⚠️ 不必要，quant sync 已自动完成
+```
+
+**建议**：
+- **日常**：直接 `quant sync` 作为数据管道，无需手动更新
+- **开发**：在 scripts 或笔记本中执行 `quant sync` 一次，后续直接使用已同步的 Benchmark 数据
+- **CI/CD**：定时任务触发 `quant sync`，Benchmark 自动最新
 
 ### Q2: 能否使用自定义数据源（非 Tushare）？
 

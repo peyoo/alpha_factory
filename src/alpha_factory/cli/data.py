@@ -52,10 +52,13 @@ def sync(
             service.daily_update()
             typer.echo("✅ 增量更新完成")
         except DataSyncError as e:
-            console.print(f"[red]❌ 增量更新过程中发生致命错误: {e}[/red]")
+            console.print(
+                f"[red]❌ 增量更新过程中发生致命错误: {e}[/red]", soft_wrap=True
+            )
             raise typer.Exit(code=1)
         except Exception as e:
-            console.print(f"[red]❌ 初始化或更新失败: {e}[/red]")
+            error_msg = str(e)[:200]  # 截断过长的错误信息
+            console.print(f"[red]❌ 初始化或更新失败: {error_msg}[/red]", markup=False)
             raise typer.Exit(code=1)
         return
 
@@ -66,10 +69,11 @@ def sync(
         service.sync_data(start_date, end_date)
         typer.echo("✅ 数据同步完成")
     except DataSyncError as e:
-        console.print(f"[red]❌ 同步过程发生致命错误: {e}[/red]")
+        console.print(f"[red]❌ 同步过程发生致命错误: {e}[/red]", soft_wrap=True)
         raise typer.Exit(code=1)
     except Exception as e:
-        console.print(f"[red]❌ 初始化或同步失败: {e}[/red]")
+        error_msg = str(e)[:200]  # 截断过长的错误信息
+        console.print(f"[red]❌ 初始化或同步失败: {error_msg}[/red]", markup=False)
         raise typer.Exit(code=1)
 
 

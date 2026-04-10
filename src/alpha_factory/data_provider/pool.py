@@ -143,6 +143,8 @@ class MainSmallPool(PoolUniverse):
             F.TOTAL_MV,
             F.VOLUME,
             "ILLIQ",
+            "LIST_DAYS",
+            "IS_ST",
             # "CLOSE_RAW_MA60",
             F.CIRC_MV,
             F.TURNOVER_RATE,
@@ -243,9 +245,9 @@ class MainSmallPool(PoolUniverse):
             ~pl.col("IS_ST")
             & ~pl.col("IS_SUSPENDED")
             & (pl.col("LIST_DAYS") >= 180)
-            & ~pl.col("IS_UP_LIMIT")
-            & ~pl.col("IS_DOWN_LIMIT")
-            & (pl.col("CLOSE_RAW_MA60") > 2)
+            # & ~pl.col("IS_UP_LIMIT")
+            # & ~pl.col("IS_DOWN_LIMIT")
+            # & (pl.col("CLOSE_RAW_MA60") > 2)
             & ~pl.col(F.APRIL_DISCLOSURE_SIGNAL)
             # & (pl.col("BIAS20") < 0.25)
         )

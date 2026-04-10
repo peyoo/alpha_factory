@@ -18,6 +18,25 @@ class Benchmark(ABC):
     支持增量更新、lazy加载、因子表达式中的join以及评估层的择时计算。
     """
 
+    # 自动注册所有 Benchmark 子类
+    _registry: dict[str, type["Benchmark"]] = {}
+
+    def __init_subclass__(cls, **kwargs):
+        """子类定义时自动注册到 _registry"""
+        super().__init_subclass__(**kwargs)
+        if cls.__name__ != "Benchmark":
+            Benchmark._registry[cls.__name__] = cls
+            logger.debug(f"✓ 注册 Benchmark: {cls.__name__}")
+
+    @classmethod
+    def list_all_benchmarks(cls) -> dict[str, type["Benchmark"]]:
+        """返回所有已注册的 Benchmark 子类字典
+
+        Returns:
+            dict: {class_name: class_type}，例如 {"HS300Benchmark": HS300Benchmark, ...}
+        """
+        return cls._registry.copy()
+
     def __init__(
         self, name: str, default_start_date: date = DEFAULT_BENCHMARK_START_DATE
     ):

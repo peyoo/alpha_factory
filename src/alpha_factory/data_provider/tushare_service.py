@@ -21,6 +21,7 @@ from alpha_factory.data_provider.cache_manager import HDF5CacheManager
 from alpha_factory.data_provider.unified_factor_builder import UnifiedFactorBuilder
 from alpha_factory.data_provider.trade_calendar_manager import TradeCalendarManager
 from alpha_factory.data_provider.stock_assets_manager import StockAssetsManager
+from alpha_factory.data_provider.benchmark import Benchmark
 from alpha_factory.utils.schema import F
 
 
@@ -111,6 +112,7 @@ class TushareDataService:
         start_dt = datetime.strptime(start_date, "%Y%m%d").date()
         end_dt = datetime.strptime(end_date, "%Y%m%d").date()
         trade_days = self.calendar.get_trade_days(start_dt, end_dt)
+        self._update_all_benchmarks(end_dt)
 
         if not trade_days:
             logger.warning(f"⚠️ {start_date} ~ {end_date} 之间无交易日")
@@ -138,6 +140,40 @@ class TushareDataService:
         # 5. 同步完成后触发 L2 构建
         logger.info("⚙️ 启动年度 Parquet 因子库构建...")
         self.factor_builder.build_unified_factors(start_dt, end_dt)
+
+        # 6. 【新增】更新所有已注册的 Benchmark
+        self._update_all_benchmarks(end_dt)
+
+    def _update_all_benchmarks(self, end_date: date) -> None:
+        """更新所有已注册的 Benchmark 子类（增量模式）
+
+        在因子数据同步和构建完成后调用，确保 Benchmark 数据与因子库同步。
+
+        Args:
+            end_date: 结束日期，传递给 Benchmark.update()
+        """
+        benchmark_registry = Benchmark.list_all_benchmarks()
+
+        if not benchmark_registry:
+            logger.info("💡 未发现已注册的 Benchmark 子类，跳过更新")
+            return
+
+        logger.info(f"📊 发现 {len(benchmark_registry)} 个 Benchmark 子类，开始更新...")
+
+        for class_name, benchmark_class in benchmark_registry.items():
+            try:
+                benchmark_instance = benchmark_class()
+                logger.info(f"  ↳ 更新 {class_name}...")
+                benchmark_instance.update(end_date=end_date)
+            except Exception as e:
+                # 提取错误信息，避免路径等特殊字符导致的 Rich markup 错误
+                error_msg = str(e)[:200]  # 截断过长的错误信息，去掉文件路径等
+                logger.error(f"❌ {class_name} 更新失败: {error_msg}")
+                raise RuntimeError(
+                    f"{class_name} 更新失败: {error_msg}"
+                ) from e  # 失败则抛出异常，中断 sync 命令
+
+        logger.success("✅ 所有 Benchmark 更新完成")
 
     def _disclosure(
         self, trade_date: str, fields: Optional[list] = None
