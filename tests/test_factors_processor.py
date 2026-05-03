@@ -268,6 +268,26 @@ class TestFactorsRankComposite:
         result = composite.process(sample_df)
         assert "composite_rank" in result.columns
 
+    def test_default_ascending_false_gives_better_rank_to_larger_values(self):
+        """ascending=False（默认）：值越大的标的获更高 rank（更小 rank 值）。"""
+        df = pl.DataFrame(
+            {
+                F.DATE: ["2024-01-02"] * 3,
+                F.ASSET: ["A", "B", "C"],
+                "f1": [1.0, 100.0, 50.0],
+            }
+        )
+        composite = FactorsRankComposite(
+            factors=["f1"],
+            weights={"f1": 1.0},
+            name="RANK",
+            ascending=False,  # 值越大 rank 越小
+        )
+        result = composite.process(df)
+        ranks = result.sort(F.ASSET)["RANK"].to_list()
+        # f1=100(B) 应 rank=1, f1=50(C) rank=2, f1=1(A) rank=3
+        assert ranks[1] < ranks[2] < ranks[0], f"预期 B<C<A, 实际: {ranks}"
+
     def test_composite_values_reasonable(self, sample_df: pl.DataFrame):
         """合成值应为正数（排名累加）。"""
         composite = FactorsRankComposite(

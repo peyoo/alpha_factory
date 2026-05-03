@@ -27,6 +27,13 @@ from alpha_factory.config.strategy import StrategyConfig
 runner = CliRunner()
 
 
+def _strip_ansi(text: str) -> str:
+    """去除 rich/click 输出的 ANSI 转义码以便做纯文本匹配。"""
+    import re
+
+    return re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", text)
+
+
 # ---------------------------------------------------------------------------
 # softmax_weights
 # ---------------------------------------------------------------------------
@@ -89,26 +96,28 @@ class TestMakeComposite:
         assert "COMPOSITE_OPT" in result.columns
 
     def test_weighted_sum_correctness(self):
-        """composite = w1*rank(f1) + w2*rank(f2)，对 2 只股票时 rank 值与原值相同。"""
+        """composite = w1*rank(f1) + w2*rank(f2)，descending rank 使大值获得 rank 1。"""
         df = self._make_base_df(n_days=1, n_stocks=2)
-        # f1=[1,2], f2=[2,1], rank(f1)=[1,2], rank(f2)=[2,1], w={f1:0.8, f2:0.2}
+        # ascending=False（默认）→ descending rank:
+        # f1=[1,2] → rank=[2,1], f2=[2,1] → rank=[1,2], w={f1:0.8, f2:0.2}
         result = FactorsRankComposite(
             factors=["f1", "f2"], weights={"f1": 0.8, "f2": 0.2}, name="COMPOSITE_OPT"
         ).process(df.head(2))
         expected = [
-            0.8 * 1 + 0.2 * 2,  # 1.2
             0.8 * 2 + 0.2 * 1,  # 1.8
+            0.8 * 1 + 0.2 * 2,  # 1.2
         ]
         assert result["COMPOSITE_OPT"].to_list() == pytest.approx(expected, rel=1e-6)
 
     def test_pure_first_factor(self):
-        """When weights={f1:1, f2:0}, composite == cross-sectional rank of f1."""
+        """weights={f1:1, f2:0} 时 composite == descending rank of f1。"""
         df = self._make_base_df(n_days=2, n_stocks=2)
         result = FactorsRankComposite(
             factors=["f1", "f2"], weights={"f1": 1.0, "f2": 0.0}, name="COMPOSITE_OPT"
         ).process(df)
-        # FactorsRankComposite 对每个截面日期做 rank，2 只股票 rank 值为 [1.0, 2.0]
-        expected_ranks = [1.0, 2.0, 1.0, 2.0]
+        # ascending=False（默认）→ descending rank: 大值获 rank 1
+        # day1: f1=[1,2] → rank=[2,1]; day2: f1=[3,4] → rank=[2,1]
+        expected_ranks = [2.0, 1.0, 2.0, 1.0]
         assert result["COMPOSITE_OPT"].to_list() == pytest.approx(
             expected_ranks, rel=1e-6
         )
@@ -207,8 +216,9 @@ class TestCliSmoke:
     def test_opt_help(self):
         result = runner.invoke(app, ["opt", "--help"])
         assert result.exit_code == 0
-        assert "yaml" in result.output.lower()
-        assert "n-trials" in result.output.lower()
+        output = _strip_ansi(result.output).lower()
+        assert "yaml" in output
+        assert "n-trials" in output
 
     def test_opt_missing_yaml_fails(self, tmp_path):
         nonexistent = str(tmp_path / "no_such_file.yaml")

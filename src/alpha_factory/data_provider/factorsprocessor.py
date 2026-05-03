@@ -236,8 +236,10 @@ class FactorsRankComposite(FactorsComposite):
 
         if self.use_rank:
             # 截面排名后加权：消除因子量纲差异（适合未预处理的原始因子）
+            # 注意：Polars rank(descending=True) 意为"值越大 rank 越小"，
+            # 当 ascending=False（默认）时应用 not 反转
             terms = [
-                pl.col(col).rank(descending=self.ascending).over(F.DATE) * w
+                pl.col(col).rank(descending=not self.ascending).over(F.DATE) * w
                 for col, w in zip(cols, resolved_weights)
             ]
         else:
