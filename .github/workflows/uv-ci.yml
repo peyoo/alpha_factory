@@ -36,3 +36,5 @@ jobs:
 
       - name: Run tests
         run: uv run pytest tests/ -x --tb=short -q --ignore=tests/demo_string_actions.py
+        env:
+          PYTHONIOENCODING: utf-8
