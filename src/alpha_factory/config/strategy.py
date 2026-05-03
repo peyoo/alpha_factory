@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, model_validator
 
-from alpha_factory.utils.schema import F
+from alpha_factory.utils.schema import F, RANK_SENTINEL
 
 
 class AutoNameGenerator:
@@ -354,9 +354,11 @@ class StrategyConfig(BaseModel):
         from alpha_factory.cli.opt import _COMPOSITE_COL
 
         actions: List = []
-        names = lambda filters: [f.name for f in filters if f.expression.strip()]  # noqa: E731
 
-        if ns := names(self.pool_mask):
+        def _names(filters) -> List:
+            return [f.name for f in filters if f.expression.strip()]
+
+        if ns := _names(self.pool_mask):
             actions.append(And(factors=ns, name=F.POOL_MASK))
 
         if len(self.ranks) > 1:
@@ -372,13 +374,13 @@ class StrategyConfig(BaseModel):
                 )
             )
 
-        if ns := names(self.buy_able):
+        if ns := _names(self.buy_able):
             actions.append(And(factors=ns, name="buy_able"))
-        if ns := names(self.not_buy_able):
+        if ns := _names(self.not_buy_able):
             actions.append(Or(factors=ns, name="not_buy_able"))
-        if ns := names(self.sell_able):
+        if ns := _names(self.sell_able):
             actions.append(And(factors=ns, name="sell_able"))
-        if ns := names(self.not_sell_able):
+        if ns := _names(self.not_sell_able):
             actions.append(Or(factors=ns, name="not_sell_able"))
 
         return actions
@@ -439,7 +441,7 @@ class StrategyConfig(BaseModel):
             .otherwise(None)
             .rank(descending=not ascending, method="random")
             .over(F.DATE)
-            .fill_null(999999)
+            .fill_null(RANK_SENTINEL)
             .alias("_RANK")
         ).sort([F.DATE, F.ASSET])
 

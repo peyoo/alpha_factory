@@ -12,7 +12,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        # 针对厂长的办公环境进行双平台测试
         os: [macos-latest, windows-latest]
 
     steps:
@@ -27,9 +26,13 @@ jobs:
         run: uv python install 3.11
 
       - name: Install dependencies
-        # 加上重试机制，防止 Windows 环境下网络抽风
         run: uv sync --frozen --all-extras --dev
 
-      - name: Run Tests (Smoke)
-        # 无论在什么平台，都执行一致的测试逻辑
-        run: uv run pytest tests/test_src_layout_smoke.py
+      - name: Lint with ruff
+        run: uv run ruff check --output-format=github
+
+      - name: Check formatting with ruff
+        run: uv run ruff format --check
+
+      - name: Run tests
+        run: uv run pytest tests/ -x --tb=short -q --ignore=tests/demo_string_actions.py

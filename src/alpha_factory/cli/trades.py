@@ -36,7 +36,7 @@ from alpha_factory.cli.opt import _COMPOSITE_COL
 from alpha_factory.cli.utils import resolve_yaml_path
 from alpha_factory.config.strategy import StrategyConfig
 from alpha_factory.data_provider.data_provider import DataProvider
-from alpha_factory.utils.schema import F
+from alpha_factory.utils.schema import F, RANK_SENTINEL
 
 console = Console()
 
@@ -286,7 +286,7 @@ def _attach_buy_features(
         .otherwise(None)
         .rank(descending=True, method="random")
         .over(F.DATE)
-        .fill_null(999999)
+        .fill_null(RANK_SENTINEL)
         .alias("_RANK_SNAP")
     )
 

@@ -6,9 +6,8 @@ from loguru import logger
 from sympy import Basic, Function, symbols, preorder_traversal
 
 
-def dummy(*args):
-    # 由于生成后的表达计算已经被map和evaluate接管，所以这里并没有用到，可随便定义
-    print("dummy")
+def dummy(*args) -> int:
+    # 由于生成后的表达式计算已被 map 和 evaluate 接管，此函数仅作占位
     return 1
 
 

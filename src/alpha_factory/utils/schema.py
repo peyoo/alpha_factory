@@ -71,6 +71,10 @@ class F(str, Enum):
     LABEL_FOR_RET_CC = "LABEL_FOR_RET_CC"
 
 
+# 回测中用于填充池外标的/空值的排名哨兵值（保持池外标的排在最后）
+RANK_SENTINEL: int = 999999
+
+
 class DataSchema:
     # 1. 唯一标识列 (Key Columns)
     IDS: Dict[str, pl.DataType] = {

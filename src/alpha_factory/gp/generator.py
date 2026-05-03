@@ -54,13 +54,6 @@ from alpha_factory.patch.deap_patch import apply_deap_patches
 from alpha_factory.patch.expr_codegen_patch import apply_expr_codegen_patches
 from alpha_factory.config.base import settings
 
-from typing import TypeVar
-from polars import DataFrame as _pl_DataFrame
-from polars import LazyFrame as _pl_LazyFrame
-
-
-DataFrame = TypeVar("DataFrame", _pl_LazyFrame, _pl_DataFrame)
-
 # 在脚本最上方或 __init__ 中调用一次即可
 apply_expr_codegen_patches()
 apply_deap_patches()

@@ -4,7 +4,7 @@ from numba import njit
 from typing import Union, Dict
 from loguru import logger
 
-from alpha_factory.utils.schema import F
+from alpha_factory.utils.schema import F, RANK_SENTINEL
 
 
 @njit(cache=True)
@@ -200,7 +200,7 @@ def backtest_quick_daily(
     #     f"🚀 准备 JIT 回测数据 | 因子: {factor_col} | 买入/卖出线: {n_buy}/{sell_rank} | 费率: {cost_rate:.4f}"
     # )
 
-    # --- 1. 预处理与排名（对齐 daily_evolving：POOL_MASK 过滤 + fill_null(999999)）---
+    # --- 1. 预处理与排名（对齐 daily_evolving：POOL_MASK 过滤 + fill_null(RANK_SENTINEL)）---
     lf = df_input if isinstance(df_input, pl.LazyFrame) else df_input.lazy()
     lf = lf.with_columns(
         pl.when(pl.col(F.POOL_MASK))
@@ -208,7 +208,7 @@ def backtest_quick_daily(
         .otherwise(None)
         .rank(descending=not ascending, method="random")
         .over(F.DATE)
-        .fill_null(999999)
+        .fill_null(RANK_SENTINEL)
         .alias("RANK")
     ).select(
         [
@@ -216,7 +216,7 @@ def backtest_quick_daily(
             F.ASSET,
             "RANK",
             F.CLOSE,
-            exec_price,
+            pl.col(exec_price).alias("_exec_price"),
             F.IS_SUSPENDED,
             F.IS_UP_LIMIT,
             F.IS_DOWN_LIMIT,
@@ -237,16 +237,18 @@ def backtest_quick_daily(
     ti = df_idx["_t"].to_numpy()
     ji = df_idx["_j"].to_numpy()
 
-    rank_mat = np.full((T, N), 999999.0, dtype=np.float64)
+    rank_mat = np.full((T, N), float(RANK_SENTINEL), dtype=np.float64)
     price_mat = np.full((T, N), np.nan, dtype=np.float64)
     exec_p_mat = np.full((T, N), np.nan, dtype=np.float64)
     is_suspended_mat = np.zeros((T, N), dtype=np.bool_)
     is_up_limit_mat = np.zeros((T, N), dtype=np.bool_)
     is_down_limit_mat = np.zeros((T, N), dtype=np.bool_)
 
-    rank_mat[ti, ji] = df_idx["RANK"].cast(pl.Float64).fill_null(999999).to_numpy()
+    rank_mat[ti, ji] = (
+        df_idx["RANK"].cast(pl.Float64).fill_null(RANK_SENTINEL).to_numpy()
+    )
     price_mat[ti, ji] = df_idx[F.CLOSE].cast(pl.Float64).to_numpy()
-    exec_p_mat[ti, ji] = df_idx[exec_price].cast(pl.Float64).to_numpy()
+    exec_p_mat[ti, ji] = df_idx["_exec_price"].cast(pl.Float64).to_numpy()
     is_suspended_mat[ti, ji] = df_idx[F.IS_SUSPENDED].fill_null(False).to_numpy()
     is_up_limit_mat[ti, ji] = df_idx[F.IS_UP_LIMIT].fill_null(False).to_numpy()
     is_down_limit_mat[ti, ji] = df_idx[F.IS_DOWN_LIMIT].fill_null(False).to_numpy()

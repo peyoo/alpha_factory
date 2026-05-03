@@ -115,13 +115,28 @@ def _patch_all(ranks_empty: bool = False):
 # ── 测试：基本流程 ────────────────────────────────────────────────────────────
 
 
-def test_pure_basic():
+def _make_dummy_yaml(tmp_path: Path) -> Path:
+    """创建一个最小化的 YAML 文件以通过 CLI 的文件存在性检查。"""
+    yaml_path = tmp_path / "s1.yaml"
+    yaml_path.write_text("pool: main_small_pool\npool_config: {}\n")
+    return yaml_path
+
+
+def test_pure_basic(tmp_path: Path):
     """正常调用，exit_code=0，且回测函数被调用。"""
+    yaml_file = _make_dummy_yaml(tmp_path)
     ctx_cfg, ctx_dp, ctx_pool, ctx_pure, ctx_bt, ctx_report, ctx_print, _ = _patch_all()
     with ctx_cfg, ctx_dp, ctx_pool, ctx_pure, ctx_bt as mock_bt, ctx_report, ctx_print:
         result = runner.invoke(
             app,
-            ["pure", "-y", "s1.yaml", "--expr", "pure_f1=CLOSE/OPEN", "--no-report"],
+            [
+                "pure",
+                "-y",
+                str(yaml_file),
+                "--expr",
+                "pure_f1=CLOSE/OPEN",
+                "--no-report",
+            ],
         )
     assert result.exit_code == 0, result.output
     mock_bt.assert_called_once()
@@ -129,21 +144,23 @@ def test_pure_basic():
     assert call_kwargs["factor_col"] == "pure_f1"
 
 
-def test_pure_expr_without_name_defaults_to_pure_f1():
+def test_pure_expr_without_name_defaults_to_pure_f1(tmp_path: Path):
     """无 `=` 时因子名默认为 `pure_f1`。"""
+    yaml_file = _make_dummy_yaml(tmp_path)
     ctx_cfg, ctx_dp, ctx_pool, ctx_pure, ctx_bt, ctx_report, ctx_print, _ = _patch_all()
     with ctx_cfg, ctx_dp, ctx_pool, ctx_pure, ctx_bt as mock_bt, ctx_report, ctx_print:
         result = runner.invoke(
             app,
-            ["pure", "-y", "s1.yaml", "--expr", "CLOSE/OPEN", "--no-report"],
+            ["pure", "-y", str(yaml_file), "--expr", "CLOSE/OPEN", "--no-report"],
         )
     assert result.exit_code == 0, result.output
     call_kwargs = mock_bt.call_args.kwargs
     assert call_kwargs["factor_col"] == "pure_f1"
 
 
-def test_pure_uses_config_start_date():
+def test_pure_uses_config_start_date(tmp_path: Path):
     """无 `-s` 参数时使用默认值 '20190101'。"""
+    yaml_file = _make_dummy_yaml(tmp_path)
     ctx_cfg, ctx_dp, ctx_pool, ctx_pure, ctx_bt, ctx_report, ctx_print, _ = _patch_all()
     with (
         ctx_cfg,
@@ -156,7 +173,7 @@ def test_pure_uses_config_start_date():
     ):
         result = runner.invoke(
             app,
-            ["pure", "-y", "s1.yaml", "--expr", "CLOSE/OPEN", "--no-report"],
+            ["pure", "-y", str(yaml_file), "--expr", "CLOSE/OPEN", "--no-report"],
         )
     assert result.exit_code == 0, result.output
     # 默认 start_date 为 "20190101"（CLI 参数默认值）
@@ -164,21 +181,23 @@ def test_pure_uses_config_start_date():
     assert call_args.args[1] == "20190101"
 
 
-def test_pure_empty_ranks_error():
+def test_pure_empty_ranks_error(tmp_path: Path):
     """`cfg.ranks` 为空时，命令应报错并以非零码退出。"""
+    yaml_file = _make_dummy_yaml(tmp_path)
     ctx_cfg, ctx_dp, ctx_pool, ctx_pure, ctx_bt, ctx_report, ctx_print, _ = _patch_all(
         ranks_empty=True
     )
     with ctx_cfg, ctx_dp, ctx_pool, ctx_pure, ctx_bt, ctx_report, ctx_print:
         result = runner.invoke(
             app,
-            ["pure", "-y", "s1.yaml", "--expr", "CLOSE/OPEN", "--no-report"],
+            ["pure", "-y", str(yaml_file), "--expr", "CLOSE/OPEN", "--no-report"],
         )
     assert result.exit_code != 0
 
 
 def test_pure_save_trades(tmp_path: Path):
     """`--save-trades` 时，回测结果被写入文件。"""
+    yaml_file = _make_dummy_yaml(tmp_path)
     out_file = tmp_path / "trades.csv"
     mock_trades = MagicMock()
 
@@ -204,7 +223,7 @@ def test_pure_save_trades(tmp_path: Path):
             [
                 "pure",
                 "-y",
-                "s1.yaml",
+                str(yaml_file),
                 "--expr",
                 "CLOSE/OPEN",
                 "--no-report",
@@ -216,8 +235,9 @@ def test_pure_save_trades(tmp_path: Path):
     mock_trades.write_csv.assert_called_once()
 
 
-def test_pure_all_exprs_include_target_factor():
+def test_pure_all_exprs_include_target_factor(tmp_path: Path):
     """load_pool_data 的 exprs 参数中包含目标因子表达式。"""
+    yaml_file = _make_dummy_yaml(tmp_path)
     ctx_cfg, ctx_dp, ctx_pool, ctx_pure, ctx_bt, ctx_report, ctx_print, _ = _patch_all()
     with (
         ctx_cfg,
@@ -233,7 +253,7 @@ def test_pure_all_exprs_include_target_factor():
             [
                 "pure",
                 "-y",
-                "s1.yaml",
+                str(yaml_file),
                 "--expr",
                 "my_f=ts_mean(AMOUNT,40)",
                 "--no-report",

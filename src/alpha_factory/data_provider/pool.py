@@ -9,9 +9,7 @@
 
 """
 
-import re
 from datetime import date
-from functools import lru_cache
 from typing import List, TYPE_CHECKING
 
 import polars as pl
@@ -23,18 +21,13 @@ from alpha_factory.data_provider.label import (
     label_OO_for_tradable,
     label_CC_for_tradable,
 )
-from alpha_factory.utils.schema import F
+from alpha_factory.utils.schema import F, RANK_SENTINEL
 
 if TYPE_CHECKING:
     from alpha_factory.data_provider.benchmark import Benchmark
 
 
 _ols_kwargs = OLSKwargs(null_policy="drop", solve_method="svd")
-
-
-@lru_cache(maxsize=64)
-def _compile_factor_pattern(pattern: str) -> re.Pattern[str]:
-    return re.compile(pattern)
 
 
 class PoolUniverse:
@@ -261,7 +254,7 @@ class MainSmallPool(PoolUniverse):
                     .otherwise(None)
                     .rank("ordinal")
                     .over(F.DATE)
-                    .fill_null(999999)
+                    .fill_null(RANK_SENTINEL)
                     .alias("mv_rank")
                 ]
             )

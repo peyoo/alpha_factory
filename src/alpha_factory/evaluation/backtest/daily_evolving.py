@@ -1,7 +1,7 @@
 from typing import Union, Dict
 import polars as pl
 from loguru import logger
-from alpha_factory.utils.schema import F
+from alpha_factory.utils.schema import F, RANK_SENTINEL
 
 
 def backtest_daily_evolving(
@@ -44,7 +44,7 @@ def backtest_daily_evolving(
             .otherwise(None)
             .rank(descending=not ascending, method="random")
             .over(F.DATE)
-            .fill_null(999999)
+            .fill_null(RANK_SENTINEL)
             .alias("RANK")
         ]
     )
@@ -233,7 +233,9 @@ def backtest_daily_evolving(
         # ================================================================
         # 持仓中排名超出 sell_rank 的标的，明日平仓
         sell_orders = {
-            a for a in holdings if day_info.get(a, {}).get("RANK", 999999) >= sell_rank
+            a
+            for a in holdings
+            if day_info.get(a, {}).get("RANK", RANK_SENTINEL) >= sell_rank
         }
 
         # 排名在 n_buy 以内、且未持有的标的，明日按排名顺序建仓

@@ -163,9 +163,23 @@ class Settings(BaseSettings):
             path.mkdir(parents=True, exist_ok=True)
 
 
-# 实例化单例
-settings = Settings()
-# 启动时自动创建目录（可选，也可以放在 CLI 的初始化逻辑里）
-settings.make_dirs()
+_settings: Settings | None = None
 
-__all__ = ["settings"]
+
+def get_settings() -> Settings:
+    """惰性初始化单例，避免 import 时产生文件系统副作用。"""
+    global _settings
+    if _settings is None:
+        _settings = Settings()
+        _settings.make_dirs()  # 在首次实际使用时创建目录
+    return _settings
+
+
+def __getattr__(name: str):
+    """兼容现有 `from alpha_factory.config.base import settings` 的用法。"""
+    if name == "settings":
+        return get_settings()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+__all__ = ["get_settings"]
