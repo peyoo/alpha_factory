@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional, TYPE_CHECKING
 from pathlib import Path
 
 import quantstats as qs
@@ -8,10 +8,26 @@ import webbrowser
 
 from alpha_factory.config.base import settings
 
+if TYPE_CHECKING:
+    from alpha_factory.data_provider.benchmark import Benchmark
 
-def generate_and_open_report(result: Dict[str, Any], factor_name: str):
+
+def generate_and_open_report(
+    result: Dict[str, Any],
+    factor_name: str,
+    benchmark: Optional["Benchmark"] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
     """
     使用 QuantStats 生成 HTML 报告并自动在浏览器打开
+
+    Args:
+        result: 回测结果字典，包含 'series' 键
+        factor_name: 因子名称
+        benchmark: 可选的基准对象，用于对比分析
+        start_date: 回测启始日期（YYYYMMDD），用于加载benchmark数据
+        end_date: 回测结束日期（YYYYMMDD），用于加载benchmark数据
     """
     # 1. 数据转换：Polars -> Pandas
     series_df = result["series"].to_pandas()
@@ -47,15 +63,32 @@ def generate_and_open_report(result: Dict[str, Any], factor_name: str):
     )
     report_path = (report_dir / report_filename).resolve()
 
-    # 4. 生成报告
-    # 如果你有基准数据，可以将 benchmark 替换为基准收益率序列
+    # 4. 准备基准数据（可选）
+    benchmark_series = None
+    if benchmark is not None and start_date is not None and end_date is not None:
+        from datetime import datetime as dt
+
+        start_dt = dt.strptime(start_date, "%Y%m%d").date()
+        end_dt = dt.strptime(end_date, "%Y%m%d").date()
+        bench_df = benchmark.load_returns(start_dt, end_dt).collect().to_pandas()
+        if not bench_df.empty:
+            benchmark_series = bench_df.set_index("DATE")["ret"]
+            benchmark_series.index = pd.to_datetime(benchmark_series.index)
+            benchmark_series.name = f"Benchmark ({benchmark.name})"
+            # 对齐日期：只保留策略和基准都有的日期
+            common_dates = returns.index.intersection(benchmark_series.index)
+            returns = returns.loc[common_dates]
+            benchmark_series = benchmark_series.loc[common_dates]
+
+    # 5. 生成报告
     qs.reports.html(
         returns,
+        benchmark=benchmark_series,
         title=f"Factor Backtest Report: {factor_name}",
         output=str(report_path),
         show_sharpe_ratio=True,
     )
 
-    # 5. 自动在默认浏览器中打开
+    # 6. 自动在默认浏览器中打开
     print(f"✅ 报告已生成: {report_path}")
     webbrowser.open(f"file://{report_path}")

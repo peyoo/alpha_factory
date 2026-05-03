@@ -33,7 +33,6 @@ import numpy as np
 import polars as pl
 from deap import base, creator, gp, tools
 from deap.gp import PrimitiveTree
-from expr_codegen.tool import ExprTool
 from loguru import logger
 import more_itertools
 
@@ -53,15 +52,7 @@ from alpha_factory.gp.dependence import DependenceManager
 from alpha_factory.gp.ea import eaMuPlusLambda_NSGA2
 from alpha_factory.patch.deap_patch import apply_deap_patches
 from alpha_factory.patch.expr_codegen_patch import apply_expr_codegen_patches
-from alpha_factory.polars.utils import CUSTOM_OPERATORS
 from alpha_factory.config.base import settings
-
-from typing import TypeVar
-from polars import DataFrame as _pl_DataFrame
-from polars import LazyFrame as _pl_LazyFrame
-
-
-DataFrame = TypeVar("DataFrame", _pl_LazyFrame, _pl_DataFrame)
 
 # 在脚本最上方或 __init__ 中调用一次即可
 apply_expr_codegen_patches()
@@ -132,16 +123,6 @@ class GPDeapGenerator(object):
             "fitness_population_func", batch_full_metrics
         )
 
-        # self.pool_func = config.get("pool_func", None)  # 股票池函数
-        # # 标签计算函数，提供fitness_population_func计算所需的标签列，
-        # # 生成的标签列名必须和函数所需列名一致，一般为 F.LABEL_FOR_IC 和 F.LABEL_FOR_RET
-        # self.label_funcs = config.get(
-        #     "label_funcs", [label_OO_for_IC, label_OO_for_tradable]
-        # )
-        # self.extra_terminal_func = config.get(
-        #     "extra_terminal_func", []
-        # )  # 额外终端因子计算函数
-
         self.terminals = config.get("terminals", [])  # 终端因子列表
         self.random_window_func = config.get("random_window_func", None)  # 随机窗口函数
 
@@ -171,6 +152,8 @@ class GPDeapGenerator(object):
 
         # 缓存本轮实验的适应度结果，避免重复计算
         self.fitness_cache = {}
+
+        self.data_provider = DataProvider(pool_data_in_memory=True)
 
         logger.info(f"✓ GP 生成器初始化完成 | 批大小: {self.batch_size}")
 
@@ -355,7 +338,7 @@ class GPDeapGenerator(object):
 
         # 2. 载入原始数据
         # 挖掘因子通常需要 OHLCV，计算 OO 收益率需要 OPEN
-        input_data = DataProvider().load_pool_data(
+        input_data = self.data_provider.load_pool_data(
             start_date=self.start_date,
             end_date=self.end_date,
             pool=self.pool,
@@ -471,26 +454,14 @@ class GPDeapGenerator(object):
         return fitness_values
 
     def _calc_exprs(self, exprs_list, df_input):
-        lf = df_input.lazy() if isinstance(df_input, pl.DataFrame) else df_input
+        # 转换 (k, v, c) 元组列表为 "k=v" 字符串列表，以供 _apply_column_exprs 使用
+        exprs_list_str = [f"{k}={v}" for k, v, c in exprs_list]
 
-        tool = ExprTool()
-        codes, G = tool.all(
-            exprs_list,
-            style="polars",
-            template_file="template.py.j2",
-            replace=False,
-            regroup=True,
-            format=True,
-            date="DATE",
-            asset="ASSET",
-            over_null=None,
-            skip_simplify=True,
+        lf = self.data_provider.load_pool_data(
+            self.pool, self.start_date, self.end_date, exprs=exprs_list_str
         )
 
-        globals_ = {**CUSTOM_OPERATORS}
-        exec(codes, globals_)
-
-        df_output = globals_["main"](lf, ge_date_idx=0).collect()
+        df_output = lf.collect()
 
         return df_output
 

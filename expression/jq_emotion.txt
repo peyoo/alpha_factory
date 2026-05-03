@@ -1,0 +1,42 @@
+#成交量与变动速率
+VROC12 = ts_returns(VOLUME, 12) * 100
+VROC6 = ts_returns(VOLUME, 6) * 100
+VOSC = (ts_decay_exp_window(VOLUME, 12) - ts_decay_exp_window(VOLUME, 26)) / ts_decay_exp_window(VOLUME, 12) * 100
+
+#移动平均与标准差
+TVMA6 = ts_mean(AMOUNT, 6)
+TVMA20 = ts_mean(AMOUNT, 20)
+VEMA5 = ts_decay_exp_window(VOLUME, 5)
+VEMA10 = ts_decay_exp_window(VOLUME, 10)
+VEMA12 = ts_decay_exp_window(VOLUME, 12)
+VEMA26 = ts_decay_exp_window(VOLUME, 26)
+VSTD10 = ts_std_dev(VOLUME, 10)
+VSTD20 = ts_std_dev(VOLUME, 20)
+TVSTD6 = ts_std_dev(AMOUNT, 6)
+TVSTD20 = ts_std_dev(AMOUNT, 20)
+
+#换手率相关
+VOL5 = ts_mean(TURNOVER, 5)
+VOL10 = ts_mean(TURNOVER, 10)
+VOL20 = ts_mean(TURNOVER, 20)
+VOL60 = ts_mean(TURNOVER, 60)
+VOL120 = ts_mean(TURNOVER, 120)
+VOL240 = ts_mean(TURNOVER, 240)
+turnover_volatility = ts_std_dev(TURNOVER, 20)
+DAVOL5 = ts_mean(TURNOVER, 5) / ts_mean(TURNOVER, 120)
+DAVOL10 = ts_mean(TURNOVER, 10) / ts_mean(TURNOVER, 120)
+DAVOL20 = ts_mean(TURNOVER, 20) / ts_mean(TURNOVER, 120)
+
+#能量与人气指标
+AR = ts_sum(HIGH - OPEN, 26) / ts_sum(OPEN - LOW, 26) * 100
+BR = ts_sum(max_(0, HIGH - ts_delay(CLOSE, 1)), 26) / ts_sum(max_(0, ts_delay(CLOSE, 1) - LOW), 26) * 100
+ARBR = (ts_sum(HIGH - OPEN, 26) / ts_sum(OPEN - LOW, 26) * 100) - (ts_sum(max_(0, HIGH - ts_delay(CLOSE, 1)), 26) / ts_sum(max_(0, ts_delay(CLOSE, 1) - LOW), 26) * 100)
+VR = (ts_sum((CLOSE > ts_delay(CLOSE, 1)) * VOLUME, 26) + ts_sum((CLOSE == ts_delay(CLOSE, 1)) * VOLUME, 26) * 0.5) / (ts_sum((CLOSE < ts_delay(CLOSE, 1)) * VOLUME, 26) + ts_sum((CLOSE == ts_delay(CLOSE, 1)) * VOLUME, 26) * 0.5)
+PSY = ts_count(CLOSE > ts_delay(CLOSE, 1), 12) / 12 * 100
+
+#动量与资金流
+WVAD = ts_sum((CLOSE - OPEN) / (HIGH - LOW) * VOLUME, 6)
+MAWVAD = ts_mean(ts_sum((CLOSE - OPEN) / (HIGH - LOW) * VOLUME, 6), 6)
+ATR14 = ts_mean(max_(HIGH - LOW, abs_(HIGH - ts_delay(CLOSE, 1)), abs_(LOW - ts_delay(CLOSE, 1))), 14)
+ATR6 = ts_mean(max_(HIGH - LOW, abs_(HIGH - ts_delay(CLOSE, 1)), abs_(LOW - ts_delay(CLOSE, 1))), 6)
+money_flow_20 = ts_sum((CLOSE + HIGH + LOW) / 3 * VOLUME, 20)

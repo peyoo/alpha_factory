@@ -1,10 +1,16 @@
 import os
 from pathlib import Path
-from typing import ClassVar, Dict
+from typing import ClassVar, Dict, Tuple, Type
 import polars as pl
 
 from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    SettingsConfigDict,
+    YamlConfigSettingsSource,
+    PydanticBaseSettingsSource,
+    DotEnvSettingsSource,
+)
 from alpha_factory.utils.schema import F
 
 
@@ -19,6 +25,53 @@ def get_default_base() -> Path:
 
     # 适配 src/alpha_factory/core/ 布局，向上爬 4 层
     return Path(__file__).resolve().parents[3]
+
+
+class BaseConfig(BaseSettings):
+    # 允许通过字段定义默认值，子类可直接覆盖此属性
+    yaml_config_file: str = "config.yaml"
+    env_file_name: str = ".env"
+
+    model_config = SettingsConfigDict(env_prefix="QUANT_", extra="ignore")
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: Type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> Tuple[PydanticBaseSettingsSource, ...]:
+
+        # 1. 获取基础路径 (调用你的健壮函数)
+        base_path = get_default_base()
+
+        # 2. 预读 Init 和 Env 得到可能的路径覆盖
+        # (注意：env_settings 此时会根据 QUANT_YAML_CONFIG_FILE 等前缀自动查找)
+        preload_env = env_settings()
+        preload_init = init_settings()
+
+        # 确定最终文件路径
+        final_yaml = (
+            preload_init.get("yaml_config_file")
+            or preload_env.get("yaml_config_file")
+            or cls.yaml_config_file
+        )
+        final_dot_env = base_path / (
+            preload_init.get("env_file_name")
+            or preload_env.get("env_file_name")
+            or cls.env_file_name
+        )
+
+        # 3. 构造真正的数据源
+        # 优先级：Init(CLI) > Env > DotEnv > YAML
+        return (
+            init_settings,
+            env_settings,
+            DotEnvSettingsSource(settings_cls, env_file=final_dot_env),
+            YamlConfigSettingsSource(settings_cls, yaml_file=base_path / final_yaml),
+        )
 
 
 class Settings(BaseSettings):
@@ -46,10 +99,18 @@ class Settings(BaseSettings):
     def WAREHOUSE_DIR(self) -> Path:
         return self.DATA_DIR / "warehouse"
 
+    @property
+    def BENCHMARKS_DIR(self) -> Path:
+        return self.WAREHOUSE_DIR / "benchmarks"
+
     # --- 输出子目录 ---
     @property
     def LOG_DIR(self) -> Path:
         return self.OUTPUT_DIR / "logs"
+
+    @property
+    def STRATEGY_DIR(self) -> Path:
+        return self.OUTPUT_DIR / "strategies"
 
     # --- 业务常量 ---
     SYSTEM_START_DATE: str = "20150101"
@@ -63,7 +124,7 @@ class Settings(BaseSettings):
     # --- Codegen / template settings ---
     # TEMPLATE_DIR: str = Field(default_factory=lambda: str(get_default_base() / "expression"))
     # 代码生成批处理大小
-    CODEGEN_BATCH_SIZE: int = 100
+    CODEGEN_BATCH_SIZE: int = 200
 
     # 向后兼容：部分模块期望字符串字段名 `template_path_str`
     @property
@@ -97,14 +158,28 @@ class Settings(BaseSettings):
 
     def make_dirs(self):
         """初始化必要的物理目录"""
-        paths = [self.RAW_DATA_DIR, self.WAREHOUSE_DIR]
+        paths = [self.RAW_DATA_DIR, self.WAREHOUSE_DIR, self.BENCHMARKS_DIR]
         for path in paths:
             path.mkdir(parents=True, exist_ok=True)
 
 
-# 实例化单例
-settings = Settings()
-# 启动时自动创建目录（可选，也可以放在 CLI 的初始化逻辑里）
-settings.make_dirs()
+_settings: Settings | None = None
 
-__all__ = ["settings"]
+
+def get_settings() -> Settings:
+    """惰性初始化单例，避免 import 时产生文件系统副作用。"""
+    global _settings
+    if _settings is None:
+        _settings = Settings()
+        _settings.make_dirs()  # 在首次实际使用时创建目录
+    return _settings
+
+
+def __getattr__(name: str):
+    """兼容现有 `from alpha_factory.config.base import settings` 的用法。"""
+    if name == "settings":
+        return get_settings()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+__all__ = ["get_settings"]

@@ -1,4 +1,5 @@
 import hashlib
+import inspect
 
 import polars.selectors as cs
 
@@ -6,17 +7,21 @@ import polars as pl
 from pathlib import Path
 
 from loguru import logger
-from typing import Optional, List, Union, Callable, Literal
-from datetime import datetime, timedelta
+from typing import Optional, List, Union, Literal
+from datetime import date, datetime, timedelta
 
 from expr_codegen import codegen_exec
 
 
 from alpha_factory.data_provider import TushareDataService
+from alpha_factory.data_provider.factorsprocessor import FactorsAction
 from alpha_factory.data_provider.pool import PoolUniverse
 from alpha_factory.data_provider.stock_assets_manager import StockAssetsManager
 from alpha_factory.config.base import settings
 from alpha_factory.utils.schema import F
+
+# str（YYYYMMDD）或 datetime.date 均可接受
+DateLike = Union[str, date]
 
 
 class DataProvider:
@@ -30,11 +35,38 @@ class DataProvider:
     4. 性能压榨：支持类型智能压缩 (shrink_dtype) 与 投影下压优化。
     """
 
-    def __init__(self, asset_manager: Optional[StockAssetsManager] = None):
+    def __init__(
+        self,
+        asset_manager: Optional[StockAssetsManager] = None,
+        look_back_window: int = 200,
+        pool_data_in_memory: bool = False,
+    ):
+        """初始化 DataProvider。
+
+        参数:
+            asset_manager: 可选的资产元数据管理器。未提供时使用默认实现。
+            look_back_window: 时序算子预热窗口（交易日），默认 200。
+                用于向前追溯以解决 MA/STD 等时序算子的冷启动空值问题。
+            pool_data_in_memory: 是否将 pool 基础数据缓存到内存。
+                为 True 时，同一 pool+日期区间的基础数据将常驻内存，
+                后续调用 load_pool_data / build_factors_view 时可直接复用，
+                避免重复磁盘 I/O。适合在同一进程中对同一 pool 计算多组表达式的场景。
+
+        说明:
+            - 初始化仓库路径与因子目录。
+            - 预加载静态属性表为 LazyFrame，供后续 join 复用。
+            - 创建 Tushare 服务实例用于日期边界推断。
+        """
         self.warehouse_dir = Path(settings.WAREHOUSE_DIR)
         self.factor_dir = self.warehouse_dir / "unified_factors"
         self.asset_manager = asset_manager or StockAssetsManager()
         self.tushare_service = TushareDataService()
+        self.look_back_window: int = look_back_window
+        self.pool_data_in_memory: bool = pool_data_in_memory
+
+        # pool_data_in_memory=True 时缓存 (lf, pool_cache_path)（一个 DataProvider 绑定一个 pool，
+        # 同一运行会话内 pool_cache_path 不变，一并存储避免重复哈希计算）
+        self._pool_memory_cache: Optional[tuple[pl.LazyFrame, Path]] = None
 
         # 预加载静态元数据 LazyFrame
         # 提示：确保 asset 列在管理器中已设为 Categorical 或 Enum
@@ -44,233 +76,356 @@ class DataProvider:
     def load_pool_data(
         self,
         pool: PoolUniverse,
-        start_date: str,
-        end_date: Optional[str] = None,
-        exprs: Optional[List] = None,
-        cache: Optional[Union[str, Path]] = "md5",
+        start_date: DateLike,
+        end_date: Optional[DateLike] = None,
+        exprs: List[str] = None,
+        actions: List[FactorsAction] = None,
+        cache: str | Path = None,
     ) -> pl.LazyFrame:
-        return self.load_data(
-            start_date,
-            end_date,
-            column_exprs=exprs,
-            funcs=[pool.pool, pool.extra_cols, *pool.label_col_funcs],
-            select_cols=pool.needed_cols(),
-            cache_path=cache,
+        """按股票池加载数据，并支持两阶段缓存策略。
+
+        参数:
+            pool: 股票池对象，定义过滤逻辑与基础列需求。
+            start_date: 起始日期，接受 str（YYYYMMDD）或 datetime.date。
+            end_date: 结束日期，None 时自动推断仓库最新日期。
+            exprs: 因子表达式列表，支持 `name = expr` 形式。
+            actions: 可选的数据处理动作列表，支持预处理对象和合成类对象，
+                对生成的因子列进行转换/聚合等操作。
+            cache: 缓存策略。
+                - `"md5"`: pool 基础数据缓存 + factors 结果按 MD5 自动合成路径缓存。
+                - `Path/str`: 显式 factors 缓存路径（相对路径转绝对路径）。
+                - `None`: 不缓存 factors 结果（pool 基础数据仍缓存）。
+
+        返回:
+            pl.LazyFrame，包含基础列与（可选）表达式生成列。
+        """
+        # 入口统一规范化为 date，内部全程使用 date 类型
+        start_dt: date = self._to_date(start_date)
+        end_dt: date = self._resolve_end_date(end_date)
+
+        pool_data, pool_cache_path = self._build_pool_base_data(pool, start_dt, end_dt)
+        factors_cache_path = self._build_factors_cache_path(
+            pool_cache_path, exprs, cache
         )
 
-    def load_data(
+        lf = self._build_factors_view(
+            pool, pool_data, exprs, actions, factors_cache_path
+        )
+
+        # 在最后阶段过滤到 start_dt 及以后（表达式计算已完成，可以安全过滤）
+        return lf.filter(pl.col("DATE") >= start_dt)
+
+    def eval_exprs_on_df(
         self,
-        start_date: str,
-        end_date: Optional[str] = None,
-        column_blocks: Optional[List] = None,
-        column_exprs: Optional[List[str]] = None,
-        funcs: Optional[List[Callable[[pl.LazyFrame], pl.LazyFrame]]] = None,
-        lookback_window: int = 0,
-        select_cols: Optional[List] = None,
-        cache_path: Optional[Union[str, Path]] = None,  # 🆕 新增缓存路径参数
-        codegen_over_null: Literal["partition_by", "order_by", None] = None,
-    ) -> pl.LazyFrame:
+        df: pl.DataFrame,
+        exprs: List[str],
+    ) -> pl.DataFrame:
+        """在已有 DataFrame 上追加表达式列，返回新 DataFrame。
+
+        用于 Optuna trial 内的动态条件表达式计算（每个 trial 参数不同，不缓存）。
+        复用内部 ``_apply_column_exprs``，底层由 ``codegen_exec`` 驱动。
+
+        Args:
+            df:    输入 DataFrame（通常为 ``base_df`` 预计算结果）。
+            exprs: ``name = expression`` 格式的表达式列表。
+
+        Returns:
+            追加了新列的 DataFrame（原有列保留）。
         """
-        统一数据集构建管线（带持久化缓存支持）\n
-        :param start_date: 起始日期 (YYYYMMDD)
-        :param end_date: 结束日期 (YYYYMMDD)
-        :param column_blocks: 列生成函数块列表 (func block 型)
-        :param column_exprs: 列生成表达式列表 (expr 型)
-        :param funcs: 自定义函数列表 (每个函数接受并返回 LazyFrame)
-        :param lookback_window: 向前预热天数 (解决时序算子空值问题)
-        :param select_cols: 最终投影列列表 (None 表示之后自行选择)，这里不包括表达式自动生产的列
-        :param cache_path: 可选的缓存文件路径 (Parquet 格式)，命中则直接加载
-        :param codegen_over_null: expr_codegen 的 over_null 参数
-        :return: 构建完成的 LazyFrame
-        说明：
-        1. 优先检查 cache_path 指定的缓存文件是否存在，若存在则直接加载返回。
-        2. 若缓存未命中，则执行完整的计算流水线：
-           - 物理层扫描（支持 lookback）
-           - 基础上下文增强（注入静态属性列）
-           - 列生成（支持 func block 和 expr 两种模式）
-           - 自定义函数处理
-           - 时间切片与行过滤
-           - 最终投影下压
-        3. 若指定了 cache_path，则在计算完成后将结果持久化为 Parquet 文件以供后续加载。
-        4. 返回的始终是 LazyFrame，确保后续处理链路一致性。
-        5. 通过合理使用缓存，可大幅提升重复查询的性能。
-        6. 注意：缓存文件的管理（如清理过期缓存）需由调用方负责。
-        7. 示例用法：
-           dp = DataProvider()
-           lf = dp.load_data(
-               start_date="20220101",
-               end_date="20221231",
-               column_exprs=["MA_20 = CLOSE.rolling_mean(20)"],
-               lookback_window=20,
-               select_cols=["DATE", "ASSET", "CLOSE", "MA_20"],
-               cache_path="cache/2022_factors.parquet"
-           )
-        说明：上述示例会尝试加载指定的缓存文件，若不存在则计算所需列并将结果缓存。
-        备注：合理设置 lookback_window 可确保时序算子（如移动平均）在起始日期处有足够的数据支持，避免空值问题。
-        进阶：结合 expr_codegen 的批量处理能力，可高效生成大量衍生列，提升数据处理效率。
-        适用场景：
-        - 高频查询同一时间区间的数据时，缓存机制能显著减少重复计算开销。
-        - 复杂列生成逻辑通过声明式表达式和函数块实现，提升代码可维护性和复用性。
-        - 适用于量化研究、因子开发等需要灵活数据处理的场景。
-        设计目标：
-        - 提供一个高性能、易用且灵活的数据加载与处理框架。
-        - 通过缓存机制优化重复查询的性能，提升用户体验。
-        - 支持多种列生成方式，满足不同用户的需求。
+        if not exprs:
+            return df
+        lf, _ = self._apply_column_exprs(df.lazy(), exprs)
+        return lf.collect()
+
+    def _build_pool_base_data(
+        self,
+        pool: PoolUniverse,
+        start_date: date,
+        end_date: date,
+    ) -> tuple[pl.LazyFrame, Path]:
+        """构建并缓存 pool 基础数据。
+
+        返回:
+            (pool_data_lf, pool_cache_path) — pool 级缓存始终生效。
         """
+        # 优先查询内存缓存（pool_data_in_memory=True 时生效，同时跳过哈希计算）
+        if self.pool_data_in_memory and self._pool_memory_cache is not None:
+            logger.info("⚡ 命中内存缓存，直接复用 pool 基础数据")
+            return self._pool_memory_cache
 
-        # 1. 🔍 检查缓存命中
-        if cache_path:
-            # 由start_date和end_date ，column_blocks 等参数形成md5作为缓存文件名的一部分更好
-            if cache_path == "md5":
-                # 1. 准备需要哈希的内容字符串
-                # 建议将列表/字典等对象先 str() 化
-                hash_content = f"{start_date}_{end_date}_{lookback_window}_{funcs}_{column_blocks}_{column_exprs}_{select_cols}"
+        pool_cache_path = self._build_pool_cache_path(pool, start_date, end_date)
 
-                # 2. 使用标准 hashlib 计算 MD5
-                # hex digest 返回的是标准的 32 位 16 进制字符串
-                md5_hash = hashlib.md5(hash_content.encode("utf-8")).hexdigest()
+        cached_lf = self._load_cached_lazyframe(pool_cache_path)
+        if cached_lf is not None:
+            if self.pool_data_in_memory:
+                self._pool_memory_cache = (cached_lf, pool_cache_path)
+            return cached_lf, pool_cache_path
 
-                # 3. 构建路径 (假设默认前缀为 'cached_data')
-                # 注意：不要对字符串使用 .stem，直接构建文件名
-                file_name = f"factor_data_{md5_hash}.parquet"
-                cache_path = Path(settings.OUTPUT_DIR) / "tmp_data" / file_name
-
-                # 确保目录存在，防止写入时报错
-                cache_path.parent.mkdir(parents=True, exist_ok=True)
-
-                logger.info(f"🆕 缓存路径已生成: {cache_path}")
-
-            cache_path = Path(cache_path)
-            if cache_path.exists():
-                logger.info(f"✨ 发现缓存，直接加载: {cache_path}")
-                # 使用 scan_parquet 保持 Lazy 特性
-                lf = pl.scan_parquet(cache_path)
-                return lf.with_columns(
-                    # 转换成float64，避免后续计算中类型不匹配的问题
-                    pl.col(pl.NUMERIC_DTYPES).cast(pl.Float64)
-                )
-
-        end_date = (
-            self.tushare_service.get_latest_date_from_warehouse()
-            if end_date is None
-            else end_date.strip()
-        )
-
-        # 2. 🏗️ 执行完整计算流水线 (如果缓存未命中或未设置)
         logger.info(
-            f"⚙️ 缓存未命中或未设置，开始计算数据 [{start_date} -> {end_date}]..."
+            f"⚙️ 构建股票池基础数据 [{start_date.strftime('%Y%m%d')} -> {end_date.strftime('%Y%m%d')}]..."
         )
 
-        # A. 物理层扫描
-        lf = self._scan_with_lookback(start_date, end_date, lookback_window)
+        funcs = [pool.extra_cols, pool.pool, *pool.label_col_funcs]
+        select_cols = pool.needed_cols()
 
-        # B. 基础上下文增强（与assets join）
+        lf = self._scan_with_lookback(
+            start_date, end_date, lookback=self.look_back_window
+        )
         lf = self._enrich_context(lf)
 
-        # C. 函数型，这里既可以生成新列，也可以用来过滤行,以及其他任何操作
-        if funcs:
-            for i, func in enumerate(funcs):
-                try:
-                    lf = func(lf)
-                except Exception as e:
-                    logger.error(f"❌ 自定义函数 #{i} 执行失败: {e}")
-                    raise
+        for i, func in enumerate(funcs):
+            try:
+                lf = func(lf)
+            except Exception as e:
+                logger.error(f"❌ 自定义函数 #{i} 执行失败: {e}")
+                raise
 
-        template_path = settings.template_path_str
-        # D. 列生成：func block 型，expr_codegen 支持批量处理
-        if column_blocks:
-            # 因为使用了POOL_MASK ,函数映射必须加上自定义操作符
-            lf = codegen_exec(
-                lf,
-                *column_blocks,
-                over_null=codegen_over_null,
-                template_file=template_path,
-                date="DATE",  # 这里不能使用F.DATE，因为 codegen_exec 因为 codegen_exec 内部是通过模版渲染的
-                asset="ASSET",  # 同上，保持字符串一致
-            )
+        # 注意：不在这里过滤时间，保留 lookback 数据用于表达式计算（如 ts_mean）
+        # 时间过滤延后到 load_pool_data 最后阶段
 
-        # E. 列生成：表达式型
-        generated_expr_cols = []
-        if column_exprs:
-            for expr_str in column_exprs:
-                if "=" in expr_str:
-                    generated_expr_cols.append(expr_str.split("=")[0].strip())
-
-            batch_size = getattr(settings, "CODEGEN_BATCH_SIZE", 100)
-            for i in range(0, len(column_exprs), batch_size):
-                batch = column_exprs[i : i + batch_size]
-                lf = codegen_exec(
-                    lf,
-                    *batch,
-                    over_null=codegen_over_null,
-                    template_file=template_path,
-                    date="DATE",  # 这里不能使用F.DATE，因为 codegen_exec 内部是通过模版渲染的
-                    asset="ASSET",  # 同上，保持字符串一致
-                )
-
-        # F. 时间切片 & 行过滤
-        s_dt = datetime.strptime(start_date, "%Y%m%d").date()
-        lf = lf.filter(pl.col("DATE") >= s_dt)
-
-        # G. 投影
         if select_cols:
-            lf = self._finalize_projection(lf, select_cols, generated_expr_cols)
+            lf = self._finalize_projection(lf, select_cols, generated_cols=[])
 
-        # lf.sort('ASSET', 'DATE').with_columns(
-        #     pl.col("ASSET").set_sorted(True)
-        # )
+        lf = self._persist_cache_and_reload(lf, pool_cache_path)
+        if self.pool_data_in_memory:
+            self._pool_memory_cache = (lf, pool_cache_path)
+        return lf, pool_cache_path
 
-        # 3. 💾 持久化缓存 (如果指定了 cache_path)
-        if cache_path:
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            logger.info(f"📥 正在将计算结果写入缓存: {cache_path}")
+    def clean_old_caches(self, days=1):
+        """清理旧缓存文件。
 
-            # 先统一数值列为 Float64，避免 Float32/Float64 混合导致 collect panic
-            lf = lf.with_columns(cs.numeric().cast(pl.Float64))
-
-            # 禁用优化器 collect，绕开 Polars 在 Float32/Float64 混合列上的
-            # 优化器 bug (cannot get ref Float64 from Float32)
-            df = lf.collect(no_optimization=True)
-            df.write_parquet(cache_path, compression="zstd")
-
-            # 返回保存后的 Lazy 视图，确保后续链路统一
-            lf = pl.scan_parquet(cache_path)
-
-        return lf.with_columns(
-            # 全部转换成float64，避免后续计算中类型不匹配的问题
-            cs.numeric().cast(pl.Float64)
-        )
-
-    def clean_old_caches(self, days=7):
+        参数:
+            days: 仅保留最近 N 天缓存，默认 7 天。
+        """
         tmp_path = Path(settings.OUTPUT_DIR) / "tmp_data"
         now = datetime.now().timestamp()
-        for f in tmp_path.glob("factor_data_*.parquet"):
-            if f.stat().st_mtime < (now - days * 86400):
-                f.unlink()
+        for pattern in ("factor_data_*.parquet", "pool_base_*.parquet"):
+            for f in tmp_path.glob(pattern):
+                if f.stat().st_mtime < (now - days * 86400):
+                    f.unlink()
+
+    @staticmethod
+    def _to_date(d: DateLike) -> date:
+        """将 str（YYYYMMDD）或 date 统一转换为 date 对象。"""
+        if isinstance(d, date):
+            return d
+        return datetime.strptime(d.strip(), "%Y%m%d").date()
+
+    def _resolve_end_date(self, end_date: Optional[DateLike]) -> date:
+        """解析结束日期，统一返回 date 对象。
+
+        - `None` 时返回仓库最新可用交易日。
+        - 非空时规范化为 date。
+        """
+        if end_date is None:
+            return self._to_date(self.tushare_service.get_latest_date_from_warehouse())
+        return self._to_date(end_date)
+
+    def _build_pool_cache_path(
+        self, pool: PoolUniverse, start_date: date, end_date: date
+    ) -> Path:
+        """生成 pool 基础数据的缓存文件路径（哈希键内聚到此方法）。
+
+        key 来源: pool 类源码 + start_date + end_date
+        """
+        try:
+            pool_source = inspect.getsource(pool.__class__)
+        except (TypeError, OSError):
+            class_obj = pool.__class__
+            class_signature = sorted(class_obj.__dict__.keys())
+            pool_source = (
+                f"{class_obj.__module__}.{class_obj.__qualname__}:{class_signature}"
+            )
+
+        pool_key = hashlib.md5(
+            f"{pool_source}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}".encode(
+                "utf-8"
+            )
+        ).hexdigest()
+        return Path(settings.OUTPUT_DIR) / "tmp_data" / f"pool_base_{pool_key}.parquet"
+
+    def _build_factors_cache_path(
+        self,
+        pool_cache_path: Path,
+        exprs: Optional[List],
+        cache: Optional[Union[str, Path]],
+    ) -> Optional[Path]:
+        """根据 pool_cache_path、exprs 和 cache 策略合成 factors 缓存路径。
+
+        规则:
+            - exprs 为空时，始终返回 None。
+            - cache is None:      返回 None（不缓存 factors）。
+            - cache == "md5":     以 pool_cache_path 路径字符串 + sorted exprs
+                                  联合哈希，存入默认 tmp_data 目录。
+            - 其他（显式路径）:   直接使用该路径（相对路径转绝对路径）。
+        """
+        if not exprs or cache is None:
+            return None
+
+        if cache == "md5":
+            normalized_exprs = self._normalize_exprs(exprs)
+            factors_key = hashlib.md5(
+                f"{pool_cache_path}_{'|'.join(normalized_exprs)}".encode("utf-8")
+            ).hexdigest()
+            return (
+                Path(settings.OUTPUT_DIR)
+                / "tmp_data"
+                / f"factor_data_{factors_key}.parquet"
+            )
+
+        return Path(cache).resolve()
+
+    def _normalize_exprs(self, exprs: Optional[List]) -> List[str]:
+        """规范化表达式列表（去空白、去空值、去重、排序）。"""
+        if not exprs:
+            return []
+        normalized = [str(expr).strip() for expr in exprs if str(expr).strip()]
+        return sorted(set(normalized))
+
+    def _load_cached_lazyframe(
+        self, cache_path: Optional[Path]
+    ) -> Optional[pl.LazyFrame]:
+        """尝试加载缓存文件并返回 LazyFrame。
+
+        返回:
+            - 命中缓存: LazyFrame（数值列统一 cast 到 Float64）
+            - 未命中: None
+        """
+        if not cache_path:
+            return None
+        if not cache_path.exists():
+            return None
+
+        logger.info(f"✨ 发现缓存，直接加载: {cache_path}")
+        lf = pl.scan_parquet(cache_path)
+        return self._cast_numeric_float64(lf)
+
+    def _persist_cache_and_reload(
+        self, lf: pl.LazyFrame, cache_path: Path
+    ) -> pl.LazyFrame:
+        """持久化 LazyFrame 到 Parquet 并回读为 LazyFrame。
+
+        说明:
+            - 写入前统一数值列为 Float64，规避类型混合带来的执行异常。
+            - 使用 `collect(no_optimization=True)` 兼容历史 Polars 场景。
+        """
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        logger.info(f"📥 正在将计算结果写入缓存: {cache_path}")
+
+        lf = self._cast_numeric_float64(lf)
+        df = lf.collect(no_optimization=True)
+        df.write_parquet(cache_path, compression="zstd")
+        return pl.scan_parquet(cache_path)
+
+    def _build_factors_view(
+        self,
+        pool: PoolUniverse,
+        base_lf: pl.LazyFrame,
+        exprs: Optional[List],
+        actions: Optional[List[FactorsAction]] = None,
+        final_cache_path: Optional[Path] = None,
+    ) -> pl.LazyFrame:
+        """在基础层数据上生成表达式列，并按需缓存最终结果。
+
+        缓存命中时直接返回缓存数据，跳过计算。
+        """
+        if cached_lf := self._load_cached_lazyframe(final_cache_path):
+            return cached_lf
+
+        if not exprs:
+            return base_lf
+        select_cols: List[str] = pool.needed_cols()
+        lf, generated_expr_cols = self._apply_column_exprs(base_lf, exprs)
+        lf = self._finalize_projection(lf, select_cols, generated_expr_cols)
+
+        for action in actions or []:
+            # 转换为 DataFrame 以兼容 action.process() 的 API
+            df = lf.collect() if isinstance(lf, pl.LazyFrame) else lf
+            df = action.process(df)
+            lf = df.lazy() if isinstance(df, pl.DataFrame) else df
+
+        if final_cache_path:
+            return self._persist_cache_and_reload(lf, final_cache_path)
+
+        return self._cast_numeric_float64(lf)
+
+    def _cast_numeric_float64(self, lf: pl.LazyFrame) -> pl.LazyFrame:
+        """统一将数值列转换为 Float64，减少后续类型不一致问题。"""
+        return lf.with_columns(cs.numeric().cast(pl.Float64))
+
+    def _apply_column_exprs(
+        self,
+        lf: pl.LazyFrame,
+        column_exprs: Optional[List],
+        codegen_over_null: Literal["partition_by", "order_by", None] = None,
+    ) -> tuple[pl.LazyFrame, List[str]]:
+        """批量执行表达式并返回生成后的列名列表。
+
+        返回:
+            (new_lf, generated_expr_cols)
+        """
+        generated_expr_cols: List[str] = []
+        if not column_exprs:
+            return lf, generated_expr_cols
+
+        normalized_exprs = [
+            str(expr).strip() for expr in column_exprs if str(expr).strip()
+        ]
+        for expr_str in normalized_exprs:
+            if "=" in expr_str:
+                generated_expr_cols.append(expr_str.split("=")[0].strip())
+
+        template_path = settings.template_path_str
+        batch_size = getattr(settings, "CODEGEN_BATCH_SIZE", 200)
+        for i in range(0, len(normalized_exprs), batch_size):
+            batch = normalized_exprs[i : i + batch_size]
+            lf = codegen_exec(
+                lf,
+                *batch,
+                over_null=codegen_over_null,
+                template_file=template_path,
+                date="DATE",
+                asset="ASSET",
+            )
+
+        return lf, generated_expr_cols
 
     # --- 内部核心组件 ---
 
     def _scan_with_lookback(
-        self, start_date: str, end_date: str, lookback: int
+        self, start_date: date, end_date: date, lookback: int
     ) -> pl.LazyFrame:
-        """根据 lookback 天数自动向前扩充扫描年份"""
-        s_dt = datetime.strptime(start_date, "%Y%m%d").date()
-        e_dt = datetime.strptime(end_date, "%Y%m%d").date()
+        """按年份扫描因子库，并基于 lookback 预热历史窗口。
 
+        参数:
+            start_date: 起始日期（date 对象）。
+            end_date: 结束日期（date 对象）。
+            lookback: 预热窗口（交易日近似转换为自然日）。
+        """
         # 预估预热所需的起始日期（交易日天数 * 1.5 倍近似自然日）
-        effective_start = s_dt - timedelta(days=int(lookback * 1.5) + 7)
+        effective_start = start_date - timedelta(days=int(lookback * 1.5) + 7)
 
         scans = []
-        for year in range(effective_start.year, e_dt.year + 1):
+        for year in range(effective_start.year, end_date.year + 1):
             file_path = self.factor_dir / f"{year}.parquet"
             if file_path.exists():
+                # ✅ ASSET 保存为 String，concat 后统一转为 Categorical
                 scans.append(pl.scan_parquet(file_path))
 
         if not scans:
-            raise FileNotFoundError(f"数据区间 {start_date}-{end_date} 无可用文件")
+            raise FileNotFoundError(
+                f"数据区间 {start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')} 无可用文件"
+            )
 
-        # 此时不过滤 start_date，只过滤 end_date，保留预热空间
-        return pl.concat(scans).filter(pl.col("DATE") <= e_dt)
+        # concat 后统一 cast 为当前 session 的 Categorical，与 _static_props join 保持一致
+        return (
+            pl.concat(scans)
+            .with_columns(
+                pl.col(F.ASSET).cast(self.asset_manager.stock_type, strict=False)
+            )
+            .filter(pl.col(F.ASSET).is_not_null())
+            .filter(pl.col("DATE") <= end_date)
+        )
 
     def _enrich_context(self, lf: pl.LazyFrame) -> pl.LazyFrame:
         """
@@ -313,7 +468,12 @@ class DataProvider:
     def _finalize_projection(
         self, lf: pl.LazyFrame, base_cols: List[str], generated_cols: List[str]
     ) -> pl.LazyFrame:
-        """动态感知列空间并执行投影下压"""
+        """动态感知列空间并执行投影下压。
+
+        说明:
+            - 自动保留 `DATE`、`ASSET`。
+            - 自动忽略不存在列，避免 select 抛错。
+        """
         # 默认始终保留的 ID 和状态列
         essential = [
             F.DATE,

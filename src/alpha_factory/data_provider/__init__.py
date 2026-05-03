@@ -18,6 +18,13 @@ from __future__ import annotations
 # 1. 基础服务与缓存管理 (L0/L1)
 from alpha_factory.data_provider.tushare_service import TushareDataService
 
+# 2. 基准数据管理
+from alpha_factory.data_provider.benchmark import (
+    Benchmark,
+    DEFAULT_BENCHMARK_START_DATE,
+)
+from alpha_factory.data_provider.benchmarks import HS300Benchmark, MicroCapBenchmark
+
 # 3. 统一读取接口 (L4)
 from alpha_factory.data_provider.data_provider import DataProvider
 
@@ -25,6 +32,10 @@ from alpha_factory.data_provider.data_provider import DataProvider
 __all__ = [
     "TushareDataService",
     "DataProvider",
+    "Benchmark",
+    "DEFAULT_BENCHMARK_START_DATE",
+    "HS300Benchmark",
+    "MicroCapBenchmark",
 ]
 
 

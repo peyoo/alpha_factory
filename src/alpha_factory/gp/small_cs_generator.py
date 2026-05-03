@@ -32,16 +32,21 @@ class SmallCSGenerator(GPDeapGenerator):
         self.terminals = config.get(
             "terminals",
             [
-                "OPEN",
-                "HIGH",
-                "LOW",
-                "CLOSE",
-                "TURNOVER_RATE",
-                "VWAP",
-                "RET",
-                "VWAP_RET",
+                # --- 必须保留的原始字段 ---
+                "CLOSE",  # ts_* 算子的价格锚点
+                "VWAP",  # 量价关联的核心
+                "RET",  # 动量/反转原子
+                "VWAP_RET",  # 成交量加权动量
+                "TURNOVER_RATE",  # 流动性代理
+                # --- 替代 HIGH/LOW/OPEN 的派生字段 ---
+                "HIGH_LOW_RATIO",  # (HIGH-LOW)/CLOSE，日内波幅
+                "CLOSE_TO_HIGH",  # (CLOSE-LOW)/(HIGH-LOW)，日内强度
+                # --- 替代 AMOUNT/VOLUME 的派生字段 ---
+                "LOG_AMOUNT",  # log(AMOUNT)，流动性规模
+                "LOG_VOLUME",  # log(VOLUME)，可选
+                "ILLIQ",  # |RET|/AMOUNT，非流动性溢价
             ],
-        )
+        )  # 终端字段列表
 
         self.opt_names = config.get("opt_names", ("ann_ret",))  # 多目标优化因子名称
         self.opt_weights = config.get("opt_weights", (1.0,))  # 多目标优化权重
@@ -87,7 +92,6 @@ class SmallCSGenerator(GPDeapGenerator):
             "ts_max",
             "ts_min",
             "ts_delta",
-            "ts_returns",
             "ts_skewness",
             "ts_decay_linear",
             "ts_BIAS",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 import sys
 from typing import Any, Optional
 
@@ -63,4 +64,50 @@ def validate_date_str(
         sys.exit(1)
 
 
-__all__ = ["get_tushare_token", "validate_date_str", "PoolUniverseEnum"]
+__all__ = [
+    "get_tushare_token",
+    "validate_date_str",
+    "PoolUniverseEnum",
+    "resolve_yaml_path",
+]
+
+
+def resolve_yaml_path(yaml_file: Path) -> Path:
+    """将 YAML 文件路径解析为绝对路径，允许省略 ``.yaml`` 后缀。
+
+    解析优先级（按顺序，首个存在的路径即返回）：
+
+    1. 原路径（绝对或相对于 cwd）存在 → 返回。
+    2. 原路径 + ``.yaml`` 后缀存在 → 返回。
+    3. ``settings.STRATEGY_DIR / 原路径`` 存在 → 返回。
+    4. ``settings.STRATEGY_DIR / 原路径 + .yaml`` 存在 → 返回。
+    5. 兜底 → 返回 ``cwd / 原路径``（下游统一报文件不存在）。
+    """
+    p = Path(yaml_file)
+
+    def _with_yaml(base: Path) -> Path:
+        """若路径无 .yaml/.yml 后缀，则追加 .yaml。"""
+        if base.suffix.lower() not in {".yaml", ".yml"}:
+            return base.with_suffix(base.suffix + ".yaml")
+        return base
+
+    # 绝对路径：直接在原路径和带后缀路径之间选
+    if p.is_absolute():
+        if p.exists():
+            return p
+        with_ext = _with_yaml(p)
+        if with_ext.exists():
+            return with_ext
+        return p
+
+    # 相对路径：依次在 cwd 和 STRATEGY_DIR 下查找
+    for base_dir in (Path.cwd(), settings.STRATEGY_DIR):
+        candidate = base_dir / p
+        if candidate.exists():
+            return candidate
+        candidate_ext = _with_yaml(candidate)
+        if candidate_ext.exists():
+            return candidate_ext
+
+    # 兜底
+    return Path.cwd() / p

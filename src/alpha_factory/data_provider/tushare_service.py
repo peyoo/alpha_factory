@@ -21,6 +21,7 @@ from alpha_factory.data_provider.cache_manager import HDF5CacheManager
 from alpha_factory.data_provider.unified_factor_builder import UnifiedFactorBuilder
 from alpha_factory.data_provider.trade_calendar_manager import TradeCalendarManager
 from alpha_factory.data_provider.stock_assets_manager import StockAssetsManager
+from alpha_factory.data_provider.benchmark import Benchmark
 from alpha_factory.utils.schema import F
 
 
@@ -111,6 +112,7 @@ class TushareDataService:
         start_dt = datetime.strptime(start_date, "%Y%m%d").date()
         end_dt = datetime.strptime(end_date, "%Y%m%d").date()
         trade_days = self.calendar.get_trade_days(start_dt, end_dt)
+        self._update_all_benchmarks(end_dt)
 
         if not trade_days:
             logger.warning(f"⚠️ {start_date} ~ {end_date} 之间无交易日")
@@ -135,9 +137,270 @@ class TushareDataService:
             # 💡 无论任务成功还是报错中断，必须显式释放文件句柄
             self.cache_manager.close_all()
 
-        # 4. 同步完成后触发 L2 构建
+        # 5. 同步完成后触发 L2 构建
         logger.info("⚙️ 启动年度 Parquet 因子库构建...")
         self.factor_builder.build_unified_factors(start_dt, end_dt)
+
+        # 6. 【新增】更新所有已注册的 Benchmark
+        self._update_all_benchmarks(end_dt)
+
+    def _update_all_benchmarks(self, end_date: date) -> None:
+        """更新所有已注册的 Benchmark 子类（增量模式）
+
+        在因子数据同步和构建完成后调用，确保 Benchmark 数据与因子库同步。
+
+        Args:
+            end_date: 结束日期，传递给 Benchmark.update()
+        """
+        benchmark_registry = Benchmark.list_all_benchmarks()
+
+        if not benchmark_registry:
+            logger.info("💡 未发现已注册的 Benchmark 子类，跳过更新")
+            return
+
+        logger.info(f"📊 发现 {len(benchmark_registry)} 个 Benchmark 子类，开始更新...")
+
+        for class_name, benchmark_class in benchmark_registry.items():
+            try:
+                benchmark_instance = benchmark_class()
+                logger.info(f"  ↳ 更新 {class_name}...")
+                benchmark_instance.update(end_date=end_date)
+            except Exception as e:
+                # 提取错误信息，避免路径等特殊字符导致的 Rich markup 错误
+                error_msg = str(e)[:200]  # 截断过长的错误信息，去掉文件路径等
+                logger.error(f"❌ {class_name} 更新失败: {error_msg}")
+                raise RuntimeError(
+                    f"{class_name} 更新失败: {error_msg}"
+                ) from e  # 失败则抛出异常，中断 sync 命令
+
+        logger.success("✅ 所有 Benchmark 更新完成")
+
+    def _disclosure(
+        self, trade_date: str, fields: Optional[list] = None
+    ) -> pd.DataFrame:
+        """
+        报告期披露计划因子
+
+        【信号定义】当前交易日是否满足以下三个条件（全部满足则 flag = True）：
+        1. 预计披露日期(pre_date) 与当前交易日(trade_date) 的差异 <= 3 天
+        2. 预计披露日期位于4月下旬（4月21-30日）
+        3. 当前交易日 < 实际披露日期(actual_date)
+
+        参数:
+            trade_date: YYYYMMDD 格式的交易日期字符串
+            fields: 忽略（兼容 API 调用签名）
+
+        返回：DataFrame with columns {ts_code, flag}
+        """
+        trade_date_obj = datetime.strptime(trade_date, "%Y%m%d").date()
+
+        if trade_date_obj.month == 4 and trade_date_obj.day <= 15:
+            return pd.DataFrame(columns=["ts_code", "flag"])
+
+        report_year = trade_date_obj.year - 1  # 报告年度通常是前一年
+        report_end = date(report_year, 12, 31)
+
+        # 1. 直接从 API 获取该年度的披露计划（不使用缓存）
+        try:
+            self.rate_limiter.wait()
+            df_disclosure = self.pro.disclosure_date(
+                end_date=report_end.strftime("%Y%m%d"),
+                fields=["ts_code", "pre_date", "actual_date"],
+            )
+
+            if df_disclosure is None or df_disclosure.empty:
+                # 返回空的结果集
+                return pd.DataFrame(columns=["ts_code", "flag"])
+        except Exception as e:
+            logger.warning(f"⚠️ 无法获取披露计划数据 ({report_end}): {e}")
+            return pd.DataFrame(columns=["ts_code", "flag"])
+
+        # 2. 数据预处理：转换日期列为 datetime
+        try:
+            if "pre_date" in df_disclosure.columns:
+                df_disclosure["pre_date"] = pd.to_datetime(df_disclosure["pre_date"])
+            if "actual_date" in df_disclosure.columns:
+                df_disclosure["actual_date"] = pd.to_datetime(
+                    df_disclosure["actual_date"]
+                )
+        except Exception as e:
+            logger.warning(f"⚠️ 披露日期列转换异常: {e}")
+            return pd.DataFrame(columns=["ts_code", "flag"])
+
+        # 3. 应用三个条件筛选
+        result_data = []
+
+        for _, row in df_disclosure.iterrows():
+            ts_code = row["ts_code"]
+            pre_date = row.get("pre_date")
+            actual_date = row.get("actual_date")
+
+            flag = False
+
+            # 仅当必要字段都存在且不为 NaT 时才进行判断
+            if pd.notna(pre_date) and pd.notna(actual_date):
+                pre_date_obj = (
+                    pre_date.date() if hasattr(pre_date, "date") else pre_date
+                )
+                actual_date_obj = (
+                    actual_date.date() if hasattr(actual_date, "date") else actual_date
+                )
+
+                # 【条件1】计划披露日期与当前交易日的差异 <= 4 天
+                # 这里至少需要4天，周末两天，再加上买卖各一天。
+                date_diff = abs((pre_date_obj - trade_date_obj).days)
+                cond1 = date_diff <= 4
+
+                # 【条件2】计划披露日期位于4月下旬（4月21-30日）
+                cond2 = pre_date_obj.month == 4 and 21 <= pre_date_obj.day <= 30
+
+                # 【条件3】当前交易日 < 实际发布日期
+                cond3 = trade_date_obj < actual_date_obj
+
+                # 全部条件都满足则置为 True
+                flag = cond1 and cond2 and cond3
+
+            result_data.append({"ts_code": ts_code, "flag": flag})
+
+        # 4. 构造返回 DataFrame
+        result_df = pd.DataFrame(result_data)
+        if not result_df.empty:
+            # 类型转换（兼容 HDF5 Fixed 模式）
+            result_df["ts_code"] = result_df["ts_code"].astype(str).str.slice(0, 12)
+            result_df["flag"] = result_df["flag"]
+        else:
+            # 保证列类型一致
+            result_df["ts_code"] = result_df["ts_code"]
+            result_df["flag"] = result_df["flag"]
+
+        return result_df
+
+    def _st_data(self, trade_date: str, fields: Optional[list] = None) -> pd.DataFrame:
+        """
+        融合 namechange 和 stock_st 生成可靠的 ST 标记
+
+        【核心策略】
+        - 查询 [prev_trade_date, trade_date] 内的 namechange 记录
+        - 名称規則：包含"st"(忽视大小写) | 以"退" | 以"退市" → is_st=True
+        - 融合优先级：namechange 规则结果 > stock_st 的 is_st 字段
+        - 处理缓存和日志由 _sync_single_day_bundle 统一管理
+
+        参数:
+            trade_date: YYYYMMDD 格式的交易日期字符串
+            fields: 忽略（兼容 API 调用签名）
+
+        返回：DataFrame with columns {ts_code, is_st}
+        """
+        # 1. 转换日期格式并获取前一个交易日
+        trade_date_obj = datetime.strptime(trade_date, "%Y%m%d").date()
+        prev_trade_date = self.calendar.offset(trade_date_obj, -1)
+        prev_date_str = prev_trade_date.strftime("%Y%m%d")
+
+        # 2. 查询 namechange [prev_date_str, trade_date] 的名称变更记录
+        df_namechange = None
+        try:
+            self.rate_limiter.wait()
+            df_namechange = self.pro.namechange(
+                start_date=prev_date_str,
+                end_date=trade_date,
+                fields=["ts_code", "name", "change_reason"],
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ namechange 查询异常 ({prev_date_str}~{trade_date}): {e}")
+
+        # 3. 查询 stock_st (trade_date) 的官方 ST 股票列表
+        # stock_st 返回的列表本身就代表 ST 股票，无需 is_st 字段
+        df_stock_st = None
+        try:
+            self.rate_limiter.wait()
+            df_stock_st = self.pro.stock_st(trade_date=trade_date, fields=["ts_code"])
+        except Exception as e:
+            logger.warning(f"⚠️ stock_st 查询异常 ({trade_date}): {e}")
+
+        # 4. 融合两个数据源
+        return self._merge_st_sources(df_namechange, df_stock_st)
+
+    def _extract_st_from_names(self, df: pd.DataFrame) -> dict:
+        """
+        从名称字段和变更原因提取 ST 标记
+
+        规则：
+        1. 名称包含"st"(任意大小写) | 以"退" | 以"退市" → True
+        2. change_reason == "终止上市" → True (退市标记)
+
+        返回：{ts_code: is_st} 字典
+        """
+        if df is None or df.empty or "name" not in df.columns:
+            return {}
+
+        result = {}
+        for _, row in df.iterrows():
+            ts_code = row["ts_code"]
+            name = str(row.get("name", "")).strip()
+            change_reason = str(row.get("change_reason", "")).strip()
+
+            # 名称规则检查
+            is_st_from_name = (
+                "st" in name.lower()
+                or name.endswith("退")
+                or name.endswith("退市")
+                or name.startswith("退市")
+            )
+
+            # 退市原因检查
+            is_delisted = change_reason == "终止上市"
+
+            is_st = is_st_from_name or is_delisted
+            result[ts_code] = is_st
+
+        return result
+
+    def _merge_st_sources(
+        self, df_namechange: Optional[pd.DataFrame], df_stock_st: Optional[pd.DataFrame]
+    ) -> pd.DataFrame:
+        """
+        融合 namechange 和 stock_st 的 ST 标记
+
+        融合策略：取并集
+        - 如果 namechange 中 ts_code 满足 ST 规则 → is_st=True
+        - 或者 ts_code 出现在 stock_st 列表中 → is_st=True
+        - 否则 → is_st=False
+
+        注意：stock_st API 返回的列表本身就代表 ST 股票，无需 is_st 字段
+
+        返回：DataFrame with columns {ts_code, is_st}
+        """
+        # 提取两个数据源中识别为 ST 的 ts_code
+        st_codes_from_namechange = set()
+        st_dict = self._extract_st_from_names(df_namechange)
+        st_codes_from_namechange = {code for code, is_st in st_dict.items() if is_st}
+
+        # stock_st 返回的所有 ts_code 都代表 ST 股票
+        st_codes_from_stock_st = set()
+        if df_stock_st is not None and not df_stock_st.empty:
+            st_codes_from_stock_st = set(df_stock_st["ts_code"].values)
+
+        # 并集：两个数据源中满足 ST 条件的所有 ts_code
+        all_st_codes = st_codes_from_namechange | st_codes_from_stock_st
+
+        # 获取所有涉及的 ts_code（包括两个数据源中的所有股票）
+        all_codes = st_dict.keys() | st_codes_from_stock_st
+
+        result_data = []
+        for ts_code in sorted(all_codes):
+            # 并集策略：任一来源认为是 ST 就标记为 True
+            is_st = ts_code in all_st_codes
+
+            result_data.append({"ts_code": ts_code, "is_st": is_st})
+
+        result_df = pd.DataFrame(result_data)
+
+        # 类型转换（兼容 HDF5 Fixed 模式）
+        if not result_df.empty:
+            result_df["ts_code"] = result_df["ts_code"].str.slice(0, 12).astype("S12")
+            result_df["is_st"] = result_df["is_st"].astype(bool)
+
+        return result_df
 
     def _sync_single_day_bundle(self, trade_date: date, idx: int, total: int) -> None:
         date_str = trade_date.strftime("%Y%m%d")
@@ -186,7 +449,16 @@ class TushareDataService:
                 self.pro.suspend_d,
                 {"ts_code": "string", "suspend_type": "string"},
             ),
-            ("st", self.pro.stock_st, {"ts_code": "string", "is_st": "string"}),
+            (
+                "st",
+                self._st_data,
+                {"ts_code": "string", "is_st": "boolean"},
+            ),
+            (
+                "disclosure",
+                self._disclosure,
+                {"ts_code": "string", "flag": "boolean"},
+            ),
         ]
 
         for source, api_func, fields_schema in tasks:
@@ -204,11 +476,14 @@ class TushareDataService:
                     continue
 
                 # 💡 2. 强转类型：仅为兼容 Fixed 模式和内存优化
-                # 此时 df 已经没有冗余日期列了
                 for col, dtype in fields_schema.items():
                     if col in df.columns:
                         if dtype == "string":
-                            df[col] = df[col].fillna("").astype(str).astype("S12")
+                            df[col] = df[col].fillna("").astype(str)
+                            if col == "ts_code":
+                                df[col] = df[col].str.slice(0, 12).astype("S12")
+                        elif dtype == "boolean":
+                            df[col] = df[col].astype(bool)
                         else:
                             df[col] = pd.to_numeric(df[col], errors="coerce").astype(
                                 dtype
@@ -258,7 +533,7 @@ class TushareDataService:
             try:
                 # 使用 daily_basic 接口，只获取 1 条记录检查数据可用性
                 self.rate_limiter.wait()
-                df = self.pro.daily_basic(trade_date=date_str, limit=1)
+                df = self.pro.bak_basic(trade_date=date_str, limit=1)
 
                 # 如果返回不为空，说明该日有数据
                 if df is not None and not df.empty:

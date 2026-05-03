@@ -3,7 +3,7 @@ from typing import Union, Dict
 import polars as pl
 from loguru import logger
 
-from alpha_factory.utils.schema import F
+from alpha_factory.utils.schema import F, RANK_SENTINEL
 
 
 def backtest_periodic_rebalance(
@@ -42,7 +42,7 @@ def backtest_periodic_rebalance(
             .otherwise(None)
             .rank(descending=not ascending, method="random")
             .over(F.DATE)
-            .fill_null(999999)
+            .fill_null(RANK_SENTINEL)
             .alias("RANK")
         ]
     )
@@ -161,7 +161,7 @@ def backtest_periodic_rebalance(
         # C. 处理新股票买入
         potential_buys = [a for a in target_holdings if a not in new_holdings]
         potential_buys.sort(
-            key=lambda x: day_info[x]["RANK"] if x in day_info else 999999
+            key=lambda x: day_info[x]["RANK"] if x in day_info else RANK_SENTINEL
         )
 
         for asset in potential_buys:

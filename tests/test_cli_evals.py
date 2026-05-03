@@ -334,8 +334,8 @@ def test_evals_default_quality_filter(tmp_path: Path):
             "ic_mean_abs": [0.02, 0.01],
             "ic_ir": [0.3, 0.2],
             "ic_ir_abs": [0.3, 0.2],
-            "ann_ret": [0.19, 0.12],
-            "sharpe": [0.9, 0.8],
+            "ann_ret": [0.10, 0.08],
+            "sharpe": [0.3, 0.2],
             "turnover_est": [0.30, 0.25],
             "direction": [1, 1],
         }
@@ -451,3 +451,90 @@ def test_evals_batch_size_chunking():
     assert mocked_metrics.call_count == 2
     assert mocked_metrics.call_args_list[0].kwargs["factors"] == ["f1", "f2"]
     assert mocked_metrics.call_args_list[1].kwargs["factors"] == ["f3"]
+
+
+# ── 测试：--overlap-topn ──────────────────────────────────────────────────────
+
+MOCK_OVERLAP_DF = pl.DataFrame(
+    {
+        "factor_a": ["factor1"],
+        "factor_b": ["factor2"],
+        "hit_rate": [0.42],
+    }
+)
+
+
+def test_evals_overlap_topn_two_factors():
+    """--overlap-topn N 输出重合度表格。"""
+    dp_ctx, bm_ctx = _patch_dp_and_metrics()
+    with (
+        dp_ctx,
+        bm_ctx,
+        patch(
+            "alpha_factory.cli.evals.batch_topn_overlap",
+            return_value=MOCK_OVERLAP_DF,
+        ) as mock_overlap,
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "evals",
+                "-s",
+                "20220101",
+                "--expr",
+                "factor1=ts_mean(AMOUNT,40)",
+                "--expr",
+                "factor2=rank(CLOSE)",
+                "--overlap-topn",
+                "50",
+                "--min-sharpe",
+                "0",
+                "--min-ann-ret",
+                "0",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    mock_overlap.assert_called_once()
+    # 验证传入的 topn 参数
+    assert (
+        mock_overlap.call_args.args[2] == 50
+        or mock_overlap.call_args.kwargs.get("topn") == 50
+    )
+    assert "重合度" in result.output
+
+
+def test_evals_overlap_topn_single_factor_warns():
+    """仅 1 个因子时，--overlap-topn 输出警告提示。"""
+    single_result = pl.DataFrame(
+        {
+            "factor": ["factor1"],
+            "ic_mean": [0.045],
+            "ic_mean_abs": [0.045],
+            "ic_ir": [0.72],
+            "ic_ir_abs": [0.72],
+            "ann_ret": [0.28],
+            "sharpe": [1.5],
+            "turnover_est": [0.30],
+            "direction": [1],
+        }
+    )
+    dp_ctx, bm_ctx = _patch_dp_and_metrics(single_result)
+    with dp_ctx, bm_ctx:
+        result = runner.invoke(
+            app,
+            [
+                "evals",
+                "-s",
+                "20220101",
+                "--expr",
+                "factor1=ts_mean(AMOUNT,40)",
+                "--overlap-topn",
+                "50",
+                "--min-sharpe",
+                "0",
+                "--min-ann-ret",
+                "0",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    assert "至少需要 2 个因子" in result.output

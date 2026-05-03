@@ -9,7 +9,11 @@
 
 """
 
+from datetime import date
+from typing import List, TYPE_CHECKING
+
 import polars as pl
+from polars_ols.least_squares import OLSKwargs
 
 from alpha_factory.config.base import settings
 from alpha_factory.data_provider.label import (
@@ -17,7 +21,13 @@ from alpha_factory.data_provider.label import (
     label_OO_for_tradable,
     label_CC_for_tradable,
 )
-from alpha_factory.utils.schema import F
+from alpha_factory.utils.schema import F, RANK_SENTINEL
+
+if TYPE_CHECKING:
+    from alpha_factory.data_provider.benchmark import Benchmark
+
+
+_ols_kwargs = OLSKwargs(null_policy="drop", solve_method="svd")
 
 
 class PoolUniverse:
@@ -61,6 +71,53 @@ class PoolUniverse:
     def pool_dir(self):
         return settings.OUTPUT_DIR / self.name
 
+    def buy_able(self, lf: pl.LazyFrame, exprs: List) -> pl.LazyFrame:
+        """
+        定义一个 buy_able 方法，返回一个布尔表达式，表示哪些股票在当前日期是可以买入的。
+        这个方法可以被回测引擎调用，用于生成每日的买入信号。
+        例如，可以定义为：可交易（非停牌、非ST、上市超过180天）且不在涨跌停状态的股票。
+        """
+        return lf
+
+    def join_benchmark(
+        self,
+        lf: pl.LazyFrame,
+        benchmark: "Benchmark",
+        start_date: date,
+        end_date: date,
+        col_name: str = "BENCH_RET",
+    ) -> pl.LazyFrame:
+        """将基准数据 join 到因子表中，作为虚拟列参与因子表达式计算
+
+        基准数据按 DATE 进行左join，与所有 ASSET 进行笛卡尔广播。
+        这样因子表达式可以引用 BENCH_RET 进行相对收益率、信息比等计算。
+
+        Args:
+            lf: 包含 DATE 列的因子 LazyFrame
+            benchmark: Benchmark 实例
+            start_date: 基准数据开始日期
+            end_date: 基准数据结束日期
+            col_name: 基准收益率列名，默认 "BENCH_RET"
+
+        Returns:
+            join 后的 LazyFrame，新增 col_name 列
+
+        Examples:
+            >>> pool = MainSmallPool()
+            >>> from alpha_factory.data_provider.benchmarks import HS300Benchmark
+            >>> bench = HS300Benchmark()
+            >>> lf = dp.load_pool_data(pool, "20240101", "20240131")
+            >>> lf = pool.join_benchmark(lf, bench, start_date, end_date)
+            >>> # 现在表达式可以使用 BENCH_RET
+            >>> lf = dp.build_factors_view(
+            ...     pool, lf, exprs=["excess_ret = RET - BENCH_RET"], ...
+            ... )
+        """
+        bench_lf = benchmark.load_returns(start_date, end_date).rename(
+            {"ret": col_name}
+        )
+        return lf.join(bench_lf, on="DATE", how="left")
+
 
 class MainSmallPool(PoolUniverse):
     @property
@@ -72,8 +129,17 @@ class MainSmallPool(PoolUniverse):
             F.POOL_MASK,
             F.OPEN,
             F.CLOSE,
+            F.CLOSE_RAW,
             F.HIGH,
             F.LOW,
+            F.AMOUNT,
+            F.TOTAL_MV,
+            F.VOLUME,
+            "ILLIQ",
+            "LIST_DAYS",
+            "IS_ST",
+            # "CLOSE_RAW_MA60",
+            F.CIRC_MV,
             F.TURNOVER_RATE,
             F.VWAP,
             F.RET,
@@ -84,10 +150,14 @@ class MainSmallPool(PoolUniverse):
             F.LABEL_FOR_IC,
             F.LABEL_FOR_RET,
             F.LABEL_FOR_RET_CC,
+            "MV_RANK",  # 市值截面排名，用于因子中性化
+            "LOG_MV",  # 市值对数，用于因子中性化
+            F.PE,  # 市盈率，交易时快照特征
+            F.PB,  # 市净率，交易时快照特征
         ]
 
     def pool(
-        self, lf: pl.LazyFrame, small_num: int = 800, production=False
+        self, lf: pl.LazyFrame, small_num: int = 400, production=False
     ) -> pl.LazyFrame:
         """
         定义一个"小市值股票池"，用于捕捉小盘股效应，不可用于生产环境，仅供研究参考。
@@ -136,6 +206,7 @@ class MainSmallPool(PoolUniverse):
             & ~pl.col("ASSET").str.starts_with("688")
             & ~pl.col("ASSET").str.starts_with("8")
             & ~pl.col("ASSET").str.starts_with("4")
+            & ~pl.col("IS_SUSPENDED")
         )
 
         if production is False:
@@ -161,35 +232,37 @@ class MainSmallPool(PoolUniverse):
         # 排名质量保证：仅对可交易股票计算市值排名（非可交易股票的 TOTAL_MV 置 None），
         # polars rank 将 None 排到最末，fill_null(999999) 确保其 POOL_MASK=False。
         # 这与之前"先过滤再排名"的效果等价，但保留了完整的行数据供时序使用。
+
+        # CLOSE_RAW_MA60 已由 extra_cols() 在前序环节生成
         tradable = (
             ~pl.col("IS_ST")
             & ~pl.col("IS_SUSPENDED")
             & (pl.col("LIST_DAYS") >= 180)
-            & ~pl.col("IS_UP_LIMIT")
-            & ~pl.col("IS_DOWN_LIMIT")
+            # & ~pl.col("IS_UP_LIMIT")
+            # & ~pl.col("IS_DOWN_LIMIT")
+            # & (pl.col("CLOSE_RAW_MA60") > 2)
+            & ~pl.col(F.APRIL_DISCLOSURE_SIGNAL)
+            # & (pl.col("BIAS20") < 0.25)
         )
 
-        return (
-            lf.with_columns(
+        result = (
+            lf.sort([F.ASSET, F.DATE])
+            .with_columns(
                 [
-                    # 仅对可交易股票参与市值排名；不可交易的置 None → 排到最末
                     pl.when(tradable)
                     .then(pl.col("TOTAL_MV"))
                     .otherwise(None)
                     .rank("ordinal")
                     .over(F.DATE)
-                    .fill_null(999999)
+                    .fill_null(RANK_SENTINEL)
                     .alias("mv_rank")
                 ]
             )
-            .with_columns(
-                [
-                    # 可交易 + 市值前 small_num 名 → 入池
-                    (pl.col("mv_rank") <= small_num).alias(F.POOL_MASK)
-                ]
-            )
+            .with_columns([(pl.col("mv_rank") <= small_num).alias(F.POOL_MASK)])
             .drop(["mv_rank"])
         )
+
+        return result
 
     def extra_cols(self, lf: pl.LazyFrame) -> pl.LazyFrame:
         return (
@@ -205,20 +278,26 @@ class MainSmallPool(PoolUniverse):
                     (pl.col("VWAP") / pl.col("VWAP").shift(1) - 1)
                     .over(F.ASSET)
                     .alias("VWAP_RET"),
+                    pl.col(F.CLOSE_RAW)
+                    .rolling_mean(window_size=60)
+                    .over(F.ASSET)
+                    .fill_null(1.0)
+                    .alias("CLOSE_RAW_MA60"),
+                    # 添加市值截面排名，用于因子市值中性化
+                    pl.col(F.TOTAL_MV).rank("ordinal").over(F.DATE).alias("MV_RANK"),
                 ]
             )
             .with_columns(
                 [
                     # 直接复用上面算好的 RET，减少计算量
-                    (pl.col("RET").abs() / pl.col("AMOUNT") * 1e6).alias("ILLIQ")
+                    (pl.col("RET").abs() / pl.col("AMOUNT") * 1e6).alias("ILLIQ"),
+                    (
+                        pl.col(F.CLOSE)
+                        / pl.col(F.CLOSE).rolling_mean(window_size=20).over(F.ASSET)
+                        - 1
+                    ).alias("BIAS20"),
                 ]
             )
             # 建议只在 collect 之后或必要时填充，或者使用这种方式：
             .fill_nan(None)
         )
-
-
-def main_small_pool(
-    lf: pl.LazyFrame, small_num: int = 800, production=False
-) -> pl.LazyFrame:
-    return lf

@@ -1,0 +1,26 @@
+#20日周期（短周期）
+Variance20 = ts_var(ts_returns(CLOSE, 1), 20) * 252
+
+Skewness20 = ts_skewness(ts_returns(CLOSE, 1), 20)
+
+Kurtosis20 = ts_kurtosis(ts_returns(CLOSE, 1), 20)
+
+sharpe_ratio_20 = (ts_mean(ts_returns(CLOSE, 1), 20) * 252 - 0.04) / (ts_std_dev(ts_returns(CLOSE, 1), 20) * sqrt(252))
+
+#60日周期（中周期）
+Variance60 = ts_var(ts_returns(CLOSE, 1), 60) * 252
+
+Skewness60 = ts_skewness(ts_returns(CLOSE, 1), 60)
+
+Kurtosis60 = ts_kurtosis(ts_returns(CLOSE, 1), 60)
+
+sharpe_ratio_60 = (ts_mean(ts_returns(CLOSE, 1), 60) * 252 - 0.04) / (ts_std_dev(ts_returns(CLOSE, 1), 60) * sqrt(252))
+
+#120日周期（长周期）
+Variance120 = ts_var(ts_returns(CLOSE, 1), 120) * 252
+
+Skewness120 = ts_skewness(ts_returns(CLOSE, 1), 120)
+
+Kurtosis120 = ts_kurtosis(ts_returns(CLOSE, 1), 120)
+
+sharpe_ratio_120 = (ts_mean(ts_returns(CLOSE, 1), 120) * 252 - 0.04) / (ts_std_dev(ts_returns(CLOSE, 1), 120) * sqrt(252))

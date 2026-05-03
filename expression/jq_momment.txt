@@ -1,0 +1,63 @@
+#阿隆与乖离率类
+arron_up_25 = (25 - ts_arg_max(HIGH, 26)) / 25 * 100
+
+arron_down_25 = (25 - ts_arg_min(LOW, 26)) / 25 * 100
+
+BBI = (ts_mean(CLOSE, 3) + ts_mean(CLOSE, 6) + ts_mean(CLOSE, 12) + ts_mean(CLOSE, 24)) / 4 / CLOSE
+
+BIAS5 = (CLOSE - ts_mean(CLOSE, 5)) / ts_mean(CLOSE, 5) * 100
+
+BIAS10 = (CLOSE - ts_mean(CLOSE, 10)) / ts_mean(CLOSE, 10) * 100
+
+BIAS20 = (CLOSE - ts_mean(CLOSE, 20)) / ts_mean(CLOSE, 20) * 100
+
+BIAS60 = (CLOSE - ts_mean(CLOSE, 60)) / ts_mean(CLOSE, 60) * 100
+
+#多空力道与顺势指标
+bear_power = (LOW - ts_decay_exp_window(CLOSE, 13)) / CLOSE
+
+bull_power = (HIGH - ts_decay_exp_window(CLOSE, 13)) / CLOSE
+
+CCI10 = ((HIGH + LOW + CLOSE) / 3 - ts_mean((HIGH + LOW + CLOSE) / 3, 10)) / (0.015 * ts_mean(abs_((HIGH + LOW + CLOSE) / 3 - ts_mean((HIGH + LOW + CLOSE) / 3, 10)), 10))
+
+CCI15 = ((HIGH + LOW + CLOSE) / 3 - ts_mean((HIGH + LOW + CLOSE) / 3, 15)) / (0.015 * ts_mean(abs_((HIGH + LOW + CLOSE) / 3 - ts_mean((HIGH + LOW + CLOSE) / 3, 15)), 15))
+
+CCI20 = ((HIGH + LOW + CLOSE) / 3 - ts_mean((HIGH + LOW + CLOSE) / 3, 20)) / (0.015 * ts_mean(abs_((HIGH + LOW + CLOSE) / 3 - ts_mean((HIGH + LOW + CLOSE) / 3, 20)), 20))
+
+CCI88 = ((HIGH + LOW + CLOSE) / 3 - ts_mean((HIGH + LOW + CLOSE) / 3, 88)) / (0.015 * ts_mean(abs_((HIGH + LOW + CLOSE) / 3 - ts_mean((HIGH + LOW + CLOSE) / 3, 88)), 88))
+
+#能量与回归类
+CR20 = ts_sum(max_(0, HIGH - ts_delay((ts_delay(HIGH, 1) + ts_delay(LOW, 1)) / 2, 1)), 20) / ts_sum(max_(0, ts_delay((ts_delay(HIGH, 1) + ts_delay(LOW, 1)) / 2, 1) - LOW), 20) * 100
+
+MASS = ts_sum(ts_decay_exp_window(HIGH - LOW, 9) / ts_decay_exp_window(ts_decay_exp_window(HIGH - LOW, 9), 9), 25)
+
+PLRC6 = ts_regression_slope(CLOSE / ts_mean(CLOSE, 6), nrange(1, 7), 6)
+
+PLRC12 = ts_regression_slope(CLOSE / ts_mean(CLOSE, 12), nrange(1, 13), 12)
+
+PLRC24 = ts_regression_slope(CLOSE / ts_mean(CLOSE, 24), nrange(1, 25), 24)
+
+#价格排名与收益率类
+fifty_two_week_close_rank = ts_rank(CLOSE, 250)
+Price1M = CLOSE / ts_mean(CLOSE, 21) - 1
+Price3M = CLOSE / ts_mean(CLOSE, 61) - 1
+Price1Y = CLOSE / ts_mean(CLOSE, 250) - 1
+Rank1M = 1 - cs_rank(ts_returns(CLOSE, 20))
+ROC6 = ts_returns(CLOSE, 6) * 100
+ROC12 = ts_returns(CLOSE, 12) * 100
+ROC20 = ts_returns(CLOSE, 20) * 100
+ROC60 = ts_returns(CLOSE, 60) * 100
+ROC120 = ts_returns(CLOSE, 120) * 100
+
+#价量趋势与终极指标
+single_day_VPT = ts_returns(CLOSE, 1) * VOLUME
+
+single_day_VPT_6 = ts_mean(ts_returns(CLOSE, 1) * VOLUME, 6)
+
+single_day_VPT_12 = ts_mean(ts_returns(CLOSE, 1) * VOLUME, 12)
+
+TRIX5 = ts_returns(ts_decay_exp_window(ts_decay_exp_window(ts_decay_exp_window(CLOSE, 5), 5), 5), 1) * 100
+
+TRIX10 = ts_returns(ts_decay_exp_window(ts_decay_exp_window(ts_decay_exp_window(CLOSE, 10), 10), 10), 1) * 100
+
+Volume1M = (VOLUME / ts_mean(VOLUME, 20)) * ts_mean(ts_returns(CLOSE, 1), 20)

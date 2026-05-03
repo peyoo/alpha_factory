@@ -64,7 +64,10 @@ def cs_rank_mask(
 def cs_demean_mask(
     x: pl.Expr, mask: pl.Expr = pl.col(F.POOL_MASK), fill_null=0.0
 ) -> pl.Expr:
-    """截面去均值：x - mean(x_in_pool)"""
+    """
+    截面去均值：x - mean(x_in_pool)
+
+    """
     if mask is None:
         mask = pl.lit(True)
     x_in_pool = when(mask).then(x).otherwise(None)
@@ -80,7 +83,11 @@ def cs_demean_mask(
 def cs_qcut_mask(
     x: pl.Expr, n_bins: int = 10, mask: pl.Expr = pl.col(F.POOL_MASK), fill_null=0.0
 ) -> pl.Expr:
-    """截面等频分箱：将池内数据映射到 [0, n_bins-1]"""
+    """
+
+    截面等频分箱：将池内数据映射到 [0, n_bins-1]
+
+    """
     # 逻辑同 rank，因为 qcut 本质上是对 rank 的切分
     if mask is None:
         mask = pl.lit(True)

@@ -16,6 +16,7 @@ dependencies = [
     "numba==0.58.1",      # 锁定 0.58.1 以确保 Mac 3.11 下的二进制兼容
     "llvmlite==0.41.1",   # 对应 Numba 0.58.1 的编译器引擎
     "polars-ta>=0.1.0",
+    "polars-ds>=0.10.0",
     "numpy<2.0.0",         # 必须锁定 1.x 版本，Numba 0.58 不支持 NumPy 2.0
     "pandas>=2.0.0",
     "tushare>=1.2.89",
@@ -35,6 +36,9 @@ dependencies = [
     "pydantic~=2.11.7",
     "quantstats~=0.0.81",
     "expr-codegen>=0.16.4",
+    "optuna>=3.0.0",
+    "ruamel.yaml>=0.18.0",
+    "shap>=0.44.0",
 ]
 
 [project.scripts]

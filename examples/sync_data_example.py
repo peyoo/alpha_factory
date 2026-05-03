@@ -16,6 +16,7 @@
 
 import os
 from alpha_factory.data_provider import TushareDataService, DataProvider
+from alpha_factory.data_provider.pool import MainSmallPool
 
 # ========== Step 2: 初始化服务 ==========
 service = None
@@ -61,11 +62,11 @@ service.daily_update()
 # ========== Step 5: 读取数据 ==========
 
 print("读取数据...")
-lf = provider.load_data(
+lf = provider.load_pool_data(
+    pool=MainSmallPool(),
     start_date="20240101",
     end_date="20241231",
-    columns=["CLOSE", "VOLUME", "pe", "pct_change"],
-    exclude_suspended=True,  # 排除停牌
+    exprs=["RET_1D = CLOSE / CLOSE.shift(1) - 1"],
 )
 
 # 返回 pl.LazyFrame (未执行，允许查询优化)

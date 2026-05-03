@@ -65,9 +65,14 @@ class F(str, Enum):
 
     LABEL_FOR_IC = "LABEL_FOR_IC"
     LABEL_FOR_RET = "LABEL_FOR_RET"
+    APRIL_DISCLOSURE_SIGNAL = "APRIL_DISCLOSURE_SIGNAL"
     # close-to-close 收益标签：close[T+2]/close[T+1]-1
     # 与 LABEL_FOR_RET 时序一致，但对续持股票可直接链式累加，消除每日开盘重置偏差
     LABEL_FOR_RET_CC = "LABEL_FOR_RET_CC"
+
+
+# 回测中用于填充池外标的/空值的排名哨兵值（保持池外标的排在最后）
+RANK_SENTINEL: int = 999999
 
 
 class DataSchema:

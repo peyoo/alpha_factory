@@ -1,7 +1,7 @@
 from typing import Union, Dict
 import polars as pl
 from loguru import logger
-from alpha_factory.utils.schema import F
+from alpha_factory.utils.schema import F, RANK_SENTINEL
 
 
 def backtest_daily_evolving(
@@ -14,15 +14,29 @@ def backtest_daily_evolving(
     ascending: bool = False,
 ) -> Dict[str, pl.DataFrame]:
     """
-    逐日演进回测框架 (精准收益捕捉版)
-    1. 收益闭环：捕捉了买入当天 (Exec -> Close) 和 卖出当天 (Prev_Close -> Exec) 的收益。
-    2. 信号对齐：确保 T 日信号在 T+1 日准时执行。
+    逐日演进回测框架 (基金净值版 · 无限可拆分)
+
+    执行时序 (每个交易日 T+1)：
+      1. 执行前日生成的 sell_orders（持仓中排名超出 sell_rank 的标的）
+      2. 执行前日生成的 buy_orders（排名在 n_buy 内的新标的）
+      3. 以当日收盘价对全部持仓估值，计算组合净值
+      4. 根据当日排名为明日生成新的 sell_orders / buy_orders
+
+    基金净值计算（无限可拆分假设）：
+      - 不追踪股数 units，直接以 pos_val（持仓现值）管理每只标的的仓位
+      - 建仓：pos_val = pf_val_prev / n_buy，last_price = exec_price
+      - 每日估值：pos_val *= close_p / last_price，并更新 last_price = close_p
+      - 卖出：proceeds = pos_val * exec_price / last_price，回收为现金
+      - 总市值 pf_val = Σ pos_val_i + cash
+      - 交易费用 = turnover × cost_rate × 前日净值，从现金中扣除
     """
 
-    # --- 1. 数据预处理 ---
-    lf = df_input.lazy() if isinstance(df_input, pl.LazyFrame) else df_input.lazy()
+    logger.info(f"📊 回测参数 | 因子: {factor_col} | 买入数量")
 
-    # 预计算排名 (T日收盘产生信号)
+    # --- 1. 数据预处理 ---
+    lf = df_input if isinstance(df_input, pl.LazyFrame) else df_input.lazy()
+
+    # 预计算排名（T 日收盘产生信号，T+1 日执行）
     lf = lf.with_columns(
         [
             pl.when(pl.col(F.POOL_MASK))
@@ -30,12 +44,11 @@ def backtest_daily_evolving(
             .otherwise(None)
             .rank(descending=not ascending, method="random")
             .over(F.DATE)
-            .fill_null(999999)
+            .fill_null(RANK_SENTINEL)
             .alias("RANK")
         ]
     )
 
-    # 采集核心字段：增加 F.CLOSE 用于计算买入当日收盘后的估值
     final_cols = [
         F.DATE,
         F.ASSET,
@@ -46,15 +59,23 @@ def backtest_daily_evolving(
         F.IS_DOWN_LIMIT,
         F.IS_SUSPENDED,
     ]
+    # lf = lf.filter((pl.col("RANK") <= sell_rank + 100) | (pl.col("RANK") == 999999))
     df = lf.select(final_cols).collect()
 
     all_dates = df.get_column(F.DATE).unique().sort().to_list()
     grouped = df.partition_by(F.DATE, as_dict=True)
 
-    # --- 2. 状态维护 ---
-    current_holdings = {}  # {Asset: {"entry_price":..., "last_price":..., "entry_date":..., "entry_idx":...}}
-    must_hold_list = set()
-    can_hold_list = set()
+    # --- 2. 组合状态 ---
+    # holdings: {asset: {pos_val, last_price, entry_price, entry_date, entry_idx}}
+    #   pos_val    — 持仓现值（基金货币单位），随价格每日更新
+    #   last_price — 最近一次已知价格，用于计算涨跌幅
+    holdings: dict = {}
+    cash: float = 1.0  # 闲置资金（初始全部为现金，fund_value = 1.0）
+    pf_val: float = 1.0  # 组合总市值 = 基金净值，从 1.0 起步
+
+    # 前日生成、当日执行的订单（T 日信号 → T+1 日执行）
+    sell_orders: set = set()  # 平仓标的集合
+    buy_orders: list = []  # 建仓标的列表（已按排名升序排列）
 
     daily_records = []
     trades_records = []
@@ -67,126 +88,189 @@ def backtest_daily_evolving(
     for i, curr_dt in enumerate(all_dates):
         day_df = grouped.get((curr_dt,))
         if day_df is None:
+            # 当日无数据，持仓与净值不变
             daily_records.append(
                 {
                     F.DATE: curr_dt,
                     "RAW_RET": 0.0,
+                    "NET_RET": 0.0,
                     "TURNOVER": 0.0,
-                    "COUNT": len(current_holdings),
+                    "COUNT": len(holdings),
+                    "NAV": pf_val,
                 }
             )
             continue
 
         day_info = {row[F.ASSET]: row for row in day_df.to_dicts()}
-
-        new_holdings = {}
+        pf_val_prev = pf_val
         num_bought = 0
         num_sold = 0
-        day_raw_ret = 0.0
 
-        # A. 交易执行与收益计算 (T+1日)
+        # ================================================================
+        # STEP 1: 执行卖出订单（来自前日信号）
+        # ================================================================
+        for asset in list(sell_orders):
+            hold = holdings.get(asset)
+            if hold is None:
+                logger.error(f"卖出标的 {asset} 在 {curr_dt} 不在持仓中，跳过")
+                continue
 
-        # 1. 先处理原有持仓的卖出与持仓收益
-        for asset, hold_info in current_holdings.items():
             info = day_info.get(asset)
-            if not info:
-                # 停牌无数据，收益为0，保留状态
-                new_holdings[asset] = hold_info
+            if info is None:
+                logger.warning(
+                    f"卖出标的 {asset} 在 {curr_dt} 无数据（停牌），继续持有"
+                )
                 continue
 
-            price_today_exec = info[exec_price]
-            price_yesterday_close = hold_info["last_price"]
-
-            # 价格为 null（真实停牌/数据缺失）：跳过收益计算，保留持仓
-            if price_today_exec is None or price_yesterday_close is None:
-                new_holdings[asset] = hold_info
+            exec_p = info.get(exec_price)
+            if exec_p is None:
+                logger.warning(f"卖出标的 {asset} 在 {curr_dt} 执行价为 null，继续持有")
                 continue
 
-            # 无论卖不卖，都要计算从“昨收”到“今日执行价”的收益贡献
-            day_raw_ret += ((price_today_exec / price_yesterday_close) - 1) / n_buy
+            if info[F.IS_SUSPENDED]:
+                logger.info(f"标的 {asset} 在 {curr_dt} 停牌，无法卖出，顺延至下一日")
+                continue
+            if info[F.IS_DOWN_LIMIT]:
+                logger.info(f"标的 {asset} 在 {curr_dt} 跌停，无法卖出，顺延至下一日")
+                continue
 
-            # 判定卖出信号
-            if asset not in must_hold_list and asset not in can_hold_list:
-                if info[F.IS_DOWN_LIMIT] or info[F.IS_SUSPENDED]:
-                    # 卖不掉，更新价格继续持有（防止 close 为 null）
-                    new_close = info[F.CLOSE]
-                    if new_close is not None:
-                        day_raw_ret += ((new_close / price_today_exec) - 1) / n_buy
-                        hold_info["last_price"] = new_close
-                    else:
-                        hold_info["last_price"] = price_today_exec
-                    new_holdings[asset] = hold_info
-                else:
-                    # 成功卖出：记录闭环交易
-                    trades_records.append(
-                        {
-                            F.ASSET: asset,
-                            "entry_date": hold_info["entry_date"],
-                            "exit_date": curr_dt,
-                            "entry_price": hold_info["entry_price"],
-                            "exit_price": price_today_exec,
-                            "pnl_ret": price_today_exec / hold_info["entry_price"] - 1,
-                            "holding_periods": i - hold_info["entry_idx"],
-                        }
-                    )
-                    num_sold += 1
-            else:
-                # 继续持有：累加“执行价到今日收盘”的收益（防止 close 为 null）
-                new_close = info[F.CLOSE]
-                if new_close is not None:
-                    day_raw_ret += ((new_close / price_today_exec) - 1) / n_buy
-                    hold_info["last_price"] = new_close
-                else:
-                    hold_info["last_price"] = price_today_exec
-                new_holdings[asset] = hold_info
+            # 成功卖出：以执行价折算当前持仓现值，回收为现金
+            proceeds = hold["pos_val"] * exec_p / hold["last_price"]
+            cash += proceeds
+            trades_records.append(
+                {
+                    F.ASSET: asset,
+                    "entry_date": hold["entry_date"],
+                    "exit_date": curr_dt,
+                    "entry_price": hold["entry_price"],
+                    "exit_price": exec_p,
+                    "pnl_ret": exec_p / hold["entry_price"] - 1,
+                    "holding_periods": i - hold["entry_idx"],
+                }
+            )
+            del holdings[asset]
+            sell_orders.discard(asset)
+            num_sold += 1
 
-        # 2. 处理新标的买入
-        potential_buys = [a for a in must_hold_list if a not in new_holdings]
-        potential_buys.sort(
-            key=lambda x: day_info[x]["RANK"] if x in day_info else 999999
-        )
+        # ================================================================
+        # STEP 2: 执行买入订单（来自前日信号）
+        # ================================================================
+        for asset in buy_orders:
+            if len(holdings) >= n_buy:
+                break
+            if asset in holdings:
+                logger.error(f"买入标的 {asset} 在 {curr_dt} 已在持仓中，跳过")
+                continue
 
-        for asset in potential_buys:
-            if len(new_holdings) < n_buy:
-                info = day_info.get(asset)
-                if info and not (info[F.IS_UP_LIMIT] or info[F.IS_SUSPENDED]):
-                    price_buy_exec = info[exec_price]
-                    # 计算买入后到收盘的收益贡献
-                    day_raw_ret += ((info[F.CLOSE] / price_buy_exec) - 1) / n_buy
+            info = day_info.get(asset)
+            if info is None:
+                logger.error(f"买入标的 {asset} 在 {curr_dt} 无数据，无法建仓，跳过")
+                continue
 
-                    new_holdings[asset] = {
-                        "entry_date": curr_dt,
-                        "entry_price": price_buy_exec,
-                        "last_price": info[F.CLOSE],
-                        "entry_idx": i,
-                    }
-                    num_bought += 1
+            exec_p = info.get(exec_price)
+            if exec_p is None:
+                logger.error(
+                    f"买入标的 {asset} 在 {curr_dt} 执行价为 null，无法建仓，跳过"
+                )
+                continue
 
-        # B. 信号更新 (为明天 T+2 做准备)
-        must_hold_list = {a for a, info in day_info.items() if info["RANK"] <= n_buy}
-        can_hold_list = {
-            a for a, info in day_info.items() if n_buy < info["RANK"] <= sell_rank
+            if info[F.IS_UP_LIMIT] or info[F.IS_SUSPENDED]:
+                logger.info(
+                    f"标的 {asset} 在 {curr_dt} 涨停或停牌，无法买入，顺延至下一日"
+                )
+                continue
+
+            # 以前日净值的 1/n_buy 建仓，仓位直接以资金价值记录
+            alloc = pf_val_prev / n_buy
+            cash -= alloc
+
+            holdings[asset] = {
+                "pos_val": alloc,  # 持仓现值（随后每日随价格更新）
+                "last_price": exec_p,  # 建仓参考价，用于后续折算涨跌幅
+                "entry_price": exec_p,
+                "entry_date": curr_dt,
+                "entry_idx": i,
+            }
+            num_bought += 1
+
+        # ================================================================
+        # STEP 3: 以收盘价更新持仓估值，计算当日组合净值
+        # ================================================================
+        invested_value = 0.0
+        for asset, hold in holdings.items():
+            info = day_info.get(asset)
+            if info is None:
+                # 停牌无数据，pos_val 不变，沿用昨日价格
+                invested_value += hold["pos_val"]
+                logger.warning(f"持仓 {asset} 在 {curr_dt} 无数据，沿用昨日估值")
+                continue
+
+            close_p = info.get(F.CLOSE)
+            if close_p is None:
+                invested_value += hold["pos_val"]
+                logger.warning(f"持仓 {asset} 在 {curr_dt} 收盘价为 null，沿用昨日估值")
+                continue
+
+            # 以价格涨跌幅更新持仓价值
+            hold["pos_val"] = hold["pos_val"] * close_p / hold["last_price"]
+            hold["last_price"] = close_p
+            invested_value += hold["pos_val"]
+
+        # 组合毛市值 = 已投资部分 + 现金
+        pf_val_gross = invested_value + cash
+
+        # 扣除交易费用（按前日净值的换手比例计量）
+        turnover = (num_bought + num_sold) / n_buy
+        cost_total = turnover * cost_rate * pf_val_prev
+        pf_val = pf_val_gross - cost_total
+        cash -= cost_total  # 费用从现金中扣除
+
+        raw_ret = (pf_val_gross / pf_val_prev - 1) if pf_val_prev > 0 else 0.0
+        net_ret = raw_ret - turnover * cost_rate
+
+        # ================================================================
+        # STEP 4: 根据当日排名，为明日生成 sell_orders / buy_orders
+        # ================================================================
+        # 持仓中排名超出 sell_rank 的标的，明日平仓
+        sell_orders = {
+            a
+            for a in holdings
+            if day_info.get(a, {}).get("RANK", RANK_SENTINEL) >= sell_rank
         }
 
-        # C. 记录流水
-        turnover = (num_bought + num_sold) / n_buy
-        current_holdings = new_holdings
+        # 排名在 n_buy 以内、且未持有的标的，明日按排名顺序建仓
+        buy_candidates = [
+            a for a in day_info if day_info[a]["RANK"] <= n_buy and a not in holdings
+        ]
+        buy_orders = sorted(buy_candidates, key=lambda a: day_info[a]["RANK"])
+
         daily_records.append(
             {
                 F.DATE: curr_dt,
-                "RAW_RET": day_raw_ret,
+                "RAW_RET": raw_ret,
+                "NET_RET": net_ret,
                 "TURNOVER": turnover,
-                "COUNT": len(current_holdings),
+                "COUNT": len(holdings),
+                "NAV": pf_val,
             }
         )
 
-    # --- 4. 结算 ---
-    res_daily = (
-        pl.DataFrame(daily_records)
-        .with_columns(
-            [(pl.col("RAW_RET") - pl.col("TURNOVER") * cost_rate).alias("NET_RET")]
+    # --- 4. 处理未平仓持仓 ---
+    # 将回测结束时仍未平仓的持仓转化为交易记录
+    for asset, hold in holdings.items():
+        trades_records.append(
+            {
+                F.ASSET: asset,
+                "entry_date": hold["entry_date"],
+                "exit_date": curr_dt,
+                "entry_price": hold["entry_price"],
+                "exit_price": hold["last_price"],
+                "pnl_ret": hold["last_price"] / hold["entry_price"] - 1,
+                "holding_periods": len(all_dates) - 1 - hold["entry_idx"],
+            }
         )
-        .with_columns([(pl.col("NET_RET") + 1).cum_prod().alias("NAV")])
-    )
+
+    # --- 5. 输出结果 ---
+    res_daily = pl.DataFrame(daily_records)
 
     return {"daily_results": res_daily, "trade_details": pl.DataFrame(trades_records)}

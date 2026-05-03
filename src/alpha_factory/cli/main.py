@@ -1,11 +1,16 @@
 import typer
 from alpha_factory.cli.backtest import quant_bt
+from alpha_factory.cli.clean import clean
 from alpha_factory.cli.data import sync
 from alpha_factory.cli.eval import quant_eval
 from alpha_factory.cli.evals import quant_evals
+from alpha_factory.cli.pure import quant_pure
 from alpha_factory.cli.gp import quant_gp
 from alpha_factory.cli.group import quant_group
 from alpha_factory.cli.ml import quant_ml
+from alpha_factory.cli.opt import quant_opt
+from alpha_factory.cli.opt2 import quant_opt2
+from alpha_factory.cli.trades import quant_trades
 
 # 创建 Typer 实例，这会让 AI 自动生成完美的 --help 文档
 app = typer.Typer(
@@ -19,9 +24,14 @@ app.command(name="sync")(sync)
 app.command(name="eval")(quant_eval)
 app.command(name="evals")(quant_evals)
 app.command(name="bt")(quant_bt)
+app.command(name="pure")(quant_pure)
 app.command(name="gp")(quant_gp)
 app.command(name="group")(quant_group)
 app.command(name="ml")(quant_ml)
+app.command(name="opt")(quant_opt)
+app.command(name="opt2")(quant_opt2)
+app.command(name="clean")(clean)
+app.command(name="trades")(quant_trades)
 
 
 @app.command()

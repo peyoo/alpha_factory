@@ -1,0 +1,33 @@
+#布林线相关 (M=20)
+boll_down = (ts_mean(CLOSE, 20) - 2 * ts_std_dev(CLOSE, 20)) / CLOSE
+
+boll_up = (ts_mean(CLOSE, 20) + 2 * ts_std_dev(CLOSE, 20)) / CLOSE
+
+#指数移动平均 (EMA) 归一化
+EMA5 = ts_decay_exp_window(CLOSE, 5) / CLOSE
+
+EMAC10 = ts_decay_exp_window(CLOSE, 10) / CLOSE
+
+EMAC12 = ts_decay_exp_window(CLOSE, 12) / CLOSE
+
+EMAC20 = ts_decay_exp_window(CLOSE, 20) / CLOSE
+
+EMAC26 = ts_decay_exp_window(CLOSE, 26) / CLOSE
+
+EMAC120 = ts_decay_exp_window(CLOSE, 120) / CLOSE
+
+#算术移动平均 (MA) 归一化
+MAC5 = ts_mean(CLOSE, 5) / CLOSE
+
+MAC10 = ts_mean(CLOSE, 10) / CLOSE
+
+MAC20 = ts_mean(CLOSE, 20) / CLOSE
+
+MAC60 = ts_mean(CLOSE, 60) / CLOSE
+
+MAC120 = ts_mean(CLOSE, 120) / CLOSE
+
+#复合动量与资金流
+MACDC = ((ts_decay_exp_window(CLOSE, 12) - ts_decay_exp_window(CLOSE, 26)) - ts_decay_exp_window(ts_decay_exp_window(CLOSE, 12) - ts_decay_exp_window(CLOSE, 26), 9)) / CLOSE
+
+MFI14 = 100 - 100 / (1 + ts_sum(if_else((HIGH + LOW + CLOSE) / 3 > ts_delay((HIGH + LOW + CLOSE) / 3, 1), (HIGH + LOW + CLOSE) / 3 * VOLUME, 0), 14) / ts_sum(if_else((HIGH + LOW + CLOSE) / 3 < ts_delay((HIGH + LOW + CLOSE) / 3, 1), (HIGH + LOW + CLOSE) / 3 * VOLUME, 0), 14))
